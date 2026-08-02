@@ -29,6 +29,52 @@ def test_comparison_star_coords_accepts_more_than_ten_manual_comps():
     assert inputs_module.comparison_star_coords(comp_stars, rt_bool=False) == comp_stars
 
 
+def test_comparison_star_radec_coords_accepts_decimal_and_sexagesimal_pairs():
+    coords = inputs_module.comparison_star_radec_coords([
+        [31.04125, 46.68972],
+        ["02:04:09.90", "+46:41:23.0"],
+        [],
+    ])
+
+    assert coords[0] == pytest.approx([31.04125, 46.68972])
+    assert coords[1][0] == pytest.approx(31.04125)
+    assert coords[1][1] == pytest.approx(46.6897222222)
+
+
+def test_comp_params_accepts_comparison_radec_without_pixel_coordinates(tmp_path):
+    init_data = {
+        "user_info": {
+            "Comparison Star(s) X & Y Pixel": [],
+            "Comparison Star(s) RA & Dec": [[31.04125, 46.68972]],
+        },
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data), encoding="utf-8")
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert np.allclose(inputs.info_dict["comp_stars_radec"], [[31.04125, 46.68972]])
+
+
+def test_comp_params_rejects_simultaneous_pixel_and_radec_comparisons(tmp_path):
+    init_data = {
+        "user_info": {
+            "Comparison Star(s) X & Y Pixel": [[465, 183]],
+            "Comparison Star(s) RA & Dec": [[31.04125, 46.68972]],
+        },
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="either .*X & Y Pixel.*or .*RA & Dec.*not both"):
+        Inputs(init_opt="y").comp_params(init_file, {})
+
+
 def test_comp_params_accepts_verbose_camera_key(tmp_path):
     init_data = {
         "user_info": {
@@ -106,6 +152,41 @@ def test_comp_params_reads_stellar_variability_only_from_optional_info(tmp_path)
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["stellar_variability_only"] is True
+
+
+def test_comp_params_defaults_apparent_and_exact_comparison_options(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["require_apparent_magnitudes"] is True
+    assert inputs.info_dict["use_exactly_the_comps_provided"] is False
+
+
+def test_comp_params_reads_apparent_and_exact_comparison_options(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {
+            "require_apparent_magnitudes": False,
+            "use_exactly_the_comps_provided": True,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["require_apparent_magnitudes"] is False
+    assert inputs.info_dict["use_exactly_the_comps_provided"] is True
 
 
 def test_comp_params_defaults_stellar_variability_ensemble_to_true(tmp_path):

@@ -123,6 +123,195 @@ def apparent_magnitude_calibration_from_vsp_params(vsp_params):
     }
 
 
+def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
+                                           apply_airmass_correction=None):
+    """Return target-minus-reference instrumental magnitudes.
+
+    Unlike apparent magnitudes, this series needs no catalogue magnitude.  Raw
+    target/reference fluxes are preferred so the instrumental zero point is
+    preserved; pre-reduced light curves fall back to their relative flux.
+    Stellar-variability fits intentionally remain uncorrected for airmass so a
+    real time-dependent stellar signal is not fitted away.
+    """
+    fit_data = np.asarray(getattr(fit, 'data', []), dtype=float).reshape(-1)
+    fit_times = np.asarray(
+        getattr(fit, 'time', getattr(fit, 'jd_times', [])),
+        dtype=float,
+    ).reshape(-1)
+    if fit_data.size == 0 or fit_times.shape != fit_data.shape:
+        return None
+
+    target_flux = np.asarray(
+        getattr(fit, 'stellar_variability_target_flux', []),
+        dtype=float,
+    ).reshape(-1)
+    reference_flux = np.asarray(
+        getattr(fit, 'stellar_variability_comp_flux', []),
+        dtype=float,
+    ).reshape(-1)
+    target_error = np.asarray(
+        getattr(fit, 'stellar_variability_target_flux_error', []),
+        dtype=float,
+    ).reshape(-1)
+    reference_error = np.asarray(
+        getattr(fit, 'stellar_variability_comp_flux_error', []),
+        dtype=float,
+    ).reshape(-1)
+
+    has_raw_photometry = (
+        target_flux.shape == fit_data.shape
+        and reference_flux.shape == fit_data.shape
+    )
+    if not has_raw_photometry:
+        target_flux = np.asarray(getattr(fit, 'detrended', fit_data), dtype=float).reshape(-1)
+        if target_flux.shape != fit_data.shape:
+            target_flux = fit_data.copy()
+        reference_flux = np.ones(fit_data.shape, dtype=float)
+        target_error = np.asarray(
+            getattr(fit, 'detrendederr', getattr(fit, 'dataerr', [])),
+            dtype=float,
+        ).reshape(-1)
+        reference_error = np.zeros(fit_data.shape, dtype=float)
+
+    if target_error.shape != fit_data.shape:
+        target_error = np.full(fit_data.shape, np.nan, dtype=float)
+    if reference_error.shape != fit_data.shape:
+        reference_error = np.full(fit_data.shape, np.nan, dtype=float)
+
+    if apply_airmass_correction is None:
+        apply_airmass_correction = not bool(
+            getattr(fit, 'stellar_variability_only', False)
+        )
+    # ``fit.detrended`` is already corrected.  Only divide an explicitly
+    # retained raw target/reference ratio by the fitted airmass model.
+    apply_airmass_correction = bool(apply_airmass_correction and has_raw_photometry)
+    relative_airmass_model = np.ones(fit_data.shape, dtype=float)
+    if apply_airmass_correction:
+        airmass_model = np.asarray(
+            getattr(fit, 'airmass_model', np.ones(fit_data.shape)),
+            dtype=float,
+        ).reshape(-1)
+        if airmass_model.shape != fit_data.shape:
+            airmass_model = np.ones(fit_data.shape, dtype=float)
+        valid_airmass_model = np.isfinite(airmass_model) & (airmass_model > 0)
+        airmass_reference = (
+            float(np.nanmedian(airmass_model[valid_airmass_model]))
+            if np.any(valid_airmass_model)
+            else 1.0
+        )
+        if not np.isfinite(airmass_reference) or airmass_reference <= 0:
+            airmass_reference = 1.0
+        relative_airmass_model = np.divide(
+            airmass_model,
+            airmass_reference,
+            out=np.full(fit_data.shape, np.nan, dtype=float),
+            where=valid_airmass_model,
+        )
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        raw_ratio = np.divide(target_flux, reference_flux)
+        corrected_ratio = np.divide(raw_ratio, relative_airmass_model)
+        differential_magnitude = -2.5 * np.log10(corrected_ratio)
+        magnitude_factor = 2.5 / np.log(10.0)
+        explicit_error = magnitude_factor * np.sqrt(
+            (target_error / target_flux) ** 2
+            + (reference_error / reference_flux) ** 2
+        )
+
+    fit_error = np.asarray(getattr(fit, 'dataerr', []), dtype=float).reshape(-1)
+    if fit_error.shape == fit_data.shape:
+        with np.errstate(divide='ignore', invalid='ignore'):
+            fallback_error = magnitude_factor * np.abs(fit_error / fit_data)
+    else:
+        fallback_error = np.full(fit_data.shape, np.nan, dtype=float)
+    differential_error = np.where(
+        np.isfinite(explicit_error) & (explicit_error >= 0),
+        explicit_error,
+        fallback_error,
+    )
+
+    airmass = np.asarray(
+        getattr(fit, 'airmass', np.full(fit_data.shape, np.nan)),
+        dtype=float,
+    ).reshape(-1)
+    if airmass.shape != fit_data.shape:
+        airmass = np.full(fit_data.shape, np.nan, dtype=float)
+
+    keep = (
+        np.isfinite(fit_times)
+        & np.isfinite(corrected_ratio)
+        & (corrected_ratio > 0)
+        & np.isfinite(differential_magnitude)
+    )
+    if out_of_transit_only:
+        transit_model = np.asarray(
+            getattr(fit, 'transit', np.ones(fit_data.shape)),
+            dtype=float,
+        ).reshape(-1)
+        if transit_model.shape == fit_data.shape and np.any(transit_model == 1):
+            keep &= transit_model == 1
+
+    if not np.any(keep):
+        return None
+    return {
+        'time': fit_times[keep],
+        'airmass': airmass[keep],
+        'magnitude': differential_magnitude[keep],
+        'magnitude_error': differential_error[keep],
+        'source_mask': keep,
+        'airmass_corrected': apply_airmass_correction,
+    }
+
+
+def write_differential_magnitude_csv(fit, save, target_name, observation_date=None,
+                                     observed_filter=None, out_of_transit_only=False,
+                                     apply_airmass_correction=None,
+                                     filename_prefix='DifferentialMagnitude'):
+    series = differential_magnitude_series_from_fit(
+        fit,
+        out_of_transit_only=out_of_transit_only,
+        apply_airmass_correction=apply_airmass_correction,
+    )
+    if series is None:
+        return None
+
+    output_dir = Path(save)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / safe_output_filename(
+        filename_prefix,
+        target_name,
+        filename_date_token(observation_date) if observation_date else 'undated',
+        extension='csv',
+    )
+    comparison = (
+        getattr(fit, 'stellar_variability_reference_label', None)
+        or getattr(fit, 'differential_magnitude_reference_label', None)
+        or 'selected comparison reference'
+    )
+    with output_path.open('w', encoding='utf-8') as handle:
+        handle.write(
+            '# AIRMASS_CORRECTION='
+            f"{'YES' if series['airmass_corrected'] else 'NO'}\n"
+        )
+        handle.write(
+            '# BJD_TDB,Airmass,Differential Magnitude,'
+            'Differential Magnitude Uncertainty,Filter,Comparison\n'
+        )
+        for time_value, airmass, magnitude, magnitude_error in zip(
+            series['time'],
+            series['airmass'],
+            series['magnitude'],
+            series['magnitude_error'],
+        ):
+            airmass_text = f"{airmass}" if np.isfinite(airmass) else 'na'
+            error_text = f"{magnitude_error:.6f}" if np.isfinite(magnitude_error) else 'na'
+            handle.write(
+                f"{time_value}, {airmass_text}, {magnitude:.6f}, {error_text}, "
+                f"{observed_filter or 'na'}, {comparison}\n"
+            )
+    return output_path
+
+
 def aavso_json_safe(value):
     if isinstance(value, dict):
         return {str(key): aavso_json_safe(subvalue) for key, subvalue in value.items()}
@@ -1847,6 +2036,50 @@ class OutputFiles:
                         f"{magnitude_calibration['band']}"
                     )
                 f.write(f"{row}\n")
+
+    def differential_magnitude(self):
+        target_name = self.p_dict.get('sName') or self.p_dict.get('pName') or 'target'
+        return write_differential_magnitude_csv(
+            self.fit,
+            self.dir,
+            target_name,
+            observation_date=self.i_dict.get('date'),
+            observed_filter=(
+                self.i_dict.get('observed_filter')
+                or self.i_dict.get('filter')
+            ),
+            out_of_transit_only=False,
+        )
+
+    def stellar_variability_differential_magnitude(self):
+        """Write the raw, out-of-transit stellar-variability counterpart."""
+        if getattr(self.fit, 'stellar_variability_only', False):
+            return None
+        fit_shape = np.asarray(getattr(self.fit, 'data', []), dtype=float).shape
+        target_shape = np.asarray(
+            getattr(self.fit, 'stellar_variability_target_flux', []),
+            dtype=float,
+        ).shape
+        reference_shape = np.asarray(
+            getattr(self.fit, 'stellar_variability_comp_flux', []),
+            dtype=float,
+        ).shape
+        if target_shape != fit_shape or reference_shape != fit_shape:
+            return None
+        target_name = self.p_dict.get('sName') or self.p_dict.get('pName') or 'target'
+        return write_differential_magnitude_csv(
+            self.fit,
+            self.dir,
+            target_name,
+            observation_date=self.i_dict.get('date'),
+            observed_filter=(
+                self.i_dict.get('observed_filter')
+                or self.i_dict.get('filter')
+            ),
+            out_of_transit_only=True,
+            apply_airmass_correction=False,
+            filename_prefix='StellarVariabilityDifferentialMagnitude',
+        )
 
     def final_planetary_params(self, phot_opt, vsp_params, comp_star=None, comp_coords=None, min_aper=None,
                                min_annul=None, adaptive_summary=None, photometry_info=None,

@@ -5,6 +5,7 @@ import types
 from pathlib import Path
 import numpy as np
 import pytest
+from astropy.wcs import WCS
 
 
 def _module_available(name: str) -> bool:
@@ -163,6 +164,7 @@ from exotic.exotic import (
     parse_maximum_number_of_ensemble_comparisons_for_transit,
     prepare_final_fit_lightcurve_series,
     prepare_lightcurve_fit_input_series,
+    project_comparison_radec_to_pixels,
     psf_frame_quality_components,
     psf_frame_quality_mask,
     psf_solution_quality_score,
@@ -191,6 +193,8 @@ from exotic.exotic import (
     summarize_adaptive_aperture_usage,
     summarize_prior_transit_coverage,
     should_skip_airmass_fit,
+    should_require_apparent_magnitudes,
+    should_use_exactly_the_comps_provided,
     should_use_eebls_to_initialize_tmid_and_bounds,
     should_use_ensemble_photometry_for_stellar_variability,
     should_photometer_fortuitous_variables,
@@ -1404,6 +1408,35 @@ def test_stellar_variability_ensemble_config_defaults_on_and_supports_opt_out():
     assert should_use_ensemble_photometry_for_stellar_variability("y") is True
     assert should_use_ensemble_photometry_for_stellar_variability("n") is False
     assert should_use_ensemble_photometry_for_stellar_variability(False) is False
+
+
+def test_apparent_and_exact_comparison_config_defaults_and_values():
+    assert should_require_apparent_magnitudes(None) is True
+    assert should_require_apparent_magnitudes("n") is False
+    assert should_use_exactly_the_comps_provided(None) is False
+    assert should_use_exactly_the_comps_provided("y") is True
+
+
+def test_project_comparison_radec_to_reference_pixels_and_reject_out_of_frame():
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [50.0, 50.0]
+    wcs.wcs.cdelt = np.array([-0.001, 0.001])
+    wcs.wcs.crval = [31.04125, 46.68972]
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+
+    projected = project_comparison_radec_to_pixels(
+        [[31.04125, 46.68972]],
+        wcs.to_header(),
+        (100, 100),
+    )
+
+    assert projected[0] == pytest.approx([49.0, 49.0])
+    with pytest.raises(ValueError, match="projects outside the reference image"):
+        project_comparison_radec_to_pixels(
+            [[32.04125, 46.68972]],
+            wcs.to_header(),
+            (100, 100),
+        )
 
 
 def test_independent_ensemble_comparison_limits_default_to_five_and_have_no_upper_cap():
@@ -3084,6 +3117,28 @@ def test_comparison_star_stability_summary_penalizes_variable_candidates():
     assert summary["comp_summaries"][2]["aggregate_score"] > summary["comp_summaries"][0]["aggregate_score"]
 
 
+def test_exact_comparison_mode_bypasses_star_and_frame_vetting():
+    airmass = np.linspace(1.0, 1.5, 8)
+    summary = comparison_star_stability_summary(
+        {
+            "comp1": np.array([100.0, 101.0, 100.0, 101.0, 100.0, 101.0, 100.0, 101.0]),
+            "comp2": np.array([80.0, 80.0, 80.0, 160.0, 80.0, 80.0, 80.0, 80.0]),
+            "comp3": np.array([60.0, 60.0, 60.0, 60.0, 60.0, 60.0, np.nan, np.nan]),
+        },
+        airmass,
+        bypass_vetting=True,
+    )
+
+    assert [row["key"] for row in summary["comp_summaries"]] == [
+        "comp1",
+        "comp2",
+        "comp3",
+    ]
+    assert not any(row["coverage_rejected"] for row in summary["comp_summaries"])
+    assert not any(row["suitability_outlier_rejected"] for row in summary["comp_summaries"])
+    assert np.all(summary["field_image_keep_mask"])
+
+
 def test_apply_comparison_star_suitability_outlier_rejection_rejects_high_tail():
     comp_summaries = [
         {"label": "Comp 1", "aggregate_score": 0.139668, "coverage_rejected": False},
@@ -3395,6 +3450,34 @@ def test_select_comparison_calibrated_photometry_masks_psf_quality_before_apertu
     assert comp1_summary["coverage_count"] == frame_count - 1
     assert comp1_summary["ensemble_frame_rejected_count"] == 0
     assert np.isnan(comp1_summary["ensemble_ratio_series"][7])
+
+
+def test_exact_comparison_calibration_does_not_reject_an_infinite_stability_score():
+    frame_count = 6
+    psf_rows = np.ones((frame_count, 7), dtype=float)
+    psf_rows[:, 3:5] = 1.0
+    calibration = select_comparison_calibrated_photometry(
+        {
+            "target": psf_rows.copy(),
+            "comp1": psf_rows.copy(),
+        },
+        {
+            "target": np.full((frame_count, 1, 1), 1000.0),
+            "comp1": np.full((frame_count, 1, 1), np.nan),
+        },
+        apers=np.array([2.5]),
+        annuli=np.array([10.0]),
+        airmass=np.linspace(1.0, 1.5, frame_count),
+        comp_stars=[[10.0, 20.0]],
+        sigma=1.0,
+        use_psf_photometry=False,
+        use_aperture_photometry=True,
+        use_exactly_the_comps_provided=True,
+    )
+
+    assert calibration is not None
+    assert calibration["best_comp_index"] == 0
+    assert calibration["comp_summaries"][0]["coverage_rejected"] is False
 
 
 def test_select_comparison_calibrated_photometry_masks_overexposed_comp_measurements():

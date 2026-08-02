@@ -1501,7 +1501,16 @@ def test_build_stellar_variability_params_rejects_cross_band_calibration(tmp_pat
             tmp_path,
             'Host Star',
             observed_filter='V',
+            observation_date='2026-08-02',
         )
+
+    differential_csv = next(
+        tmp_path.glob('StellarVariabilityDifferentialMagnitude_HostStar_2026-08-02.csv')
+    )
+    assert '# AIRMASS_CORRECTION=NO' in differential_csv.read_text(encoding='utf-8')
+    assert (
+        tmp_path / 'StellarVariabilityDifferentialMagnitude_HostStar_2026-08-02.png'
+    ).exists()
 
 
 def test_build_stellar_variability_params_uses_raw_ratio_and_per_exposure_errors(monkeypatch, tmp_path):
@@ -1556,7 +1565,13 @@ def test_build_stellar_variability_params_uses_raw_ratio_and_per_exposure_errors
         ),
     )
 
-    np.testing.assert_allclose([row['mag'] for row in params], target_mag, atol=1.0e-10)
+    expected_raw_magnitudes = comp_mag - (2.5 * np.log10(detrended))
+    np.testing.assert_allclose(
+        [row['mag'] for row in params],
+        expected_raw_magnitudes,
+        atol=1.0e-10,
+    )
+    assert params[0]['mag'] != pytest.approx(target_mag)
     assert params[1]['mag_err'] == pytest.approx(expected_mag_error)
     assert params[1]['mag_err'] < 0.08
 
@@ -3379,18 +3394,24 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
         observed_filter='V',
     )
 
-    assert failed_results[0]['status'] == 'skipped'
-    assert failed_results[0]['output_directory'] is None
-    assert not (failed_root / 'variables' / 'optimal_variables' / 'SyntheticVSX').exists()
+    assert failed_results[0]['status'] == 'completed'
+    assert failed_results[0]['apparent_magnitude_point_count'] == 0
+    assert failed_results[0]['apparent_magnitude_error']
+    differential_only_dir = (
+        failed_root / 'variables' / 'optimal_variables' / 'SyntheticVSX'
+    )
+    assert differential_only_dir.exists()
+    assert next(differential_only_dir.glob('DifferentialMagnitude_*.csv')).is_file()
+    assert not list(differential_only_dir.glob('StellarVariability_*.csv'))
+    assert not list(differential_only_dir.glob('AID_AAVSO_*.txt'))
     failed_manifest = json.loads(
         next((failed_root / 'variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
             encoding='utf-8'
         )
     )
-    assert failed_manifest['variables'][0]['status'] == 'skipped'
-    assert 'fewer than 1 independently calibrated comparison member' in (
-        failed_manifest['variables'][0]['reason']
-    )
+    assert failed_manifest['variables'][0]['status'] == 'completed'
+    assert failed_manifest['variables'][0]['apparent_magnitude_point_count'] == 0
+    assert failed_manifest['variables'][0]['differential_magnitude_csv']
 
 
 def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkeypatch, tmp_path):
@@ -3505,6 +3526,74 @@ def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkey
     aid_text = aid_path.read_text(encoding='utf-8')
     assert '#ENSEMBLE-COMPARISONS-XC=' in aid_text
     assert 'AUID-TEST,' in aid_text
+
+
+def test_stellar_variability_exact_comparisons_use_every_supplied_member_without_catalogue():
+    frame_count = 8
+    times = np.linspace(10.2, 10.3, frame_count)
+    quality_mask = np.ones(frame_count, dtype=bool)
+    target_flux = np.linspace(990.0, 1010.0, frame_count)
+    comparison_calibration = {
+        'method': 'aperture',
+        'method_label': 'Aperture photometry',
+        'a': 0,
+        'an': 0,
+        'field_score': np.inf,
+        'field_image_keep_mask': quality_mask,
+        'comp_summaries': [
+            {
+                'key': 'comp1', 'comp_index': 0, 'label': 'Comp 1', 'position': [10, 20],
+                'aggregate_score': np.inf, 'coverage_rejected': True,
+                'suitability_outlier_rejected': True,
+                'psf_quality_keep_mask': quality_mask,
+                'ensemble_frame_keep_mask': quality_mask,
+            },
+            {
+                'key': 'comp2', 'comp_index': 1, 'label': 'Comp 2', 'position': [30, 40],
+                'aggregate_score': np.inf, 'coverage_rejected': True,
+                'suitability_outlier_rejected': True,
+                'psf_quality_keep_mask': quality_mask,
+                'ensemble_frame_keep_mask': quality_mask,
+            },
+        ],
+    }
+    psf_data = {
+        'target': np.ones((frame_count, 7), dtype=float),
+        'comp1': np.ones((frame_count, 7), dtype=float),
+        'comp2': np.ones((frame_count, 7), dtype=float),
+    }
+    aper_data = {
+        'target': target_flux[:, None, None],
+        'target_unc': np.ones((frame_count, 1, 1)),
+        'comp1': np.full((frame_count, 1, 1), 500.0),
+        'comp1_unc': np.ones((frame_count, 1, 1)),
+        'comp2': np.full((frame_count, 1, 1), 250.0),
+        'comp2_unc': np.ones((frame_count, 1, 1)),
+    }
+
+    result = exotic_module.select_stellar_variability_only_photometry(
+        times,
+        times,
+        np.linspace(1.0, 1.5, frame_count),
+        _stellar_variability_only_planet_dict(),
+        comparison_calibration,
+        psf_data,
+        aper_data,
+        target_flux,
+        use_ensemble_photometry=True,
+        calibration_stars={},
+        observed_filter='V',
+        require_apparent_magnitudes=False,
+        use_exactly_the_comps_provided=True,
+    )
+
+    selected = result['selected_result']
+    assert result['selection_metric'] == 'exact_stellar_variability_ensemble'
+    assert selected['ensemble_member_keys'] == ['comp1', 'comp2']
+    assert [
+        member['key'] for member in selected['fit'].stellar_variability_ensemble_members
+    ] == ['comp1', 'comp2']
+    assert np.all(np.isnan(selected['fit'].stellar_variability_ensemble_magnitudes))
 
 
 def test_stellar_variability_selector_opt_out_restores_single_comp_selection():

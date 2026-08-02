@@ -897,6 +897,7 @@ Example `inits.json` file:
 
             "Target Star X & Y Pixel": "[424, 286]",
             "Comparison Star(s) X & Y Pixel": "[[465, 183], [512, 263], [], [], [], [], [], [], [], []]",
+            "Comparison Star(s) RA & Dec": null,
 
             "Demosaic Format": null,
             "Demosaic Output": null

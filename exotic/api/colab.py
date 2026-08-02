@@ -369,6 +369,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
 
             "Target Star X & Y Pixel": %s,
             "Comparison Star(s) X & Y Pixel": %s,
+            "Comparison Star(s) RA & Dec": null,
             
             "Demosaic Format": null,
             "Demosaic Output": null
@@ -385,6 +386,8 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "use_impactparameter_rather_than_inclination_to_fit": "y",
             "maximum_number_of_ensemble_comparisons_for_transit": 5,
             "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
+            "require_apparent_magnitudes": true,
+            "use_exactly_the_comps_provided": false,
             "use_adaptive_apertures": false,
             "gain_electrons_per_adu": null,
             "read_noise_electrons": null,

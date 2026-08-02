@@ -19,6 +19,7 @@ from exotic.plots import (
     plot_ktmf_qc_metrics,
     plot_obs_stats,
     plot_prior_posterior_comparison,
+    plot_differential_magnitude,
     plot_stellar_variability,
 )
 
@@ -163,6 +164,37 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
     assert len(inverted_axes) == 1
     assert "O-C [%]" not in captured_ylabels
     assert (tmp_path / "FinalLightCurve_Target_2026-07-08.png").exists()
+
+
+def test_stellar_variability_differential_plot_survives_without_apparent_magnitudes(tmp_path):
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.array([2461229.5, 2461229.6, 2461229.8]),
+        data=np.ones(3),
+        dataerr=np.full(3, 0.001),
+        airmass=np.array([1.1, 1.2, 1.3]),
+        airmass_model=np.array([0.8, 1.0, 1.2]),
+        transit=np.ones(3),
+        stellar_variability_target_flux=np.array([900.0, 1000.0, 1100.0]),
+        stellar_variability_comp_flux=np.full(3, 1000.0),
+        stellar_variability_target_flux_error=np.ones(3),
+        stellar_variability_comp_flux_error=np.ones(3),
+        stellar_variability_params=[],
+    )
+
+    output_path = plot_differential_magnitude(
+        fit,
+        'Variable Star',
+        tmp_path,
+        '2026-08-02',
+        observed_filter='V',
+    )
+
+    assert output_path.exists()
+    assert (tmp_path / 'Stellar_Variability_DifferentialMagnitude.png').exists()
+    assert (
+        tmp_path / 'working_artifacts' / 'Stellar_Variability_DifferentialMagnitude.png'
+    ).exists()
 
 
 def test_plot_obs_stats_uses_supplied_background_series(tmp_path, monkeypatch):
@@ -367,6 +399,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         "Label: NextAstro-123\n"
         "Comparison RA=10.100000\n"
         "Dec=-20.200000\n"
+        "No airmass correction applied to stellar variability\n"
         "Original filter: CV | Comparison mag: r=12.345 +/- 0.067"
     )
     assert ylabels[-1] == "Magnitude (r)"
@@ -456,6 +489,7 @@ def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, m
     assert titles[-1] == (
         "Host Star\n"
         "Label: NextAstro-123\nComparison RA=10.100000\nDec=-20.200000\n"
+        "No airmass correction applied to stellar variability\n"
         "Original filter: MObs CV"
     )
     assert "99.99" not in titles[-1]

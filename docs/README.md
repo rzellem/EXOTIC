@@ -122,7 +122,7 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
     - Plate solve my images - select if you want EXOTIC to calibrate the right ascenscion and declination of your pixels in your image via Astrometry.net; it is recommended that this option is selected
     - Align my images - select this option for EXOTIC to align all of your images to provide better tracking of your stars in your images; it is recommended that this option is selected
     - Target Star X & Y Pixel Position - the pixel location of your target exoplanet host star in [x-position, y-position] format
-    - Comparison Star(s) X & Y Pixel Position - the pixel location of your comparision star(s) in [x-position, y-position] format; it is recommended that you input at least 2 comparision stars and EXOTIC will automatically select the "best" comparision by the one that produces the least amount of scatter in your data
+    - Comparison Star(s) Position - provide either X/Y pixel pairs or RA/Dec pairs, but not both. RA/Dec accepts decimal degrees or sexagesimal strings, requires a usable WCS, and is projected onto the selected reference image before being treated exactly like X/Y input
     - *NOTE:* In the screenshot below, Rob has already entered all of the information for you for the sample data (with the exception that you'll need to point to the correct directory for your FITS files and your EXOTIC Output)
     
     ![EXOTIC Input Observation Information](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_inputobs.png)
@@ -182,7 +182,8 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Plate Solution? (y/n)": "n",
 
             "Target Star X & Y Pixel": [424, 286],
-            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]]
+            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263]],
+            "Comparison Star(s) RA & Dec": null
     },
     "planetary_parameters": {
             "Target Star RA": "02:04:10",
@@ -222,6 +223,8 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "use_ensemble_photometry_rather_than_single_comp": false,
             "stellar_variability_only": false,
             "use_ensemble_photometry_for_stellar_variability": true,
+            "require_apparent_magnitudes": true,
+            "use_exactly_the_comps_provided": false,
             "maximum_number_of_ensemble_comparisons_for_transit": 5,
             "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
             "photometer_fortuitous_variables": true,
@@ -243,6 +246,7 @@ Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` 
 |---|---|---|
 | Transit fit | Single comparison star (default) | `"stellar_variability_only": false`, `"require_comp_star": true`, `"use_ensemble_photometry_rather_than_single_comp": false` |
 | Transit fit | Comparison-star ensemble | `"stellar_variability_only": false`, `"require_comp_star": true`, `"use_ensemble_photometry_rather_than_single_comp": true`, `"maximum_number_of_ensemble_comparisons_for_transit": 5` |
+| Transit or variability run | Exactly the supplied comparison(s) | `"use_exactly_the_comps_provided": true`. Comparisons may be supplied as X/Y or RA/Dec. One supplied comparison is used alone; two or more are all used as one fixed ensemble. Automatic replacement, addition, VSX/stability vetting, ranking, and ensemble-size limiting are bypassed. |
 | Transit fit | No comparison star | There is no tag that forces this mode. `"require_comp_star": false` only removes the requirement for a comparison star; it does not force target-only photometry. The current comparison-calibration FITS path still selects a single comparison or an ensemble. |
 | Stellar-variability-only run | Single comparison star | `"stellar_variability_only": true`, `"use_ensemble_photometry_for_stellar_variability": false` |
 | Stellar-variability-only run | Calibrated comparison-star ensemble (default) | `"stellar_variability_only": true`, `"use_ensemble_photometry_for_stellar_variability": true`, `"maximum_number_of_ensemble_comparisons_for_stellar_variability": 5` |
@@ -250,7 +254,13 @@ Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` 
 
 The two ensemble limits are independent. `"maximum_number_of_ensemble_comparisons_for_transit"` caps only the transit-fit ensemble. `"maximum_number_of_ensemble_comparisons_for_stellar_variability"` caps both stellar-variability-only and fortuitous-variable ensembles. Each defaults to `5`, must be an integer of at least `2`, and has no configured upper limit. Increase either value to permit a much larger ensemble; EXOTIC will enlarge automatic candidate discovery for the corresponding ensemble where applicable, then use up to that number of surviving comparisons. Very large ensembles require more photometry work. Stellar-variability and fortuitous-variable ensembles can also retain fewer frames because every selected member must have a usable measurement in a retained frame.
 
-Ensemble settings retain a single-comparison fallback when EXOTIC cannot build a usable ensemble. For fortuitous VSX variables found during a transit reduction, `"photometer_fortuitous_variables": true` turns their photometry on; `"use_single_comparison_for_fortuitous_variables": true` selects one comparison (the default), while `false` requests an ensemble capped by `"maximum_number_of_ensemble_comparisons_for_stellar_variability"`. Fortuitous-variable photometry has no no-comparison mode.
+Ensemble settings retain a single-comparison fallback when EXOTIC cannot build a usable ensemble, except when `"use_exactly_the_comps_provided"` is true. Exact-comparison mode fails explicitly if the supplied reference cannot be measured; it never silently substitutes or drops a supplied comparison. This makes the same reference star or ensemble reproducible across multiple runs.
+
+Comparison stars may be supplied in `user_info` using either `"Comparison Star(s) X & Y Pixel"` or `"Comparison Star(s) RA & Dec"`. Do not populate both. RA/Dec values may be decimal degrees, such as `[[31.04125, 46.68972]]`, or sexagesimal strings, such as `[["02:04:09.90", "+46:41:23.0"]]`. Celestial coordinates require a usable WCS and are projected onto the selected reference image before photometry; after projection they are treated identically to supplied X/Y positions.
+
+Differential-magnitude CSV and plot products are always attempted independently of catalogue calibration. Set `"require_apparent_magnitudes": false` when catalogue-calibrated apparent magnitudes are not required; EXOTIC still writes apparent-magnitude products when calibration is available. Stellar-variability apparent and differential magnitudes use the raw target/reference flux ratio and are explicitly not airmass-corrected, because a real time-dependent stellar signal can be correlated with airmass. Airmass remains in the output as metadata.
+
+For fortuitous VSX variables found during a transit reduction, `"photometer_fortuitous_variables": true` turns their photometry on; `"use_single_comparison_for_fortuitous_variables": true` selects one comparison (the default), while `false` requests an ensemble capped by `"maximum_number_of_ensemble_comparisons_for_stellar_variability"`. Fortuitous-variable differential products remain available when catalogue calibration is unavailable. Fortuitous-variable photometry has no no-comparison mode.
 
 `photometer_fortuitous_variables` defaults to `true` for full FITS reductions with a WCS. EXOTIC searches the field in VSX, retains unsaturated stars whose reference-image source-plus-sky noise estimate implies an internal error below 0.05 mag, and measures each retained variable against one calibrated comparison star by default, or against its own calibrated comparison ensemble when `"use_single_comparison_for_fortuitous_variables"` is `false`. Exported light curves also retain only frames whose final comparison-calibrated internal magnitude error is below 0.05 mag. Each VSX target uses its own frame-level saturation mask: saturation of the exoplanet target does not remove that image from the VSX target's run, while saturated measurements of that VSX target or a reference star are masked only for the affected source and frame. The ensemble's high-side comparison-catalog error sigma clip has a 0.01 mag minimum threshold, so comparison errors at or below 0.01 mag are never rejected by that clip. Every ensemble AAVSO AID file includes an `#ENSEMBLE-COMPARISONS-XC` JSON header listing every selected comparison star with its label, RA, Dec, pixel position, and catalog calibration. Per-star plots, magnitude CSV, AAVSO AID, and ensemble-selection JSON are written below `variables/optimal_variables/<name>/` when the VSX period is at most 10 days and amplitude is at least 0.3 mag, or below `variables/normal/<name>/` otherwise. Skipped variables are recorded only in the shared `variables/FortuitousVariables_<date>.json` manifest and do not receive an object directory. Set `"photometer_fortuitous_variables"` to `false` to disable these products.
 

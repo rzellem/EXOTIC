@@ -16,13 +16,68 @@ from exotic.output_files import (
     build_aavso_qc_metadata,
     fit_empirical_transit_uncertainty,
     fit_impact_parameter_value_error,
+    differential_magnitude_series_from_fit,
     save_comp_star_calibration_summary,
+    write_differential_magnitude_csv,
 )
 from exotic.transit_depth import (
     fit_transit_depth_summary,
     observable_depth_percent,
     radius_ratio_area_depth_percent,
 )
+
+
+def test_stellar_variability_differential_magnitudes_never_apply_airmass_correction():
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.array([2460000.1, 2460000.2, 2460000.3]),
+        data=np.ones(3),
+        dataerr=np.full(3, 0.01),
+        airmass=np.array([1.1, 1.3, 1.5]),
+        airmass_model=np.array([0.8, 1.0, 1.2]),
+        transit=np.ones(3),
+        stellar_variability_target_flux=np.array([80.0, 100.0, 120.0]),
+        stellar_variability_comp_flux=np.full(3, 100.0),
+        stellar_variability_target_flux_error=np.ones(3),
+        stellar_variability_comp_flux_error=np.ones(3),
+    )
+
+    series = differential_magnitude_series_from_fit(fit)
+
+    np.testing.assert_allclose(
+        series['magnitude'],
+        -2.5 * np.log10(fit.stellar_variability_target_flux / fit.stellar_variability_comp_flux),
+    )
+    assert series['airmass_corrected'] is False
+
+
+def test_differential_csv_does_not_require_apparent_magnitude_calibration(tmp_path):
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.array([2460000.1, 2460000.2]),
+        data=np.ones(2),
+        dataerr=np.full(2, 0.01),
+        airmass=np.array([1.1, 1.2]),
+        airmass_model=np.array([0.9, 1.1]),
+        transit=np.ones(2),
+        stellar_variability_target_flux=np.array([500.0, 550.0]),
+        stellar_variability_comp_flux=np.array([1000.0, 1000.0]),
+        stellar_variability_target_flux_error=np.full(2, 2.0),
+        stellar_variability_comp_flux_error=np.full(2, 3.0),
+    )
+
+    output_path = write_differential_magnitude_csv(
+        fit,
+        tmp_path,
+        'Variable Star',
+        observation_date='2026-08-02',
+        observed_filter='V',
+    )
+
+    output_text = output_path.read_text(encoding='utf-8')
+    assert '# AIRMASS_CORRECTION=NO' in output_text
+    assert 'Differential Magnitude' in output_text
+    assert 'Apparent' not in output_text
 
 
 class DummyFit:

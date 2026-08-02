@@ -404,7 +404,7 @@ def main():
                 "Comment4": "and is only here to serve as a guide. Will be updated per user's advice.",
                 "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
                 "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
-                "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
+                "Comparison Star(s) Guide": "Provide comparison stars either as X/Y pixels or as RA/Dec coordinates, but not both. RA/Dec requires a usable reference-image WCS.",
                 "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Plate Solution": "For your image to be given a plate solution, type y.",
@@ -420,6 +420,8 @@ def main():
                 "Prefer Pixel Coordinates Over WCS": "Set optional_info 'prefer_pixel_values_over_wcs_for_target' to y to keep the entered target pixel coordinates when they conflict with WCS-derived target coordinates. Default n.",
                 "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
                 "Stellar Variability Only": "Set optional_info 'stellar_variability_only' to true to skip transit fitting, select comparison-star photometry by out-of-transit scatter, and discard predicted ingress-to-egress transit-window points. Default false.",
+                "Apparent Magnitudes Required": "Set optional_info 'require_apparent_magnitudes' to false when catalogue-calibrated apparent magnitudes are not required. Differential-magnitude products remain independent of catalogue calibration. Stellar-variability magnitudes use the raw target/reference ratio with no airmass correction. Default true.",
+                "Use Exactly Supplied Comparisons": "Set optional_info 'use_exactly_the_comps_provided' to true to use only the supplied X/Y or RA/Dec comparison coordinates with no replacement, addition, vetting, ranking, or ensemble-size limit. One comparison is used alone; multiple comparisons are all used as a fixed ensemble. Default false.",
                 "Maximum Transit Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_transit' to the largest number of comparison stars used by the transit-fit ensemble. Default 5; minimum 2; no configured upper limit.",
                 "Maximum Stellar-Variability Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_stellar_variability' to the largest number of comparison stars used by stellar-variability-only and fortuitous-variable ensembles. Default 5; minimum 2; no configured upper limit.",
                 "Detect Bad Pixels Before Photometry": "Set optional_info 'detect_bad_pixels_before_photometry' to y to scan the frame stack for persistent isolated high-count bad pixels before plate-solve checks and photometry, save the detection count image and mask into working_artifacts/, and median-8 repair those pixels before centroiding and photometry. Default n.",
@@ -449,6 +451,7 @@ def main():
 
                 "Target Star X & Y Pixel": input_data['targetpos'],
                 "Comparison Star(s) X & Y Pixel": [input_data['comppos']],
+                "Comparison Star(s) RA & Dec": null,
                 "Demosaic Format": null, # TODO add GUI input for these
                 "Demosaic Output": null
             }
@@ -461,6 +464,8 @@ def main():
                 "prefer_pixel_values_over_wcs_for_target": "n",
                 "disable vertical flux normalization": False,
                 "stellar_variability_only": False,
+                "require_apparent_magnitudes": True,
+                "use_exactly_the_comps_provided": False,
                 "maximum_number_of_ensemble_comparisons_for_transit": 5,
                 "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
                 "detect_bad_pixels_before_photometry": "n",
@@ -1513,7 +1518,7 @@ def main():
                 "Comment4": "and is only here to serve as a guide. Will be updated per user's advice.",
                 "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
                 "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
-                "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
+                "Comparison Star(s) Guide": "Provide comparison stars either as X/Y pixels or as RA/Dec coordinates, but not both. RA/Dec requires a usable reference-image WCS.",
                 "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Plate Solution": "For your image to be given a plate solution, type y.",
@@ -1529,6 +1534,8 @@ def main():
                 "Prefer Pixel Coordinates Over WCS": "Set optional_info 'prefer_pixel_values_over_wcs_for_target' to y to keep the entered target pixel coordinates when they conflict with WCS-derived target coordinates. Default n.",
                 "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
                 "Stellar Variability Only": "Set optional_info 'stellar_variability_only' to true to skip transit fitting, select comparison-star photometry by out-of-transit scatter, and discard predicted ingress-to-egress transit-window points. Default false.",
+                "Apparent Magnitudes Required": "Set optional_info 'require_apparent_magnitudes' to false when catalogue-calibrated apparent magnitudes are not required. Differential-magnitude products remain independent of catalogue calibration. Stellar-variability magnitudes use the raw target/reference ratio with no airmass correction. Default true.",
+                "Use Exactly Supplied Comparisons": "Set optional_info 'use_exactly_the_comps_provided' to true to use only the supplied X/Y or RA/Dec comparison coordinates with no replacement, addition, vetting, ranking, or ensemble-size limit. One comparison is used alone; multiple comparisons are all used as a fixed ensemble. Default false.",
                 "Maximum Transit Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_transit' to the largest number of comparison stars used by the transit-fit ensemble. Default 5; minimum 2; no configured upper limit.",
                 "Maximum Stellar-Variability Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_stellar_variability' to the largest number of comparison stars used by stellar-variability-only and fortuitous-variable ensembles. Default 5; minimum 2; no configured upper limit.",
                 "Detect Bad Pixels Before Photometry": "Set optional_info 'detect_bad_pixels_before_photometry' to y to scan the frame stack for persistent isolated high-count bad pixels before plate-solve checks and photometry, save the detection count image and mask into working_artifacts/, and median-8 repair those pixels before centroiding and photometry. Default n.",
@@ -1582,6 +1589,7 @@ def main():
 
                         "Target Star X & Y Pixel": (input_data['targetpos']),
                         "Comparison Star(s) X & Y Pixel": (input_data['comppos']),
+                        "Comparison Star(s) RA & Dec": null,
                         
                         "Demosaic Format": null, # TODO add GUI input for these
                         "Demosaic Output": null
@@ -1617,6 +1625,8 @@ def main():
                     "prefer_pixel_values_over_wcs_for_target": "n",
                     "disable vertical flux normalization": False,
                     "stellar_variability_only": False,
+                    "require_apparent_magnitudes": True,
+                    "use_exactly_the_comps_provided": False,
                     "maximum_number_of_ensemble_comparisons_for_transit": 5,
                     "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
                     "detect_bad_pixels_before_photometry": "n",
@@ -1692,6 +1702,8 @@ def main():
                     "prefer_pixel_values_over_wcs_for_target": "n",
                     "disable vertical flux normalization": False,
                     "stellar_variability_only": False,
+                    "require_apparent_magnitudes": True,
+                    "use_exactly_the_comps_provided": False,
                     "maximum_number_of_ensemble_comparisons_for_transit": 5,
                     "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
                     "detect_bad_pixels_before_photometry": "n",

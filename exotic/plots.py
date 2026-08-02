@@ -26,6 +26,7 @@ except ImportError:
 
 try:
     from output_files import (
+        differential_magnitude_series_from_fit,
         empirical_red_noise_error_scale,
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
@@ -33,6 +34,7 @@ try:
     )
 except ImportError:
     from .output_files import (
+        differential_magnitude_series_from_fit,
         empirical_red_noise_error_scale,
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
@@ -636,6 +638,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     title_lines = [s_name]
     if reference_label:
         title_lines.append(reference_label)
+    title_lines.append('No airmass correction applied to stellar variability')
     metadata_label = _stellar_variability_comparison_metadata_label(first_param)
     if metadata_label:
         title_lines.append(metadata_label)
@@ -714,6 +717,78 @@ def _add_apparent_magnitude_axis(ax_lc, fit):
     )
     secondary_axis.set_ylabel(f"Apparent Magnitude ({calibration['band']})")
     return True
+
+
+def plot_differential_magnitude(fit, target_name, save, date, observed_filter=None,
+                                out_of_transit_only=False, apply_airmass_correction=None,
+                                filename_prefix='DifferentialMagnitude',
+                                save_stellar_variability_alias=False):
+    series = differential_magnitude_series_from_fit(
+        fit,
+        out_of_transit_only=out_of_transit_only,
+        apply_airmass_correction=apply_airmass_correction,
+    )
+    if series is None:
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    finite_error = np.isfinite(series['magnitude_error']) & (series['magnitude_error'] >= 0)
+    if np.any(finite_error):
+        ax.errorbar(
+            series['time'][finite_error],
+            series['magnitude'][finite_error],
+            yerr=series['magnitude_error'][finite_error],
+            color='royalblue',
+            fmt='.',
+        )
+    if np.any(~finite_error):
+        ax.plot(
+            series['time'][~finite_error],
+            series['magnitude'][~finite_error],
+            '.',
+            color='royalblue',
+        )
+    correction_label = (
+        'Airmass-corrected target/reference ratio'
+        if series['airmass_corrected']
+        else 'Raw target/reference ratio; no airmass correction'
+    )
+    ax.set_title(f"{target_name}\n{correction_label}")
+    band_label = f" ({observed_filter})" if observed_filter else ''
+    ax.set_ylabel(f"Differential Magnitude{band_label}")
+    ax.invert_yaxis()
+    ax.set_xlabel("Time [BJD_TDB]")
+    fig.tight_layout()
+
+    output_dir = Path(save)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    png_path = output_dir / _dated_plot_filename(
+        filename_prefix,
+        target_name,
+        date=date,
+        extension='png',
+    )
+    pdf_path = output_dir / _dated_plot_filename(
+        filename_prefix,
+        target_name,
+        date=date,
+        extension='pdf',
+    )
+    fig.savefig(png_path, bbox_inches='tight')
+    fig.savefig(pdf_path, bbox_inches='tight')
+
+    if save_stellar_variability_alias or getattr(fit, 'stellar_variability_only', False):
+        artifacts_dir = _working_artifacts_dir(save)
+        fig.savefig(
+            artifacts_dir / 'Stellar_Variability_DifferentialMagnitude.png',
+            bbox_inches='tight',
+        )
+        fig.savefig(
+            output_dir / 'Stellar_Variability_DifferentialMagnitude.png',
+            bbox_inches='tight',
+        )
+    plt.close(fig)
+    return png_path
 
 
 # Observation statistics series selection
@@ -987,7 +1062,37 @@ def _plot_final_residual_rejected_points(ax_lc, ax_res, fit):
     )
 
 
-def plot_final_lightcurve(fit, high_res, targ_name, save, date):
+def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=None):
+    plot_differential_magnitude(
+        fit,
+        getattr(fit, 'stellar_variability_target_name', targ_name),
+        save,
+        date,
+        observed_filter=observed_filter,
+    )
+    fit_shape = np.asarray(getattr(fit, 'data', []), dtype=float).shape
+    has_raw_stellar_photometry = (
+        np.asarray(
+            getattr(fit, 'stellar_variability_target_flux', []),
+            dtype=float,
+        ).shape == fit_shape
+        and np.asarray(
+            getattr(fit, 'stellar_variability_comp_flux', []),
+            dtype=float,
+        ).shape == fit_shape
+    )
+    if not getattr(fit, 'stellar_variability_only', False) and has_raw_stellar_photometry:
+        plot_differential_magnitude(
+            fit,
+            getattr(fit, 'stellar_variability_target_name', targ_name),
+            save,
+            date,
+            observed_filter=observed_filter,
+            out_of_transit_only=True,
+            apply_airmass_correction=False,
+            filename_prefix='StellarVariabilityDifferentialMagnitude',
+            save_stellar_variability_alias=True,
+        )
     if getattr(fit, 'stellar_variability_only', False):
         series = _stellar_variability_magnitude_series(
             getattr(fit, 'stellar_variability_params', None)
@@ -1005,6 +1110,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date):
         )
         if reference_label:
             title_lines.append(reference_label)
+        title_lines.append('No airmass correction applied to stellar variability')
         metadata_label = _stellar_variability_comparison_metadata_label(first_param)
         if metadata_label:
             title_lines.append(metadata_label)

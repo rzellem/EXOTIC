@@ -163,6 +163,7 @@ try:  # output files
         format_parameter_with_error,
         formatted_transit_depth_parameters,
         save_comp_star_calibration_summary,
+        write_differential_magnitude_csv,
     )
 except ImportError:  # package import
     from .output_files import (
@@ -175,6 +176,7 @@ except ImportError:  # package import
         format_parameter_with_error,
         formatted_transit_depth_parameters,
         save_comp_star_calibration_summary,
+        write_differential_magnitude_csv,
     )
 try:
     from transit_depth import fit_transit_depth_summary
@@ -187,14 +189,14 @@ except ImportError:
 try:  # plots
     from plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
         plot_prior_posterior_comparison, plot_ktmf_qc_metrics, \
-        plot_stellar_variability, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
+        plot_stellar_variability, plot_differential_magnitude, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
         plot_comp_star_calibration_series, plot_individual_comp_star_calibration_series, \
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
         plot_adaptive_aperture_diagnostics
 except ImportError:  # package import
     from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
         plot_prior_posterior_comparison, plot_ktmf_qc_metrics, \
-        plot_stellar_variability, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
+        plot_stellar_variability, plot_differential_magnitude, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
         plot_comp_star_calibration_series, plot_individual_comp_star_calibration_series, \
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
         plot_adaptive_aperture_diagnostics
@@ -251,6 +253,8 @@ AIRMASS_FLAT_RANGE_THRESHOLD = 0.05
 LIGHTCURVE_MIN_VALID_POINTS = 5
 STELLAR_VARIABILITY_ONLY_DEFAULT = False
 STELLAR_VARIABILITY_ENSEMBLE_DEFAULT = True
+REQUIRE_APPARENT_MAGNITUDES_DEFAULT = True
+USE_EXACTLY_PROVIDED_COMPARISONS_DEFAULT = False
 STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS = 2
 TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT = 5
 STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS = 5
@@ -4073,7 +4077,10 @@ def build_stellar_variability_only_lightcurve(
         stellar_variability_comp_flux_error=np.asarray(prepared.get('comp_flux_error'), dtype=float)[oot_mask][finite],
         stellar_variability_exposure_times_seconds=exposure_times_seconds,
         airmass_fit_skipped=True,
-        airmass_correction_note="Skipped in stellar-variability-only mode; no transit/systematics model was fit.",
+        airmass_correction_note=(
+            "Intentionally not applied to stellar variability; the raw target/reference ratio is "
+            "preserved so real time-dependent variability is not fitted away."
+        ),
         transit_qc={
             'status': 'SKIPPED',
             'summary': 'Stellar variability only mode skipped transit fitting.',
@@ -5802,7 +5809,13 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
         if data_highres is None:
             data_highres, _ = estimate_transit_duration_samples_from_fit(final_fit, sample_count=1)
         if data_highres is not None:
-            plot_final_lightcurve(final_fit, data_highres, p_dict['pName'], candidate_info_dict['save'], observation_date)
+            plot_final_lightcurve(
+                final_fit,
+                data_highres,
+                p_dict['pName'],
+                candidate_info_dict['save'],
+                observation_date,
+            )
         plot_prior_posterior_comparison(final_fit, p_dict, p_dict['pName'], candidate_info_dict['save'], observation_date)
         plot_ktmf_qc_metrics(final_fit, p_dict['pName'], candidate_info_dict['save'], observation_date)
     except Exception as exc:
@@ -5814,6 +5827,8 @@ def save_comparison_candidate_full_reduction_outputs(save_dir, provisional_fit, 
     output_files = OutputFiles(final_fit, p_dict, candidate_info_dict, duration_samples)
     try:
         phase = get_phase(final_fit.time, p_dict['pPer'], final_fit.parameters['tmid'])
+        output_files.differential_magnitude()
+        output_files.stellar_variability_differential_magnitude()
         output_files.final_lightcurve(phase)
     except Exception as exc:
         archive_errors.append(archive_exception_payload(
@@ -14483,6 +14498,25 @@ def project_ra_dec_to_wcs_pixel(ra, dec, wcs_header):
     return x_pixel, y_pixel
 
 
+def project_comparison_radec_to_pixels(comp_stars_radec, wcs_header, image_shape):
+    """Project supplied celestial comparison coordinates onto a reference image."""
+    projected = []
+    for index, (ra_deg, dec_deg) in enumerate(comp_stars_radec or [], start=1):
+        try:
+            x_pixel, y_pixel = project_ra_dec_to_wcs_pixel(ra_deg, dec_deg, wcs_header)
+        except Exception as exc:
+            raise ValueError(
+                f"comparison star {index} RA/Dec could not be projected by the reference-image WCS"
+            ) from exc
+        if not pixel_within_image(x_pixel, y_pixel, image_shape):
+            raise ValueError(
+                f"comparison star {index} at RA={ra_deg:.8f}, Dec={dec_deg:.8f} "
+                "projects outside the reference image"
+            )
+        projected.append([x_pixel, y_pixel])
+    return projected
+
+
 def _representative_obs_time(obs_times):
     if obs_times is None:
         return None
@@ -21597,7 +21631,17 @@ def stellar_variability_raw_photometry(lc_fit):
 
 
 def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name,
-                                              observed_filter=None):
+                                              observed_filter=None, observation_date=None):
+    # Differential photometry is independent of catalogue calibration.  Emit
+    # it before validating the comparison magnitude so a failed apparent-
+    # magnitude attempt can never suppress the raw stellar-variability output.
+    save_stellar_variability_differential_products(
+        lc_fit,
+        save,
+        s_name,
+        observation_date=observation_date,
+        observed_filter=observed_filter,
+    )
     comp_mag = _finite_float(comp_star.get('mag'))
     comp_mag_error = normalized_magnitude_error(comp_star.get('error'))
     derived_catalog_reference = bool(comp_star.get('derived_catalog_reference', False))
@@ -21634,17 +21678,13 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     )
 
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
-    fit_airmass_model = np.asarray(
-        getattr(lc_fit, 'airmass_model', np.ones_like(fit_data)),
-        dtype=float,
-    )
     fit_airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones_like(fit_data)), dtype=float)
     # Public magnitude products are labelled BJD_TDB; ``time`` is the
     # barycentric series and ``jd_times`` retains the original FITS JD/UTC.
     fit_times = np.asarray(getattr(lc_fit, 'time', getattr(lc_fit, 'jd_times', [])), dtype=float)
     transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
 
-    if not (fit_data.shape == fit_airmass_model.shape == fit_airmass.shape == fit_times.shape):
+    if not (fit_data.shape == fit_airmass.shape == fit_times.shape):
         raise RuntimeError("Lightcurve arrays have inconsistent shapes for stellar variability output.")
 
     target_flux, comp_flux, target_flux_error, comp_flux_error = stellar_variability_raw_photometry(lc_fit)
@@ -21661,31 +21701,17 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     comp_flux = comp_flux[mask_ref]
     target_flux_error = target_flux_error[mask_ref]
     comp_flux_error = comp_flux_error[mask_ref]
-    selected_airmass_model = fit_airmass_model[mask_ref]
     selected_times = fit_times[mask_ref]
     selected_airmass = fit_airmass[mask_ref]
 
     with np.errstate(divide='ignore', invalid='ignore'):
         raw_ratio = np.divide(target_flux, comp_flux)
-    valid_airmass_model = (
-        np.isfinite(selected_airmass_model)
-        & (selected_airmass_model > 0)
-    )
-    airmass_reference = (
-        float(np.nanmedian(selected_airmass_model[valid_airmass_model]))
-        if np.any(valid_airmass_model)
-        else 1.0
-    )
-    if not np.isfinite(airmass_reference) or airmass_reference <= 0:
-        airmass_reference = 1.0
-    relative_airmass_model = np.divide(
-        selected_airmass_model,
-        airmass_reference,
-        out=np.full(selected_airmass_model.shape, np.nan, dtype=float),
-        where=valid_airmass_model,
-    )
+    # Do not apply the transit fit's airmass trend to stellar-variability
+    # measurements.  A real stellar change that is correlated with time is
+    # also correlated with airmass during a normal observing sequence, so the
+    # detrending model could suppress the astrophysical signal.
+    calibrated_ratio = raw_ratio
     with np.errstate(divide='ignore', invalid='ignore'):
-        calibrated_ratio = np.divide(raw_ratio, relative_airmass_model)
         target_mag = comp_mag - (2.5 * np.log10(calibrated_ratio))
         magnitude_factor = 2.5 / np.log(10.0)
         explicit_flux_error = magnitude_factor * np.sqrt(
@@ -22193,7 +22219,7 @@ def choose_selected_comp_catalog_reference_candidate(candidates, observed_filter
 
 def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vsp_ind, best_comp, save, s_name,
                         observed_filter=None, comp_ra_dec=None, field_catalog=None, reference_image=None,
-                        wcs_file=None,
+                        wcs_file=None, observation_date=None,
                         catalog_match_radius_arcsec=NEXTASTRO_PHOTOMETRY_MATCH_RADIUS_ARCSEC):
     try:
         if best_comp is None:
@@ -22310,6 +22336,7 @@ def stellar_variability(fit_lc_refs, fit_lc_best, comp_stars, vsp_comp_stars, vs
             save,
             s_name,
             observed_filter=observed_filter,
+            observation_date=observation_date,
         )
     except KeyError as e:
         log_info(f"Key error in processing stellar variability: {e}", warn=True)
@@ -25848,6 +25875,87 @@ def build_absolute_comp_ensemble_uncertainty(comp_flux_map, comp_error_map, memb
     return ensemble_unc
 
 
+def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
+                                               comp_flux_map, comp_error_map, member_keys,
+                                               validity_mask_func=valid_comparison_frame_mask):
+    """Combine exactly the requested reference members without catalogue magnitudes."""
+    requested_keys = [key for key in member_keys or [] if key]
+    ensemble_flux, used_keys = build_absolute_comp_ensemble_flux(
+        comp_flux_map,
+        requested_keys,
+        validity_mask_func=validity_mask_func,
+    )
+    if ensemble_flux is None or used_keys != requested_keys:
+        return {
+            'applied': False,
+            'failure_reason': 'not every requested comparison had a usable flux series',
+            'member_keys': used_keys,
+        }
+    ensemble_error = build_absolute_comp_ensemble_uncertainty(
+        comp_flux_map,
+        comp_error_map,
+        used_keys,
+        validity_mask_func=validity_mask_func,
+    )
+
+    target_flux = np.asarray(target_flux, dtype=float)
+    if target_flux_error is None:
+        target_flux_error = source_flux_uncertainty_from_counts(target_flux)
+    target_flux_error = np.asarray(target_flux_error, dtype=float)
+    if target_flux_error.shape != target_flux.shape:
+        target_flux_error = source_flux_uncertainty_from_counts(target_flux)
+    if ensemble_error is None or np.asarray(ensemble_error).shape != ensemble_flux.shape:
+        ensemble_error = source_flux_uncertainty_from_counts(ensemble_flux)
+    ensemble_error = np.asarray(ensemble_error, dtype=float)
+
+    all_members_valid = np.ones(target_flux.shape, dtype=bool)
+    for key in requested_keys:
+        member_flux = np.asarray(comp_flux_map[key], dtype=float)
+        if member_flux.shape != target_flux.shape:
+            return {
+                'applied': False,
+                'failure_reason': f'{key} had a mismatched flux-series shape',
+                'member_keys': used_keys,
+            }
+        all_members_valid &= validity_mask_func(member_flux)
+
+    valid = (
+        all_members_valid
+        & np.isfinite(target_flux)
+        & (target_flux > 0)
+        & np.isfinite(ensemble_flux)
+        & (ensemble_flux > 0)
+        & np.isfinite(target_flux_error)
+        & (target_flux_error >= 0)
+        & np.isfinite(ensemble_error)
+        & (ensemble_error >= 0)
+    )
+    relative_flux = np.full(target_flux.shape, np.nan, dtype=float)
+    relative_flux_error = np.full(target_flux.shape, np.nan, dtype=float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        relative_flux[valid] = target_flux[valid] / ensemble_flux[valid]
+        relative_flux_error[valid] = relative_flux[valid] * np.sqrt(
+            (target_flux_error[valid] / target_flux[valid]) ** 2
+            + (ensemble_error[valid] / ensemble_flux[valid]) ** 2
+        )
+    valid &= np.isfinite(relative_flux) & (relative_flux > 0)
+    valid &= np.isfinite(relative_flux_error) & (relative_flux_error > 0)
+    return {
+        'applied': bool(np.count_nonzero(valid) >= LIGHTCURVE_MIN_VALID_POINTS),
+        'failure_reason': (
+            None
+            if np.count_nonzero(valid) >= LIGHTCURVE_MIN_VALID_POINTS
+            else 'fewer than five frames contained every requested comparison member'
+        ),
+        'member_keys': used_keys,
+        'reference_flux': ensemble_flux,
+        'reference_flux_error': ensemble_error,
+        'relative_flux': relative_flux,
+        'relative_flux_error': relative_flux_error,
+        'valid_mask': valid,
+    }
+
+
 def comparison_star_coverage_summary(comp_flux_map,
                                      min_fraction=COMPARISON_STAR_MIN_COVERAGE_FRACTION,
                                      min_points=COMPARISON_STAR_MIN_VALID_FRAMES,
@@ -26227,7 +26335,8 @@ def comparison_star_candidate_frame_outlier_summary(
 
 
 def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_rejection=False,
-                                      validity_mask_func=valid_comparison_frame_mask):
+                                      validity_mask_func=valid_comparison_frame_mask,
+                                      bypass_vetting=False):
     if not comp_flux_map:
         return {
             'pairwise_matrix': np.empty((0, 0), dtype=float),
@@ -26255,7 +26364,7 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
     }
     coverage_summary = comparison_star_coverage_summary(
         comp_flux_map,
-        skip_rejection=skip_low_coverage_rejection,
+        skip_rejection=(skip_low_coverage_rejection or bypass_vetting),
         validity_mask_func=validity_mask_func,
     )
     coverage_qualified_keys = [
@@ -26353,10 +26462,10 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
 
         return pairwise_matrix, comp_summaries
 
-    active_keys = list(coverage_qualified_keys)
+    active_keys = list(comp_keys if bypass_vetting else coverage_qualified_keys)
     rejected_outlier_keys = set()
     rejection_metadata = {}
-    for _ in range(COMPARISON_STAR_SUITABILITY_MAX_ITERS):
+    for _ in range(0 if bypass_vetting else COMPARISON_STAR_SUITABILITY_MAX_ITERS):
         _, iteration_summaries = build_stability_iteration(active_keys)
         active_indices = [comp_keys.index(key) for key in active_keys]
         outlier_summary = apply_comparison_star_suitability_outlier_rejection(
@@ -26383,10 +26492,22 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
         rejected_outlier_keys.update(newly_rejected_keys)
         active_keys = [key for key in active_keys if key not in rejected_outlier_keys]
 
-    image_outlier_summary = comparison_star_image_outlier_summary(
-        normalized_flux_map,
-        active_keys,
-    )
+    if bypass_vetting:
+        series_length = np.asarray(next(iter(normalized_flux_map.values()))).shape[0]
+        image_outlier_summary = {
+            'frame_keep_mask': np.ones(series_length, dtype=bool),
+            'rejected_frame_count': 0,
+            'sigma': COMPARISON_IMAGE_OUTLIER_SIGMA,
+            'required_valid_pair_count': 0,
+            'available_pair_count': 0,
+            'valid_pair_counts': np.zeros(series_length, dtype=int),
+            'outlier_pair_counts': np.zeros(series_length, dtype=int),
+        }
+    else:
+        image_outlier_summary = comparison_star_image_outlier_summary(
+            normalized_flux_map,
+            active_keys,
+        )
     field_image_keep_mask = image_outlier_summary['frame_keep_mask']
     pairwise_matrix, comp_summaries = build_stability_iteration(
         active_keys,
@@ -26424,12 +26545,24 @@ def comparison_star_stability_summary(comp_flux_map, airmass, skip_low_coverage_
             summary['suitability_scatter'] = final_scatter
             summary['suitability_high_threshold'] = final_high_threshold
 
-        candidate_frame_summary = comparison_star_candidate_frame_outlier_summary(
-            normalized_flux_map,
-            summary['key'],
-            active_keys,
-            field_image_keep_mask=field_image_keep_mask,
-        )
+        if bypass_vetting:
+            candidate_frame_summary = {
+                'frame_keep_mask': np.ones(field_image_keep_mask.shape, dtype=bool),
+                'rejected_frame_indices': [],
+                'rejected_frame_count': 0,
+                'valid_pair_counts': np.zeros(field_image_keep_mask.shape, dtype=int),
+                'outlier_pair_counts': np.zeros(field_image_keep_mask.shape, dtype=int),
+                'required_valid_pair_count': 0,
+                'available_pair_count': 0,
+                'sigma': COMPARISON_IMAGE_OUTLIER_SIGMA,
+            }
+        else:
+            candidate_frame_summary = comparison_star_candidate_frame_outlier_summary(
+                normalized_flux_map,
+                summary['key'],
+                active_keys,
+                field_image_keep_mask=field_image_keep_mask,
+            )
         summary['ensemble_frame_keep_mask'] = candidate_frame_summary['frame_keep_mask']
         summary['ensemble_frame_rejected_indices'] = candidate_frame_summary['rejected_frame_indices']
         summary['ensemble_frame_rejected_count'] = candidate_frame_summary['rejected_frame_count']
@@ -27196,7 +27329,8 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
                                            use_psf_photometry=True,
                                            use_aperture_photometry=True,
                                            psf_flux_data=None,
-                                           comp_overexposed_masks=None):
+                                           comp_overexposed_masks=None,
+                                           use_exactly_the_comps_provided=False):
     candidate_summaries = []
     comp_star_count = len(comp_stars)
     psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
@@ -27250,6 +27384,7 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
             airmass,
             skip_low_coverage_rejection=skip_low_comparison_coverage_rejection,
             validity_mask_func=robust_flux_floor_mask,
+            bypass_vetting=use_exactly_the_comps_provided,
         )
         psf_summary.update({
             'method': 'psf',
@@ -27274,6 +27409,7 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
                     comp_flux_map,
                     airmass,
                     skip_low_coverage_rejection=skip_low_comparison_coverage_rejection,
+                    bypass_vetting=use_exactly_the_comps_provided,
                 )
                 candidate_summary.update({
                     'method': 'aperture',
@@ -27288,11 +27424,21 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
         candidate for candidate in candidate_summaries
         if np.isfinite(candidate['field_score']) and candidate['best_comp_index'] is not None
     ]
-    if not finite_candidates:
+    if finite_candidates:
+        finite_candidates.sort(key=comparison_field_sort_key)
+        best_candidate = finite_candidates[0]
+    elif use_exactly_the_comps_provided and candidate_summaries:
+        # Stability is diagnostic-only in exact mode.  Keep a photometry
+        # method available even when the supplied stars have no finite field
+        # score; the later light-curve construction will either measure every
+        # requested star or fail explicitly without substitution.
+        best_candidate = candidate_summaries[0]
+        if best_candidate.get('best_comp_index') is None:
+            best_candidate['best_comp_index'] = 0
+            best_candidate['best_comp_score'] = np.inf
+    else:
         return None
 
-    finite_candidates.sort(key=comparison_field_sort_key)
-    best_candidate = finite_candidates[0]
     best_comp_index = best_candidate['best_comp_index']
     method_label = comparison_method_label(best_candidate)
     comp_summaries = []
@@ -27323,27 +27469,30 @@ def select_comparison_calibrated_photometry(psf_data, aper_data, apers, annuli, 
     return best_candidate
 
 
-def ranked_comparison_calibration_summaries(comparison_calibration):
+def ranked_comparison_calibration_summaries(comparison_calibration, include_unvetted=False):
     if comparison_calibration is None:
         return []
 
     ranked_summaries = []
     for summary in comparison_calibration.get('comp_summaries', []):
         aggregate_score = summary.get('aggregate_score', np.inf)
-        if summary.get('coverage_rejected'):
+        if not include_unvetted and summary.get('coverage_rejected'):
             continue
-        if summary.get('suitability_outlier_rejected'):
+        if not include_unvetted and summary.get('suitability_outlier_rejected'):
             continue
-        if not np.isfinite(aggregate_score):
+        if not include_unvetted and not np.isfinite(aggregate_score):
             continue
         ranked_summaries.append(summary)
 
-    ranked_summaries.sort(
-        key=lambda summary: (
-            summary.get('aggregate_score', np.inf),
-            summary.get('comp_index', np.inf),
+    if include_unvetted:
+        ranked_summaries.sort(key=lambda summary: summary.get('comp_index', np.inf))
+    else:
+        ranked_summaries.sort(
+            key=lambda summary: (
+                summary.get('aggregate_score', np.inf),
+                summary.get('comp_index', np.inf),
+            )
         )
-    )
     return ranked_summaries
 
 
@@ -28147,6 +28296,52 @@ def save_stellar_variability_magnitude_csv(vsp_params, save, target_name, observ
     return output_path
 
 
+def save_stellar_variability_differential_products(
+        lc_fit,
+        save,
+        target_name,
+        observation_date=None,
+        observed_filter=None):
+    """Save raw target/reference variability products without airmass detrending."""
+    csv_path = None
+    try:
+        csv_path = write_differential_magnitude_csv(
+            lc_fit,
+            save,
+            target_name,
+            observation_date=observation_date,
+            observed_filter=observed_filter,
+            out_of_transit_only=True,
+            apply_airmass_correction=False,
+            filename_prefix='StellarVariabilityDifferentialMagnitude',
+        )
+    except Exception as exc:
+        log_info(
+            "Warning: could not save the stellar-variability differential-magnitude CSV "
+            f"({describe_retry_exception(exc)}).",
+            warn=True,
+        )
+    try:
+        plot_differential_magnitude(
+            lc_fit,
+            target_name,
+            save,
+            observation_date or 'undated',
+            observed_filter=observed_filter,
+            out_of_transit_only=True,
+            apply_airmass_correction=False,
+            filename_prefix='StellarVariabilityDifferentialMagnitude',
+            save_stellar_variability_alias=True,
+        )
+    except Exception as exc:
+        log_info(
+            "Warning: could not save the stellar-variability differential-magnitude plot "
+            f"({describe_retry_exception(exc)}).",
+            warn=True,
+        )
+    return csv_path
+
+
 def build_stellar_variability_ensemble_params_from_fit(
         lc_fit,
         save,
@@ -28154,6 +28349,13 @@ def build_stellar_variability_ensemble_params_from_fit(
         observed_filter=None,
         observation_date=None,
         target_metadata=None):
+    save_stellar_variability_differential_products(
+        lc_fit,
+        save,
+        s_name,
+        observation_date=observation_date,
+        observed_filter=observed_filter,
+    )
     magnitudes = np.asarray(
         getattr(lc_fit, 'stellar_variability_ensemble_magnitudes', []),
         dtype=float,
@@ -28282,6 +28484,22 @@ def build_stellar_variability_ensemble_params_from_fit(
     return vsp_params
 
 
+def should_require_apparent_magnitudes(config_value):
+    return parse_bool_config_value(
+        config_value,
+        REQUIRE_APPARENT_MAGNITUDES_DEFAULT,
+        'require_apparent_magnitudes',
+    )
+
+
+def should_use_exactly_the_comps_provided(config_value):
+    return parse_bool_config_value(
+        config_value,
+        USE_EXACTLY_PROVIDED_COMPARISONS_DEFAULT,
+        'use_exactly_the_comps_provided',
+    )
+
+
 def build_stellar_variability_params_from_photometry_selection(
         selection,
         calibration_stars,
@@ -28332,6 +28550,7 @@ def build_stellar_variability_params_from_photometry_selection(
         save,
         s_name,
         observed_filter=observed_filter,
+        observation_date=observation_date,
     )
 
 
@@ -28351,8 +28570,13 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                                                STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
                                                calibration_stars=None,
                                                observed_filter=None,
-                                               target_catalog_match=None):
-    ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
+                                               target_catalog_match=None,
+                                               require_apparent_magnitudes=True,
+                                               use_exactly_the_comps_provided=False):
+    ranked_summaries = ranked_comparison_calibration_summaries(
+        comparison_calibration,
+        include_unvetted=use_exactly_the_comps_provided,
+    )
     if not ranked_summaries:
         return {
             'ranked_summaries': [],
@@ -28479,16 +28703,112 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
             candidate_target_flux = target_flux
             candidate_target_flux_error = target_flux_error
 
-        member_selection = select_stellar_variability_ensemble_members(
-            ranked_summaries,
-            calibration_stars,
-            comp_flux_map,
-            observed_filter=observed_filter,
-            target_catalog_match=target_catalog_match,
-            max_members=maximum_number_of_ensemble_comparisons_for_stellar_variability,
-            times=times,
+        fixed_reference_mode = (
+            use_exactly_the_comps_provided or not require_apparent_magnitudes
         )
-        ensemble_members = member_selection['members']
+        prebuilt_ensemble_series = None
+        if fixed_reference_mode:
+            if use_exactly_the_comps_provided:
+                selected_summaries = list(ranked_summaries)
+            else:
+                selected_summaries = list(ranked_summaries)[
+                    :parse_maximum_number_of_ensemble_comparisons_for_stellar_variability(
+                        maximum_number_of_ensemble_comparisons_for_stellar_variability
+                    )
+                ]
+            ensemble_members = []
+            calibrated_members = []
+            for summary in selected_summaries:
+                member = {
+                    'key': summary.get('key'),
+                    'comp_index': summary.get('comp_index'),
+                    'label': summary.get('label', summary.get('key')),
+                    'position': summary.get('position'),
+                    'summary': summary,
+                }
+                ensemble_members.append(member)
+                calibration = stellar_variability_calibration_for_position(
+                    calibration_stars,
+                    summary.get('position'),
+                    observed_filter=observed_filter,
+                )
+                if calibration is not None:
+                    calibrated_members.append({**member, **calibration})
+
+            requested_keys = [member['key'] for member in ensemble_members if member.get('key')]
+            if len(calibrated_members) == len(ensemble_members) and ensemble_members:
+                prebuilt_ensemble_series = build_stellar_variability_calibrated_ensemble_series(
+                    candidate_target_flux,
+                    candidate_target_flux_error,
+                    comp_flux_map,
+                    comp_error_map,
+                    calibrated_members,
+                    minimum_members=len(calibrated_members),
+                )
+                if prebuilt_ensemble_series.get('applied'):
+                    ensemble_members = calibrated_members
+            if not prebuilt_ensemble_series or not prebuilt_ensemble_series.get('applied'):
+                relative_series = build_relative_comparison_ensemble_series(
+                    candidate_target_flux,
+                    candidate_target_flux_error,
+                    comp_flux_map,
+                    comp_error_map,
+                    requested_keys,
+                    validity_mask_func=(
+                        robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
+                    ),
+                )
+                if relative_series.get('applied'):
+                    valid_member_count = np.where(
+                        relative_series['valid_mask'],
+                        len(requested_keys),
+                        0,
+                    )
+                    prebuilt_ensemble_series = {
+                        'applied': True,
+                        'failure_reason': None,
+                        'magnitude': np.full(candidate_target_flux.shape, np.nan, dtype=float),
+                        'magnitude_error': np.full(candidate_target_flux.shape, np.nan, dtype=float),
+                        'relative_flux': relative_series['relative_flux'],
+                        'relative_flux_error': relative_series['relative_flux_error'],
+                        'synthetic_reference_flux': relative_series['reference_flux'],
+                        'synthetic_reference_flux_error': relative_series['reference_flux_error'],
+                        'valid_member_count': valid_member_count,
+                        'baseline_magnitude': np.nan,
+                    }
+                else:
+                    prebuilt_ensemble_series = relative_series
+            member_selection = {
+                'members': ensemble_members,
+                'rejected': [],
+                'calibration_error_clip': {},
+                'target_catalog_profile': {},
+                'prelimit_member_count': len(ensemble_members),
+                'member_limit': len(ensemble_members),
+                'gap_stability': {
+                    'applied': False,
+                    'reason': 'disabled for a fixed, unvetted comparison reference',
+                    'boundaries': [],
+                    'candidates': {},
+                },
+                'fixed_reference': True,
+                'apparent_calibration_available': bool(
+                    prebuilt_ensemble_series
+                    and prebuilt_ensemble_series.get('applied')
+                    and np.any(np.isfinite(prebuilt_ensemble_series.get('magnitude', [])))
+                ),
+            }
+        else:
+            member_selection = select_stellar_variability_ensemble_members(
+                ranked_summaries,
+                calibration_stars,
+                comp_flux_map,
+                observed_filter=observed_filter,
+                target_catalog_match=target_catalog_match,
+                max_members=maximum_number_of_ensemble_comparisons_for_stellar_variability,
+                times=times,
+            )
+            ensemble_members = member_selection['members']
         clip_summary = member_selection['calibration_error_clip']
         for rejected_member in member_selection['rejected']:
             log_info(
@@ -28499,7 +28819,11 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
 
         if len(ensemble_members) >= STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
             member_text = ", ".join(
-                f"{member['label']} (catalog sigma={member['magnitude_error']:.4f} mag)"
+                (
+                    f"{member['label']} (catalog sigma={member['magnitude_error']:.4f} mag)"
+                    if member.get('magnitude_error') is not None
+                    else f"{member['label']} (differential only)"
+                )
                 for member in ensemble_members
             )
             threshold = clip_summary.get('high_threshold', np.nan)
@@ -28509,7 +28833,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                 else ""
             )
             log_info(
-                "Stellar-variability-only calibrated ensemble members: "
+                "Stellar-variability-only comparison ensemble members: "
                 f"{member_text}{threshold_text}."
             )
             if member_selection.get('prelimit_member_count', 0) > len(ensemble_members):
@@ -28519,7 +28843,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     f"of {len(ensemble_members)} closest "
                     "to the target in catalog color and magnitude."
                 )
-            ensemble_series = build_stellar_variability_calibrated_ensemble_series(
+            ensemble_series = prebuilt_ensemble_series or build_stellar_variability_calibrated_ensemble_series(
                 candidate_target_flux,
                 candidate_target_flux_error,
                 comp_flux_map,
@@ -28536,12 +28860,12 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     & (ensemble_series['relative_flux_error'] > 0)
                 )
                 availability_diagnostic = build_time_rejection_diagnostic(
-                    "Stellar-variability calibrated ensemble availability filter",
+                    "Stellar-variability comparison ensemble availability filter",
                     times,
                     fit_mask,
                     note=(
-                        "Kept frames with a finite target measurement and every selected unsaturated, "
-                        "VSX-vetted, catalog-calibrated ensemble member."
+                        "Kept frames with a finite target measurement and every selected comparison "
+                        "ensemble member."
                     ),
                 )
                 filter_diagnostics = []
@@ -28623,7 +28947,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     ensemble_summary = {
                         'comp_index': None,
                         'key': 'ensemble',
-                        'label': f"Calibrated comparison ensemble ({len(ensemble_members)} comps)",
+                        'label': f"Comparison ensemble ({len(ensemble_members)} comps)",
                         'position': None,
                         'aggregate_score': comparison_calibration.get('field_score', np.inf),
                         'coverage_count': int(np.count_nonzero(fit_mask)),
@@ -28679,10 +29003,10 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'eebls_snr': np.nan,
                         'transit_delta_bic': np.nan,
                         'residual_scatter': scatter,
-                        'target_model_scatter_basis': 'out-of-transit calibrated ensemble scatter',
+                        'target_model_scatter_basis': 'out-of-transit comparison ensemble scatter',
                         'projected_full_residual_scatter': scatter,
                         'selection_scatter': scatter,
-                        'selection_scatter_basis': 'out-of-transit calibrated ensemble scatter',
+                        'selection_scatter_basis': 'out-of-transit comparison ensemble scatter',
                         'target_comp_scatter': target_comp_flux_scatter(
                             fit_result.stellar_variability_target_flux,
                             fit_result.stellar_variability_comp_flux,
@@ -28697,12 +29021,18 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'rejected_by_transit_qc': False,
                         'selected': True,
                         'selection_reason': (
-                            'selected: default calibrated ensemble of bright, unsaturated, VSX-vetted '
-                            'comparison stars after high-side catalog-error clipping'
+                            'selected: exact supplied comparison ensemble without star vetting'
+                            if use_exactly_the_comps_provided
+                            else (
+                                'selected: fixed differential comparison ensemble'
+                                if fixed_reference_mode
+                                else 'selected: default calibrated ensemble of bright, unsaturated, '
+                                     'VSX-vetted comparison stars after high-side catalog-error clipping'
+                            )
                         ),
                         'full_reduction_applied': True,
                         'full_reduction_note': (
-                            'completed the stellar-variability-only calibrated ensemble reduction '
+                            'completed the stellar-variability-only comparison ensemble reduction '
                             'without fitting a transit model.'
                         ),
                         'stellar_variability_transit_exclusion': exclusion_summary,
@@ -28713,16 +29043,44 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'ranked_summaries': ranked_summaries,
                         'attempts': attempts,
                         'selected_result': selected_result,
-                        'selection_metric': 'stellar_variability_ensemble',
+                        'selection_metric': (
+                            'exact_stellar_variability_ensemble'
+                            if use_exactly_the_comps_provided
+                            else 'stellar_variability_ensemble'
+                        ),
                         'stopped_after_first_qc_pass': False,
                         'stopped_after_promising_partial': False,
                     }
+            if use_exactly_the_comps_provided:
+                log_info(
+                    "Error: the exact supplied stellar-variability ensemble did not yield a usable "
+                    "light curve; exact-comparison mode will not drop a member or select another star.",
+                    error=True,
+                )
+                return {
+                    'ranked_summaries': ranked_summaries,
+                    'attempts': attempts,
+                    'selected_result': None,
+                    'selection_metric': 'exact_stellar_variability_ensemble',
+                }
             log_info(
-                "Warning: the default stellar-variability calibrated ensemble did not yield a usable "
+                "Warning: the stellar-variability comparison ensemble did not yield a usable "
                 "out-of-transit light curve; falling back to single-comparison selection.",
                 warn=True,
             )
         else:
+            if use_exactly_the_comps_provided:
+                log_info(
+                    "Error: the exact supplied comparison ensemble contained fewer than two usable "
+                    "members; exact-comparison mode will not fall back to one star.",
+                    error=True,
+                )
+                return {
+                    'ranked_summaries': ranked_summaries,
+                    'attempts': attempts,
+                    'selected_result': None,
+                    'selection_metric': 'exact_stellar_variability_ensemble',
+                }
             log_info(
                 "Warning: fewer than two bright, unsaturated, VSX-vetted comparison stars had usable "
                 "catalog calibrations after calibration-error clipping; falling back to single-comparison "
@@ -29214,6 +29572,7 @@ def clear_previous_fortuitous_variable_products(variable_dir):
     for prefix in (
         'AID_AAVSO_',
         'StellarVariability_',
+        'DifferentialMagnitude_',
         'EnsembleSelection_',
         'FortuitousVariableStatus_',
     ):
@@ -29223,6 +29582,12 @@ def clear_previous_fortuitous_variable_products(variable_dir):
     plot_path = output_dir / 'working_artifacts' / 'Stellar_Variability.png'
     if plot_path.is_file():
         plot_path.unlink()
+    for differential_plot in (
+        output_dir / 'Stellar_Variability_DifferentialMagnitude.png',
+        output_dir / 'working_artifacts' / 'Stellar_Variability_DifferentialMagnitude.png',
+    ):
+        if differential_plot.is_file():
+            differential_plot.unlink()
     working_artifacts_dir = output_dir / 'working_artifacts'
     if working_artifacts_dir.is_dir():
         try:
@@ -29375,21 +29740,103 @@ def process_fortuitous_variables(
                     f"significance={rejected_candidate.get('maximum_step_significance'):.2f} sigma."
                 )
             members = member_selection.get('members', [])
-            if len(members) < required_comparison_members:
-                raise ValueError(
-                    f'fewer than {required_comparison_members} independently calibrated '
-                    'comparison member(s)'
+            apparent_reference_available = len(members) >= required_comparison_members
+            if not apparent_reference_available:
+                # A catalogue magnitude is optional for differential
+                # photometry.  Retain the normal vetted/ranked candidate order
+                # and build the requested single or ensemble reference from
+                # instrumental flux alone.
+                raw_members = []
+                member_limit = (
+                    1
+                    if use_single_comparison
+                    else parse_maximum_number_of_ensemble_comparisons_for_stellar_variability(
+                        maximum_number_of_ensemble_comparisons_for_stellar_variability
+                    )
                 )
+                for summary in ranked_summaries:
+                    key = summary.get('key')
+                    flux = np.asarray(comp_flux_map.get(key, []), dtype=float)
+                    if key not in comp_flux_map or np.count_nonzero(
+                        np.isfinite(flux) & (flux > 0)
+                    ) < LIGHTCURVE_MIN_VALID_POINTS:
+                        continue
+                    raw_members.append({
+                        'key': key,
+                        'comp_index': summary.get('comp_index'),
+                        'label': summary.get('label', key),
+                        'position': summary.get('position'),
+                        'summary': summary,
+                    })
+                    if len(raw_members) >= member_limit:
+                        break
+                members = raw_members
+                if len(members) < required_comparison_members:
+                    raise ValueError(
+                        f'fewer than {required_comparison_members} usable differential '
+                        'comparison member(s)'
+                    )
+                member_selection = {
+                    **member_selection,
+                    'members': members,
+                    'fixed_reference': True,
+                    'apparent_calibration_available': False,
+                }
             output_magnitude_error_limit = fortuitous_output_magnitude_error_limit(members)
             variable['output_magnitude_error_limit'] = output_magnitude_error_limit
-            ensemble_series = build_stellar_variability_calibrated_ensemble_series(
-                target_flux,
-                target_flux_error,
-                comp_flux_map,
-                comp_error_map,
-                members,
-                minimum_members=required_comparison_members,
-            )
+            if apparent_reference_available:
+                ensemble_series = build_stellar_variability_calibrated_ensemble_series(
+                    target_flux,
+                    target_flux_error,
+                    comp_flux_map,
+                    comp_error_map,
+                    members,
+                    minimum_members=required_comparison_members,
+                )
+            else:
+                relative_series = build_relative_comparison_ensemble_series(
+                    target_flux,
+                    target_flux_error,
+                    comp_flux_map,
+                    comp_error_map,
+                    [member.get('key') for member in members],
+                )
+                relative_flux = np.asarray(
+                    relative_series.get('relative_flux', np.full(target_flux.shape, np.nan)),
+                    dtype=float,
+                )
+                relative_flux_error = np.asarray(
+                    relative_series.get(
+                        'relative_flux_error',
+                        np.full(target_flux.shape, np.nan),
+                    ),
+                    dtype=float,
+                )
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    instrumental_magnitude_error = (
+                        (2.5 / np.log(10.0))
+                        * np.abs(relative_flux_error / relative_flux)
+                    )
+                ensemble_series = {
+                    'applied': relative_series.get('applied', False),
+                    'failure_reason': relative_series.get('failure_reason'),
+                    'relative_flux': relative_flux,
+                    'relative_flux_error': relative_flux_error,
+                    'synthetic_reference_flux': relative_series.get('reference_flux'),
+                    'synthetic_reference_flux_error': relative_series.get(
+                        'reference_flux_error'
+                    ),
+                    'magnitude': np.full(target_flux.shape, np.nan, dtype=float),
+                    'magnitude_error': instrumental_magnitude_error,
+                    'valid_member_count': np.where(
+                        relative_series.get(
+                            'valid_mask',
+                            np.zeros(target_flux.shape, dtype=bool),
+                        ),
+                        len(members),
+                        0,
+                    ),
+                }
             if not ensemble_series.get('applied'):
                 raise ValueError(ensemble_series.get('failure_reason') or 'ensemble combination failed')
 
@@ -29501,73 +29948,110 @@ def process_fortuitous_variables(
             if fit is None:
                 raise ValueError('stellar-variability light curve construction failed')
             variable_dir.mkdir(parents=True, exist_ok=True)
-            if use_single_comparison:
-                vsp_params = build_stellar_variability_params_from_fit(
-                    fit,
-                    selected_member.get('star', {}),
-                    selected_member.get('position'),
-                    reference_label,
-                    variable_dir,
-                    variable_name,
-                    observed_filter=observed_filter,
-                )
-            else:
-                selected_indices = np.asarray(fit.stellar_variability_source_indices, dtype=int)
-                fit.stellar_variability_ensemble_members = members
-                fit.stellar_variability_ensemble_magnitudes = ensemble_series['magnitude'][selected_indices]
-                fit.stellar_variability_ensemble_magnitude_errors = (
-                    ensemble_series['magnitude_error'][selected_indices]
-                )
-                fit.stellar_variability_ensemble_valid_member_counts = (
-                    ensemble_series['valid_member_count'][selected_indices]
-                )
-                fit.stellar_variability_ensemble_calibration_error_clip = member_selection.get(
-                    'calibration_error_clip', {}
-                )
-                fit.stellar_variability_ensemble_selection = member_selection
-                fit.stellar_variability_target_catalog_profile = member_selection.get(
-                    'target_catalog_profile', {}
-                )
-
-                target_metadata = fortuitous_variable_target_metadata(variable)
-                vsp_params = build_stellar_variability_ensemble_params_from_fit(
-                    fit,
-                    variable_dir,
-                    variable_name,
-                    observed_filter=observed_filter,
-                    observation_date=info_dict.get('date'),
-                    target_metadata=target_metadata,
-                )
-            if not vsp_params:
-                raise ValueError('no calibrated magnitude rows were produced')
-            csv_path = save_stellar_variability_magnitude_csv(
-                vsp_params,
+            differential_csv_path = write_differential_magnitude_csv(
+                fit,
                 variable_dir,
                 variable_name,
                 observation_date=info_dict.get('date'),
+                observed_filter=observed_filter,
             )
+            plot_differential_magnitude(
+                fit,
+                variable_name,
+                variable_dir,
+                info_dict.get('date'),
+                observed_filter=observed_filter,
+            )
+
+            apparent_output_error = None
+            vsp_params = []
+            csv_path = None
+            try:
+                if use_single_comparison:
+                    vsp_params = build_stellar_variability_params_from_fit(
+                        fit,
+                        selected_member.get('star', {}),
+                        selected_member.get('position'),
+                        reference_label,
+                        variable_dir,
+                        variable_name,
+                        observed_filter=observed_filter,
+                        observation_date=info_dict.get('date'),
+                    )
+                else:
+                    selected_indices = np.asarray(fit.stellar_variability_source_indices, dtype=int)
+                    fit.stellar_variability_ensemble_members = members
+                    fit.stellar_variability_ensemble_magnitudes = ensemble_series['magnitude'][selected_indices]
+                    fit.stellar_variability_ensemble_magnitude_errors = (
+                        ensemble_series['magnitude_error'][selected_indices]
+                    )
+                    fit.stellar_variability_ensemble_valid_member_counts = (
+                        ensemble_series['valid_member_count'][selected_indices]
+                    )
+                    fit.stellar_variability_ensemble_calibration_error_clip = member_selection.get(
+                        'calibration_error_clip', {}
+                    )
+                    fit.stellar_variability_ensemble_selection = member_selection
+                    fit.stellar_variability_target_catalog_profile = member_selection.get(
+                        'target_catalog_profile', {}
+                    )
+
+                    target_metadata = fortuitous_variable_target_metadata(variable)
+                    vsp_params = build_stellar_variability_ensemble_params_from_fit(
+                        fit,
+                        variable_dir,
+                        variable_name,
+                        observed_filter=observed_filter,
+                        observation_date=info_dict.get('date'),
+                        target_metadata=target_metadata,
+                    )
+                if vsp_params:
+                    csv_path = save_stellar_variability_magnitude_csv(
+                        vsp_params,
+                        variable_dir,
+                        variable_name,
+                        observation_date=info_dict.get('date'),
+                    )
+            except Exception as exc:
+                apparent_output_error = str(exc)
+                vsp_params = []
+                log_info(
+                    f"Warning: apparent-magnitude output was unavailable for {variable_name} "
+                    f"({exc}); differential-magnitude products were retained.",
+                    warn=True,
+                )
             variable_info = dict(info_dict)
             variable_info['save'] = str(variable_dir)
             variable_planet = {'sName': variable_name, 'pName': variable_name}
-            AIDOutputFiles(
-                fit,
-                variable_planet,
-                variable_info,
-                variable.get('auid'),
-                None,
-                vsp_params,
-            ).aavso()
-            aid_variable_name = variable.get('auid') or variable_name
-            combined_vsp_params.extend([
-                {**vsp_param, '_aid_name': aid_variable_name}
-                for vsp_param in vsp_params
-            ])
+            if vsp_params:
+                try:
+                    AIDOutputFiles(
+                        fit,
+                        variable_planet,
+                        variable_info,
+                        variable.get('auid'),
+                        None,
+                        vsp_params,
+                    ).aavso()
+                    aid_variable_name = variable.get('auid') or variable_name
+                    combined_vsp_params.extend([
+                        {**vsp_param, '_aid_name': aid_variable_name}
+                        for vsp_param in vsp_params
+                    ])
+                except Exception as exc:
+                    apparent_output_error = str(exc)
+                    log_info(
+                        f"Warning: AID apparent-magnitude output failed for {variable_name} "
+                        f"({exc}); differential-magnitude products were retained.",
+                        warn=True,
+                    )
             results.append({
                 'name': variable_name,
                 'auid': variable.get('auid'),
                 'category': category,
                 'output_directory': str(variable_dir),
-                'point_count': len(vsp_params),
+                'point_count': int(len(fit.time)),
+                'apparent_magnitude_point_count': len(vsp_params),
                 'reference_mode': reference_mode,
                 'comparison_label': reference_label,
                 'selected_comparison_gap_stability': (
@@ -29595,11 +30079,16 @@ def process_fortuitous_variables(
                 ),
                 'output_magnitude_error_max': variable.get('output_magnitude_error_max'),
                 'magnitude_csv': str(csv_path) if csv_path else None,
+                'differential_magnitude_csv': (
+                    str(differential_csv_path) if differential_csv_path else None
+                ),
+                'apparent_magnitude_error': apparent_output_error,
                 'status': 'completed',
             })
             log_info(
                 f"Fortuitous-variable photometry completed for {variable_name}: "
-                f"{len(vsp_params)} point(s), reference={reference_label} "
+                f"{len(fit.time)} differential point(s), {len(vsp_params)} apparent point(s), "
+                f"reference={reference_label} "
                 f"({reference_mode}), outputs={variable_dir}."
             )
         except Exception as exc:
@@ -29726,8 +30215,12 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  maximum_number_of_ensemble_comparisons_for_transit=
                                                  TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT,
                                                  exposure_times_seconds=None,
-                                                 gain_e_per_adu=None):
-    ranked_summaries = ranked_comparison_calibration_summaries(comparison_calibration)
+                                                 gain_e_per_adu=None,
+                                                 use_exactly_the_comps_provided=False):
+    ranked_summaries = ranked_comparison_calibration_summaries(
+        comparison_calibration,
+        include_unvetted=use_exactly_the_comps_provided,
+    )
     if not ranked_summaries:
         return {
             'ranked_summaries': [],
@@ -29793,13 +30286,17 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
 
     preflight_plans = []
     if use_ensemble_photometry_rather_than_single_comp:
-        ensemble_limit = parse_maximum_number_of_ensemble_comparisons_for_transit(
-            maximum_number_of_ensemble_comparisons_for_transit
-        )
-        active_keys = limited_ensemble_comparison_keys(
-            ranked_summaries,
-            ensemble_limit,
-        )
+        if use_exactly_the_comps_provided:
+            active_keys = [summary.get('key') for summary in ranked_summaries if summary.get('key')]
+            ensemble_limit = len(active_keys)
+        else:
+            ensemble_limit = parse_maximum_number_of_ensemble_comparisons_for_transit(
+                maximum_number_of_ensemble_comparisons_for_transit
+            )
+            active_keys = limited_ensemble_comparison_keys(
+                ranked_summaries,
+                ensemble_limit,
+            )
         if method == 'psf':
             comp_flux_map = {
                 summary['key']: psf_flux_series_from_rows(
@@ -29906,7 +30403,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             candidate_target_flux = target_flux
             candidate_target_flux_error = target_flux_error
 
-        if ensemble_flux is not None and member_keys:
+        exact_members_complete = (
+            not use_exactly_the_comps_provided
+            or member_keys == active_keys
+        )
+        if ensemble_flux is not None and member_keys and exact_members_complete:
             candidate_frame_keep_mask = np.ones(times.shape[0], dtype=bool)
             for summary in ranked_summaries:
                 if summary.get('key') not in set(member_keys):
@@ -29987,11 +30488,33 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 f"(configured maximum={ensemble_limit})."
             )
         else:
-            log_info(
-                "Warning: ensemble comparison photometry was enabled, but no usable non-rejected "
-                "comparison-star ensemble could be built; falling back to ranked single-comp fits.",
-                warn=True,
-            )
+            if use_exactly_the_comps_provided:
+                log_info(
+                    "Error: the fixed comparison ensemble could not be built with every supplied "
+                    "comparison star; exact-comparison mode will not drop a member or fall back to "
+                    "a different reference.",
+                    error=True,
+                )
+            else:
+                log_info(
+                    "Warning: ensemble comparison photometry was enabled, but no usable non-rejected "
+                    "comparison-star ensemble could be built; falling back to ranked single-comp fits.",
+                    warn=True,
+                )
+
+    if (
+        use_exactly_the_comps_provided
+        and use_ensemble_photometry_rather_than_single_comp
+        and not preflight_plans
+    ):
+        return {
+            'ranked_summaries': ranked_summaries,
+            'attempts': [],
+            'selected_result': None,
+            'selection_metric': 'exact_comparison_ensemble',
+            'stopped_after_first_qc_pass': False,
+            'stopped_after_promising_partial': False,
+        }
 
     if not preflight_plans:
         ranked_summaries_to_fit = ranked_summaries
@@ -30639,6 +31162,19 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                     if final_output_dir is not None:
                         selected_result['final_output_dir'] = str(final_output_dir)
 
+    if use_exactly_the_comps_provided:
+        selection_metric = (
+            'exact_comparison_ensemble'
+            if use_ensemble_photometry_rather_than_single_comp
+            else 'exact_single_comparison'
+        )
+        if selected_result is not None:
+            selected_result['selection_reason'] = (
+                'selected: used every supplied comparison as one fixed ensemble without vetting'
+                if use_ensemble_photometry_rather_than_single_comp
+                else 'selected: used the one supplied comparison without vetting or alternatives'
+            )
+
     for attempt in attempts:
         if selected_result is not None and attempt is selected_result:
             continue
@@ -30914,6 +31450,18 @@ def _main_impl():
         stellar_variability_only = should_run_stellar_variability_only(
             exotic_infoDict.get('stellar_variability_only', STELLAR_VARIABILITY_ONLY_DEFAULT)
         )
+        require_apparent_magnitudes = should_require_apparent_magnitudes(
+            exotic_infoDict.get(
+                'require_apparent_magnitudes',
+                REQUIRE_APPARENT_MAGNITUDES_DEFAULT,
+            )
+        )
+        use_exactly_the_comps_provided = should_use_exactly_the_comps_provided(
+            exotic_infoDict.get(
+                'use_exactly_the_comps_provided',
+                USE_EXACTLY_PROVIDED_COMPARISONS_DEFAULT,
+            )
+        )
         use_ensemble_photometry_for_stellar_variability = (
             should_use_ensemble_photometry_for_stellar_variability(
                 exotic_infoDict.get(
@@ -30943,6 +31491,29 @@ def _main_impl():
                 )
             )
         )
+        provided_comparison_radec = [
+            list(coords) for coords in (exotic_infoDict.get('comp_stars_radec') or [])
+        ]
+        comparisons_supplied_as_radec = bool(provided_comparison_radec)
+        provided_comparison_count = (
+            len(provided_comparison_radec)
+            if comparisons_supplied_as_radec
+            else len(exotic_infoDict.get('comp_stars') or [])
+        )
+        if use_exactly_the_comps_provided:
+            if provided_comparison_count == 0 and fitsortext == 1:
+                log_info(
+                    "Error: 'use_exactly_the_comps_provided' is enabled, but no comparison "
+                    "coordinates were supplied.",
+                    error=True,
+                )
+                return
+            fixed_ensemble = provided_comparison_count > 1
+            use_ensemble_photometry_rather_than_single_comp = fixed_ensemble
+            use_ensemble_photometry_for_stellar_variability = fixed_ensemble
+            if fixed_ensemble:
+                maximum_number_of_ensemble_comparisons_for_transit = provided_comparison_count
+                maximum_number_of_ensemble_comparisons_for_stellar_variability = provided_comparison_count
         photometer_fortuitous_variables = should_photometer_fortuitous_variables(
             exotic_infoDict.get(
                 'photometer_fortuitous_variables',
@@ -31571,6 +32142,26 @@ def _main_impl():
                 wcs_header = get_first_image_header(wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header, image_shape=reference_image.shape)
 
+                if comparisons_supplied_as_radec:
+                    try:
+                        exotic_infoDict['comp_stars'] = project_comparison_radec_to_pixels(
+                            provided_comparison_radec,
+                            wcs_header,
+                            reference_image.shape,
+                        )
+                    except ValueError as exc:
+                        log_info(
+                            "Error: supplied comparison-star RA/Dec coordinates are unusable: "
+                            f"{exc}.",
+                            error=True,
+                        )
+                        return
+                    plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
+                    log_info(
+                        f"Projected {len(exotic_infoDict['comp_stars'])} supplied comparison-star "
+                        "RA/Dec coordinate(s) onto the selected reference image."
+                    )
+
                 if reference_fallback is not None:
                     target_projection = estimate_target_pixel_from_ra_dec(
                         pDict,
@@ -31609,7 +32200,15 @@ def _main_impl():
 
                 auid = vsx_auid(ra_dec_tar[0], ra_dec_tar[1])
 
-                if reference_fallback is not None:
+                if reference_fallback is not None and not comparisons_supplied_as_radec:
+                    if use_exactly_the_comps_provided:
+                        log_info(
+                            "Error: the reference image containing the exact supplied comparison-star "
+                            "pixels was rejected. EXOTIC will not replace or reproject those comparisons "
+                            "while 'use_exactly_the_comps_provided' is enabled.",
+                            error=True,
+                        )
+                        return
                     old_comp_count = len(exotic_infoDict['comp_stars'])
                     exotic_infoDict['comp_stars'] = []
                     log_info(
@@ -31622,7 +32221,10 @@ def _main_impl():
                     vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
                                                          exotic_infoDict['filter'], img_scale,
                                                          user_comp_stars=exotic_infoDict['comp_stars'],
-                                                         user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ])
+                                                         user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ],
+                                                         max_new_comp_stars=(
+                                                             0 if use_exactly_the_comps_provided else 2
+                                                         ))
                     vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
 
                 try:
@@ -31674,7 +32276,10 @@ def _main_impl():
                     stellar_variability_only
                     and use_ensemble_photometry_for_stellar_variability
                 )
-                if automatic_calibration_selector_enabled or stellar_variability_ensemble_candidate_search:
+                if (
+                    not use_exactly_the_comps_provided
+                    and (automatic_calibration_selector_enabled or stellar_variability_ensemble_candidate_search)
+                ):
                     automatic_comp_count = parse_automatic_calibration_selector_count(
                         exotic_infoDict.get('automatic_optimal_calibration_selector_count')
                     )
@@ -31739,8 +32344,9 @@ def _main_impl():
                         exotic_infoDict['comp_stars'] = automatic_comp_stars
                         vsp_comp_stars = {}
 
-                check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
-                                         use_nextastro_variability_server=args.use_nextastro_variability_server)
+                if not use_exactly_the_comps_provided:
+                    check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
+                                             use_nextastro_variability_server=args.use_nextastro_variability_server)
 
                 while not exotic_infoDict['comp_stars']:
                     log_info("\nThere are no comparison stars left as all of them were indicated as variable stars."
@@ -31749,9 +32355,12 @@ def _main_impl():
                     check_for_variable_stars(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'],
                                              use_nextastro_variability_server=args.use_nextastro_variability_server)
 
-                exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
-                    exotic_infoDict['comp_stars']
-                )
+                if use_exactly_the_comps_provided:
+                    duplicate_comp_messages = []
+                else:
+                    exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
+                        exotic_infoDict['comp_stars']
+                    )
                 for duplicate_message in duplicate_comp_messages:
                     log_info(duplicate_message)
 
@@ -31811,13 +32420,16 @@ def _main_impl():
                     log_info("Fortuitous-variable photometry disabled per optional_info setting.")
 
                 if fortuitous_variables:
-                    science_comp_stars, variable_comparison_rejections = (
-                        filter_comparison_stars_against_fortuitous_variables(
-                            science_comp_stars,
-                            fortuitous_variables,
-                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                    if use_exactly_the_comps_provided:
+                        variable_comparison_rejections = []
+                    else:
+                        science_comp_stars, variable_comparison_rejections = (
+                            filter_comparison_stars_against_fortuitous_variables(
+                                science_comp_stars,
+                                fortuitous_variables,
+                                duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                            )
                         )
-                    )
                     if variable_comparison_rejections:
                         for rejection in variable_comparison_rejections:
                             log_info(
@@ -32022,7 +32634,11 @@ def _main_impl():
                         science_comp_stars,
                         user_targ_star=[exotic_UIprevTPX, exotic_UIprevTPY],
                         max_new_comp_stars=
-                        maximum_number_of_ensemble_comparisons_for_stellar_variability,
+                        (
+                            0
+                            if use_exactly_the_comps_provided
+                            else maximum_number_of_ensemble_comparisons_for_stellar_variability
+                        ),
                     )
                 )
                 if fallback_chart_id is not None:
@@ -32037,13 +32653,16 @@ def _main_impl():
                             duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
                         ) is None
                     }
-                    science_comp_stars, fallback_variable_rejections = (
-                        filter_comparison_stars_against_fortuitous_variables(
-                            science_comp_stars,
-                            fortuitous_variables,
-                            duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                    if use_exactly_the_comps_provided:
+                        fallback_variable_rejections = []
+                    else:
+                        science_comp_stars, fallback_variable_rejections = (
+                            filter_comparison_stars_against_fortuitous_variables(
+                                science_comp_stars,
+                                fortuitous_variables,
+                                duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                            )
                         )
-                    )
                     for rejection in fallback_variable_rejections:
                         log_info(
                             "Removed AAVSO VSP comparison star at "
@@ -32095,9 +32714,27 @@ def _main_impl():
                 # Build RA/Dec after the tracking list is finalized. Science comps remain first,
                 # followed by fortuitous-only ensemble candidates and then the VSX targets.
                 ra_dec_wcs = build_comp_ra_dec(ra_wcs, dec_wcs, exotic_infoDict['comp_stars'])
+                if (
+                    comparisons_supplied_as_radec
+                    and use_exactly_the_comps_provided
+                    and len(ra_dec_wcs) >= len(provided_comparison_radec)
+                ):
+                    # Preserve the user's celestial coordinates exactly for
+                    # frame-to-frame WCS tracking and output metadata. The
+                    # projected pixels remain the reference-frame centroids.
+                    ra_dec_wcs[:len(provided_comparison_radec)] = [
+                        list(coords) for coords in provided_comparison_radec
+                    ]
                 vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
                 plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             else:
+                if comparisons_supplied_as_radec:
+                    log_info(
+                        "Error: 'Comparison Star(s) RA & Dec' requires a usable celestial WCS on the "
+                        "selected reference image so the supplied stars can be projected into pixels.",
+                        error=True,
+                    )
+                    return
                 if reference_fallback is not None:
                     log_info(
                         "Error: the original reference image was removed, but the new reference image does not "
@@ -32112,9 +32749,12 @@ def _main_impl():
                         "the full-field VSX search will be skipped for this reduction.",
                         warn=True,
                     )
-                exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
-                    exotic_infoDict['comp_stars']
-                )
+                if use_exactly_the_comps_provided:
+                    duplicate_comp_messages = []
+                else:
+                    exotic_infoDict['comp_stars'], duplicate_comp_messages = deduplicate_comparison_star_coords(
+                        exotic_infoDict['comp_stars']
+                    )
                 for duplicate_message in duplicate_comp_messages:
                     log_info(duplicate_message)
                 science_comp_stars = [list(position) for position in exotic_infoDict['comp_stars']]
@@ -32247,14 +32887,27 @@ def _main_impl():
                 log_info("EEBLS transit initializer disabled per optional_info setting.")
             if not pick_comparison_by_eebls_snr:
                 log_info("Comparison-star selection by EEBLS SNR disabled per optional_info setting.")
-            if use_ensemble_photometry_rather_than_single_comp:
+            if use_exactly_the_comps_provided:
+                exact_mode = "single comparison" if len(science_comp_stars) == 1 else "fixed ensemble"
+                log_info(
+                    "Exact supplied-comparison mode enabled: EXOTIC will use the "
+                    f"{len(science_comp_stars)} supplied comparison coordinate(s) as a {exact_mode}, "
+                    "without automatic replacement, VSX rejection, stability vetting, ranking, or "
+                    "ensemble-size limiting."
+                )
+            elif use_ensemble_photometry_rather_than_single_comp:
                 log_info(
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "
                     "light curve will use non-rejected comparison stars as a combined reference, up to "
                     "maximum_number_of_ensemble_comparisons_for_transit="
                     f"{maximum_number_of_ensemble_comparisons_for_transit}."
                 )
-            if stellar_variability_only:
+            if not require_apparent_magnitudes:
+                log_info(
+                    "Apparent magnitudes are not required per optional_info; differential-magnitude "
+                    "products will still be written, and any available apparent calibration remains optional."
+                )
+            if stellar_variability_only and not use_exactly_the_comps_provided:
                 if use_ensemble_photometry_for_stellar_variability:
                     log_info(
                         "Stellar-variability calibrated ensemble enabled (default): EXOTIC will combine "
@@ -33630,11 +34283,16 @@ def _main_impl():
                 airmass,
                 science_comp_stars,
                 sigma_display,
-                skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
+                skip_low_comparison_coverage_rejection=(
+                    skip_low_comp_coverage_rejection or use_exactly_the_comps_provided
+                ),
                 use_psf_photometry=use_psf_photometry,
                 use_aperture_photometry=use_aperture_photometry,
                 psf_flux_data=psf_flux_source,
-                comp_overexposed_masks=comp_overexposed_masks,
+                comp_overexposed_masks=(
+                    None if use_exactly_the_comps_provided else comp_overexposed_masks
+                ),
+                use_exactly_the_comps_provided=use_exactly_the_comps_provided,
             )
 
             # Fortuitous-only sources remain in the shared centroid/PSF tracks and frozen-aperture store.
@@ -33778,6 +34436,8 @@ def _main_impl():
                             exotic_infoDict.get('filter'),
                         ),
                         target_catalog_match=primary_target_catalog_match,
+                        require_apparent_magnitudes=require_apparent_magnitudes,
+                        use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                     )
                 else:
                     comparison_fit_search = fit_ranked_comparison_calibration_candidates(
@@ -33817,6 +34477,7 @@ def _main_impl():
                         maximum_number_of_ensemble_comparisons_for_transit,
                         exposure_times_seconds=exposure_times_seconds,
                         gain_e_per_adu=fallback_gain_e_per_adu,
+                        use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                     )
                     if use_ensemble_photometry_for_stellar_variability and vsp_comp_stars:
                         log_info(
@@ -33850,6 +34511,8 @@ def _main_impl():
                                 exotic_infoDict.get('filter'),
                             ),
                             target_catalog_match=primary_target_catalog_match,
+                            require_apparent_magnitudes=require_apparent_magnitudes,
+                            use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                         )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -33898,9 +34561,21 @@ def _main_impl():
                     )
                     selected_attempt_label = selected_attempt.get('label', 'comparison candidate')
                     if stellar_variability_only and selected_is_ensemble:
-                        selection_basis = 'stellar_variability_ensemble'
+                        selection_basis = (
+                            'exact_stellar_variability_ensemble'
+                            if use_exactly_the_comps_provided
+                            else 'stellar_variability_ensemble'
+                        )
                     elif stellar_variability_only:
-                        selection_basis = 'stellar_variability_scatter'
+                        selection_basis = (
+                            'exact_single_comparison'
+                            if use_exactly_the_comps_provided
+                            else 'stellar_variability_scatter'
+                        )
+                    elif use_exactly_the_comps_provided and selected_is_ensemble:
+                        selection_basis = 'exact_comparison_ensemble'
+                    elif use_exactly_the_comps_provided:
+                        selection_basis = 'exact_single_comparison'
                     elif selected_attempt.get('search_stopped_after_qc_pass', False):
                         selection_basis = 'first_qc_pass'
                     elif selected_attempt.get('search_stopped_after_promising_partial', False):
@@ -33913,13 +34588,25 @@ def _main_impl():
                         selection_basis = 'comparison_field'
                     else:
                         selection_basis = 'comparison_field_retry'
-                    if selection_basis == 'stellar_variability_ensemble':
+                    if selection_basis == 'exact_stellar_variability_ensemble':
+                        ensemble_members = selected_attempt.get('ensemble_member_keys') or []
+                        log_info(
+                            "Stellar-variability-only comparison selection used the exact supplied "
+                            f"ensemble with {len(ensemble_members)} member(s); no supplied comparison "
+                            "was vetted out or replaced."
+                        )
+                    elif selection_basis == 'stellar_variability_ensemble':
                         ensemble_members = selected_attempt.get('ensemble_member_keys') or []
                         log_info(
                             "Stellar-variability-only comparison selection chose the default calibrated "
                             f"ensemble with {len(ensemble_members)} member(s) using "
                             f"{comparison_calibration['method_label']}; members are bright, unsaturated, "
                             "VSX-vetted, and passed the high-side catalog-error clip."
+                        )
+                    elif selection_basis == 'exact_single_comparison':
+                        log_info(
+                            "Comparison selection used the one exact supplied comparison star; "
+                            "no alternative comparison was evaluated."
                         )
                     elif selection_basis == 'stellar_variability_scatter':
                         log_info(
@@ -33972,6 +34659,12 @@ def _main_impl():
                             f"{comparison_selection_metric_label(fallback_selection_metric)}="
                             f"{fallback_metric_value}) so final outputs are still produced.",
                             warn=True,
+                        )
+                    elif selection_basis == 'exact_comparison_ensemble':
+                        log_info(
+                            "Comparison-star calibration target-fit selection used every supplied "
+                            "comparison star as one fixed ensemble because "
+                            "'use_exactly_the_comps_provided' is enabled."
                         )
                     elif selection_basis == 'comparison_ensemble':
                         log_info(
@@ -34058,6 +34751,7 @@ def _main_impl():
                         target_flux_error=tFlux1_error,
                         comp_flux_error=cFlux1_error,
                     )
+                    myfit.differential_magnitude_reference_label = selected_attempt_label
 
                     if selected_comp_index is not None:
                         ref_flux[selected_comp_index] = {
@@ -34678,6 +35372,7 @@ def _main_impl():
                                                       pDict['sName'],
                                                       observed_filter=exotic_infoDict.get('observed_filter',
                                                                                           exotic_infoDict.get('filter')),
+                                                      observation_date=exotic_infoDict.get('date'),
                                                       comp_ra_dec=ra_dec_wcs[:len(fortuitous_ensemble_stars)],
                                                       field_catalog=nextastro_field_catalog,
                                                       reference_image=reference_image,
@@ -34850,7 +35545,14 @@ def _main_impl():
                 except Exception:
                     pass
 
-            plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+            plot_final_lightcurve(
+                myfit,
+                data_highres,
+                pDict['pName'],
+                exotic_infoDict['save'],
+                exotic_infoDict['date'],
+                observed_filter=exotic_infoDict.get('observed_filter', exotic_infoDict.get('filter')),
+            )
 
             if fitsortext == 1:
                 observing_background_series = build_observing_background_series(
@@ -34901,6 +35603,8 @@ def _main_impl():
 
             try:
                 phase = np.asarray(getattr(myfit, 'phase', get_phase(myfit.time, pDict['pPer'], pDict['midT'])))
+                output_files.differential_magnitude()
+                output_files.stellar_variability_differential_magnitude()
                 output_files.final_lightcurve(phase)
             except Exception as e:
                 log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
@@ -35112,6 +35816,7 @@ def _main_impl():
                         exotic_infoDict['save'],
                         pDict['sName'],
                         observed_filter=exotic_infoDict.get('observed_filter', exotic_infoDict.get('filter')),
+                        observation_date=exotic_infoDict.get('date'),
                     )
                     if not auid:
                         auid = vsx_auid(pDict['ra'], pDict['dec'])
@@ -35155,7 +35860,14 @@ def _main_impl():
             except Exception:
                 pass
 
-        plot_final_lightcurve(myfit, data_highres, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
+        plot_final_lightcurve(
+            myfit,
+            data_highres,
+            pDict['pName'],
+            exotic_infoDict['save'],
+            exotic_infoDict['date'],
+            observed_filter=exotic_infoDict.get('observed_filter', exotic_infoDict.get('filter')),
+        )
         diagnostics_dir = Path(exotic_infoDict['save']) / "Diagnostics"
         plot_prior_posterior_comparison(myfit, pDict, pDict['pName'], diagnostics_dir, exotic_infoDict['date'])
         plot_ktmf_qc_metrics(myfit, pDict['pName'], diagnostics_dir, exotic_infoDict['date'])
@@ -35360,6 +36072,8 @@ def _main_impl():
 
         try:
             phase = get_phase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
+            output_files.differential_magnitude()
+            output_files.stellar_variability_differential_magnitude()
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
@@ -35412,6 +36126,7 @@ def _main_impl():
                     'plate_solution_option': exotic_infoDict.get('plate_opt'),
                     'target_input_pixel': exotic_infoDict.get('tar_coords'),
                     'comparison_input_pixels': exotic_infoDict.get('comp_stars'),
+                    'comparison_input_ra_dec_deg': provided_comparison_radec,
                     'target_ra_dec_deg': ra_dec_tar,
                     'comparison_ra_dec_deg': ra_dec_wcs,
                     'catalog_ra_dec_deg': [pDict.get('ra'), pDict.get('dec')],

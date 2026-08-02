@@ -549,7 +549,8 @@ def create_inits_file(parameters, file_name):
             "Observing Notes": parameters.get("Observing Notes", "N/A"),
             "Plate Solution? (y/n)": parameters.get("Plate Solution? (y/n)", None),
             "Target Star X & Y Pixel": parameters.get("Target Star X & Y Pixel", None),
-            "Comparison Star(s) X & Y Pixel": parameters.get("Comparison Star(s) X & Y Pixel", None)
+            "Comparison Star(s) X & Y Pixel": parameters.get("Comparison Star(s) X & Y Pixel", None),
+            "Comparison Star(s) RA & Dec": parameters.get("Comparison Star(s) RA & Dec", None)
         },    
         "optional_info": {
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": parameters.get("Pixel Scale (Ex: 5.21 arcsecs/pixel)", None),
@@ -561,6 +562,12 @@ def create_inits_file(parameters, file_name):
             ),
             "maximum_number_of_ensemble_comparisons_for_stellar_variability": parameters.get(
                 "maximum_number_of_ensemble_comparisons_for_stellar_variability", 5
+            ),
+            "require_apparent_magnitudes": parameters.get(
+                "require_apparent_magnitudes", True
+            ),
+            "use_exactly_the_comps_provided": parameters.get(
+                "use_exactly_the_comps_provided", False
             ),
             "require_comp_star": parameters.get("require_comp_star", "y")
         }

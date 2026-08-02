@@ -133,6 +133,63 @@ def radec_to_decimal_degrees(ra, dec):
     return coords.ra.degree, coords.dec.degree
 
 
+def comparison_star_coords_provided(comp_stars):
+    """Return whether an X/Y comparison-star input contains a coordinate pair."""
+    if isinstance(comp_stars, (list, tuple)):
+        if len(comp_stars) == 2 and not any(isinstance(value, (list, tuple, dict)) for value in comp_stars):
+            return not any(is_blank_value(value) for value in comp_stars)
+        return any(
+            isinstance(star, (list, tuple))
+            and len(star) == 2
+            and not any(is_blank_value(value) for value in star)
+            for star in comp_stars
+        )
+    if isinstance(comp_stars, str):
+        return len(re.findall(r"[-+]?(?:\d*\.?\d+)", comp_stars)) >= 2
+    return False
+
+
+def comparison_star_radec_coords(comp_stars):
+    """Normalize one or more comparison-star RA/Dec pairs to decimal degrees."""
+    if is_blank_value(comp_stars):
+        return []
+
+    if isinstance(comp_stars, str):
+        try:
+            comp_stars = json.loads(comp_stars)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "Comparison Star(s) RA & Dec must be a JSON list of [RA, Dec] pairs."
+            ) from exc
+
+    if (
+        isinstance(comp_stars, (list, tuple))
+        and len(comp_stars) == 2
+        and not any(isinstance(value, (list, tuple, dict)) for value in comp_stars)
+    ):
+        comp_stars = [comp_stars]
+
+    if not isinstance(comp_stars, (list, tuple)):
+        raise ValueError("Comparison Star(s) RA & Dec must be a list of [RA, Dec] pairs.")
+
+    normalized = []
+    for index, star in enumerate(comp_stars, start=1):
+        if is_blank_value(star) or star == [] or star == ():
+            continue
+        if not isinstance(star, (list, tuple)) or len(star) != 2:
+            raise ValueError(
+                f"Comparison star {index} RA/Dec must contain exactly two values: [RA, Dec]."
+            )
+        try:
+            ra_deg, dec_deg = radec_to_decimal_degrees(star[0], star[1])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Comparison star {index} has invalid RA/Dec coordinates: {exc}") from exc
+        if ra_deg is None or dec_deg is None:
+            raise ValueError(f"Comparison star {index} has blank RA or Dec coordinates.")
+        normalized.append([float(ra_deg), float(dec_deg)])
+    return normalized
+
+
 def fetch_nextastro_gaia_distpm(ra_deg, dec_deg):
     response = requests.get(
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
@@ -202,6 +259,7 @@ class Inputs:
             'aavso_num': None, 'second_obs': None, 'obs_name': '', 'date': None, 'lat': None, 'long': None,
             'elev': None, 'camera': None, 'pixel_bin': None, 'filter': None, 'notes': None,
             'plate_opt': None, 'aavso_comp': None, 'tar_coords': None, 'comp_stars': None,
+            'comp_stars_radec': None,
             'prered_file': None, 'file_units': None, 'file_time': None, 'phot_comp_star': None,
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
@@ -211,6 +269,8 @@ class Inputs:
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'stellar_variability_only': False,
             'use_ensemble_photometry_for_stellar_variability': True,
+            'require_apparent_magnitudes': True,
+            'use_exactly_the_comps_provided': False,
             'maximum_number_of_ensemble_comparisons_for_transit': 5,
             'maximum_number_of_ensemble_comparisons_for_stellar_variability': 5,
             'photometer_fortuitous_variables': True,
@@ -276,7 +336,12 @@ class Inputs:
             elif key == 'tar_coords':
                 self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             elif key == 'comp_stars':
-                self.info_dict[key] = self.params[key](self.info_dict[key], False)
+                if self.info_dict.get('comp_stars_radec'):
+                    # Celestial comparison coordinates are projected into pixels
+                    # after the reference image has a usable WCS.
+                    self.info_dict[key] = []
+                else:
+                    self.info_dict[key] = self.params[key](self.info_dict[key], False)
             elif key == 'images':
                 pass
             elif key in ('lat', 'long'):
@@ -413,7 +478,13 @@ class Inputs:
             'pixel_bin': 'Pixel Binning', 'filter': 'Filter Name (aavso.org/filters)',
             'notes': 'Observing Notes', 'plate_opt': 'Plate Solution? (y/n)',
             'aavso_comp': 'Add Comparison Stars from AAVSO? (y/n)',
-            'tar_coords': 'Target Star X & Y Pixel', 'comp_stars': 'Comparison Star(s) X & Y Pixel',
+            'tar_coords': 'Target Star X & Y Pixel',
+            'comp_stars': 'Comparison Star(s) X & Y Pixel',
+            'comp_stars_radec': (
+                'Comparison Star(s) RA & Dec',
+                'Comparison Star(s) RA and Dec',
+                'Comparison Star(s) RA & Dec (degrees)',
+            ),
         }
         planet_params = {
             'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'pName': "Planet Name", 'sName': "Host Star Name",
@@ -492,6 +563,14 @@ class Inputs:
                 'use_ensemble_photometry_for_stellar_variability',
                 'stellar_variability_use_ensemble',
                 'Use Ensemble Photometry for Stellar Variability? (y/n)',
+            ),
+            'require_apparent_magnitudes': (
+                'require_apparent_magnitudes',
+                'Require Apparent Magnitudes? (y/n)',
+            ),
+            'use_exactly_the_comps_provided': (
+                'use_exactly_the_comps_provided',
+                'Use Exactly the Comparisons Provided? (y/n)',
             ),
             'maximum_number_of_ensemble_comparisons_for_transit': (
                 'maximum_number_of_ensemble_comparisons_for_transit',
@@ -794,6 +873,15 @@ class Inputs:
         }
 
         self.info_dict = init_params(user_info, self.info_dict, data['user_info'])
+        self.info_dict['comp_stars_radec'] = comparison_star_radec_coords(
+            self.info_dict.get('comp_stars_radec')
+        )
+        if self.info_dict['comp_stars_radec'] and comparison_star_coords_provided(
+                self.info_dict.get('comp_stars')):
+            raise ValueError(
+                "Provide comparison stars using either 'Comparison Star(s) X & Y Pixel' "
+                "or 'Comparison Star(s) RA & Dec', not both."
+            )
         if self.info_dict['aavso_comp'] is None:
             self.info_dict['aavso_comp'] = 'n'
         self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])

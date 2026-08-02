@@ -51,6 +51,14 @@ try:
 except ImportError:
     from http_compression import build_compressed_json_request
 
+try:
+    from ..version import __version__
+except ImportError:
+    try:
+        from version import __version__
+    except ImportError:
+        __version__ = "unknown"
+
 _R_MAX_STOPS_LOW = 7
 _R_MAX_STOPS = 10
 _R_MAX_SECS = 37
@@ -59,6 +67,7 @@ _NEXTASTRO_MAX_SOURCES = 200
 _NEXTASTRO_STATUS_MAX_POLLS = 60
 _NEXTASTRO_STATUS_POLL_SEC = 2
 _NEXTASTRO_IN_PROGRESS_STATUSES = {'queued', 'running'}
+_NEXTASTRO_SOFTWARE_NAME = f"EXOTIC/{__version__}"
 
 
 def is_false(value):
@@ -277,6 +286,7 @@ class NextAstroPlateSolution:
                 "x": bright_sources["x"],
                 "y": bright_sources["y"],
                 "flux": bright_sources["flux"],
+                "origin": "exotic",
                 "pixel_indexing": "0-based"
             }
 
@@ -302,6 +312,7 @@ class NextAstroPlateSolution:
             "x": bright_sources["x"],
             "y": bright_sources["y"],
             "flux": bright_sources["flux"],
+            "origin": "exotic",
             "pixel_indexing": "0-based"
         }
 
@@ -370,6 +381,7 @@ class NextAstroPlateSolution:
             payload["hints"] = hints
 
         request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(payload)
+        headers["X-NextAstro-Software"] = _NEXTASTRO_SOFTWARE_NAME
 
         self._emit_debug(f"NextAstro astrometry request JSON: {self._json_message(payload)}")
         self._emit_debug(

@@ -50,6 +50,7 @@ def test_generate_source_list(tmp_path):
 
     assert source_list is not None
     assert source_list["pixel_indexing"] == "0-based"
+    assert source_list["origin"] == "exotic"
     assert len(source_list["x"]) > 0
     assert len(source_list["x"]) == len(source_list["y"]) == len(source_list["flux"])
 
@@ -63,6 +64,8 @@ def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):
         assert url.endswith('/solve')
         assert headers["Content-Type"] == "application/json"
         assert headers["Content-Encoding"] in {"gzip", "zstd"}
+        assert headers["X-NextAstro-Software"].startswith("EXOTIC/")
+        assert payload["sources"]["origin"] == "exotic"
         assert payload['image'] == {'width': 120, 'height': 100}
         assert payload['hints']['ra_deg'] == 210.8023
         assert payload['hints']['dec_deg'] == 54.3489

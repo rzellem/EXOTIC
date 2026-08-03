@@ -156,12 +156,12 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
 
     plot_final_lightcurve(fit, np.ones(2), "Target", str(tmp_path), "2026-07-08")
 
-    np.testing.assert_allclose(captured_errorbar_x[0], np.array([2461229.5, 2461229.6, 2461229.8]))
-    np.testing.assert_allclose(captured_errorbar_y[0], np.array([13.738, 13.740, 13.735]))
+    np.testing.assert_allclose(captured_errorbar_x[-1], np.array([2461229.5, 2461229.6, 2461229.8]))
+    np.testing.assert_allclose(captured_errorbar_y[-1], np.array([13.738, 13.740, 13.735]))
     assert captured_xlabels[-1] == "Time [BJD_TDB]"
     assert captured_xlabels[-1] != "Orbital Phase"
     assert captured_ylabels[-1] == "Magnitude (r)"
-    assert len(inverted_axes) == 1
+    assert len(inverted_axes) == 2
     assert "O-C [%]" not in captured_ylabels
     assert (tmp_path / "FinalLightCurve_Target_2026-07-08.png").exists()
 
@@ -411,8 +411,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         "Label: NextAstro-123\n"
         "Comparison RA=10.100000\n"
         "Dec=-20.200000\n"
-        "No airmass correction applied to stellar variability\n"
-        "Original filter: CV | Comparison mag: r=12.345 +/- 0.067"
+        "Original filter: CV | Comparison mag: r=12.3450 +/- 0.0670"
     )
     assert ylabels[-1] == "Magnitude (r)"
     assert len(inverted_axes) == 1
@@ -464,7 +463,7 @@ def test_plot_stellar_variability_labels_aavso_filter_and_assumed_comparison(tmp
         "Dec=-20.200000"
     ) in titles[-1]
     assert "Original filter: CV" in titles[-1]
-    assert "Comparison mag: V=12.345 +/- 0.067" in titles[-1]
+    assert "Comparison mag: V=12.3450 +/- 0.0670" in titles[-1]
     assert ylabels[-1] == "Magnitude (ClearV)"
 
 
@@ -501,7 +500,6 @@ def test_plot_stellar_variability_omits_invalid_reference_magnitudes(tmp_path, m
     assert titles[-1] == (
         "Host Star\n"
         "Label: NextAstro-123\nComparison RA=10.100000\nDec=-20.200000\n"
-        "No airmass correction applied to stellar variability\n"
         "Original filter: MObs CV"
     )
     assert "99.99" not in titles[-1]

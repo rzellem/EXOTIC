@@ -6,6 +6,7 @@ import numpy as np
 
 try:
     from utils import (
+        MAGNITUDE_DECIMAL_PLACES,
         filename_date_token,
         format_magnitude_error,
         format_magnitude,
@@ -18,6 +19,7 @@ try:
     )
 except ImportError:
     from .utils import (
+        MAGNITUDE_DECIMAL_PLACES,
         filename_date_token,
         format_magnitude_error,
         format_magnitude,
@@ -529,9 +531,14 @@ def write_differential_magnitude_csv(fit, save, target_name, observation_date=No
             series['magnitude_error'],
         ):
             airmass_text = f"{airmass}" if np.isfinite(airmass) else 'na'
-            error_text = f"{magnitude_error:.6f}" if np.isfinite(magnitude_error) else 'na'
+            error_text = (
+                f"{magnitude_error:.{MAGNITUDE_DECIMAL_PLACES}f}"
+                if np.isfinite(magnitude_error)
+                else 'na'
+            )
             handle.write(
-                f"{time_value}, {airmass_text}, {magnitude:.6f}, {error_text}, "
+                f"{time_value}, {airmass_text}, "
+                f"{magnitude:.{MAGNITUDE_DECIMAL_PLACES}f}, {error_text}, "
                 f"{observed_filter or 'na'}, {comparison}\n"
             )
     return output_path
@@ -2227,12 +2234,12 @@ class OutputFiles:
                     differential_mag_text = format_magnitude(
                         differential_mag,
                         default="na",
-                        digits=6,
+                        digits=MAGNITUDE_DECIMAL_PLACES,
                     )
                     differential_error_text = format_magnitude_error(
                         differential_error,
                         default="na",
-                        digits=6,
+                        digits=MAGNITUDE_DECIMAL_PLACES,
                     )
                     band = vsp_p.get('mag_band') or self.i_dict.get('filter') or 'V'
                     airmass = finite_float(vsp_p.get('airmass'))
@@ -2275,12 +2282,12 @@ class OutputFiles:
                 differential_mag_text = format_magnitude(
                     magnitude_series['differential_magnitude'][row_index],
                     default="na",
-                    digits=6,
+                    digits=MAGNITUDE_DECIMAL_PLACES,
                 )
                 differential_error_text = format_magnitude_error(
                     magnitude_series['differential_magnitude_error'][row_index],
                     default="na",
-                    digits=6,
+                    digits=MAGNITUDE_DECIMAL_PLACES,
                 )
                 apparent_mag_text = format_magnitude(
                     magnitude_series['apparent_magnitude'][row_index],
@@ -2881,17 +2888,21 @@ class OutputFiles:
             for magnitude_index in range(0, len(self.fit.time)):
                 f.write(format_aavso_json_header("MAGNITUDE-XC", {
                     'date_bjd_tdb': finite_float(self.fit.time[magnitude_index]),
-                    'differential_magnitude': finite_float(
-                        magnitude_series['differential_magnitude'][magnitude_index]
+                    'differential_magnitude': rounded_magnitude_value(
+                        magnitude_series['differential_magnitude'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
                     ),
-                    'differential_magnitude_error': finite_float(
-                        magnitude_series['differential_magnitude_error'][magnitude_index]
+                    'differential_magnitude_error': rounded_magnitude_error(
+                        magnitude_series['differential_magnitude_error'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
                     ),
-                    'apparent_magnitude': finite_float(
-                        magnitude_series['apparent_magnitude'][magnitude_index]
+                    'apparent_magnitude': rounded_magnitude_value(
+                        magnitude_series['apparent_magnitude'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
                     ),
-                    'apparent_magnitude_error': finite_float(
-                        magnitude_series['apparent_magnitude_error'][magnitude_index]
+                    'apparent_magnitude_error': rounded_magnitude_error(
+                        magnitude_series['apparent_magnitude_error'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
                     ),
                     'band': magnitude_series['band'] or self.i_dict.get('filter'),
                 }, preserve_nulls=True))
@@ -3004,10 +3015,17 @@ class AIDOutputFiles:
                 variable_name = default_variable_name
                 if use_row_names:
                     variable_name = vsp_p.get('_aid_name') or variable_name
-                mag = format_magnitude(vsp_p.get('mag'), default=None, digits=4)
+                mag = format_magnitude(
+                    vsp_p.get('mag'),
+                    default=None,
+                    digits=MAGNITUDE_DECIMAL_PLACES,
+                )
                 if mag is None:
                     continue
-                mag_err = format_magnitude_error(vsp_p.get('mag_err'), digits=4)
+                mag_err = format_magnitude_error(
+                    vsp_p.get('mag_err'),
+                    digits=MAGNITUDE_DECIMAL_PLACES,
+                )
                 cmag = format_magnitude(vsp_p.get('cmag'))
                 chart_id = self.chart_id or vsp_p.get('chart_id') or 'na'
                 differential_mag, differential_error = differential_magnitude_from_vsp_param(
@@ -3030,12 +3048,12 @@ class AIDOutputFiles:
                 differential_mag_text = format_magnitude(
                     differential_mag,
                     default=None,
-                    digits=6,
+                    digits=MAGNITUDE_DECIMAL_PLACES,
                 )
                 differential_error_text = format_magnitude_error(
                     differential_error,
                     default=None,
-                    digits=6,
+                    digits=MAGNITUDE_DECIMAL_PLACES,
                 )
                 notes = 'na'
                 if differential_mag_text is not None:

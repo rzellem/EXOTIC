@@ -638,7 +638,6 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     title_lines = [s_name]
     if reference_label:
         title_lines.append(reference_label)
-    title_lines.append('No airmass correction applied to stellar variability')
     metadata_label = _stellar_variability_comparison_metadata_label(first_param)
     if metadata_label:
         title_lines.append(metadata_label)
@@ -1113,7 +1112,6 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
         )
         if reference_label:
             title_lines.append(reference_label)
-        title_lines.append('No airmass correction applied to stellar variability')
         metadata_label = _stellar_variability_comparison_metadata_label(first_param)
         if metadata_label:
             title_lines.append(metadata_label)

@@ -79,6 +79,8 @@ def test_differential_csv_does_not_require_apparent_magnitude_calibration(tmp_pa
     assert '# AIRMASS_CORRECTION=NO' in output_text
     assert 'Differential Magnitude' in output_text
     assert 'Apparent' not in output_text
+    assert ', 0.7526, 0.0054, V, ' in output_text
+    assert ', 0.6491, 0.0051, V, ' in output_text
 
 
 class DummyFit:
@@ -299,7 +301,7 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
     assert "# FINAL STELLAR VARIABILITY TIMESERIES OF WASP-194" in output_text
     assert "Apparent Magnitude,Apparent Magnitude Uncertainty" in output_text
     assert "Differential Magnitude,Differential Magnitude Uncertainty" in output_text
-    assert "2461229.89899, 13.738, 0.004, 1.237800, 0.002100, r, 1.193135" in output_text
+    assert "2461229.89899, 13.7378, 0.0042, 1.2378, 0.0021, r, 1.193135" in output_text
     assert "Flux" not in output_text
 
 
@@ -325,7 +327,7 @@ def test_final_lightcurve_adds_transit_apparent_magnitude_columns_when_calibrate
 
     assert "Differential Magnitude,Differential Magnitude Uncertainty" in output_text
     assert "Apparent Magnitude,Apparent Magnitude Uncertainty,Band" in output_text
-    assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, -0.000000, 0.001086, 13.740" in output_text
+    assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, -0.0000, 0.0011, 13.7400" in output_text
     assert output_text.rstrip().endswith(", r")
 
 
@@ -348,7 +350,7 @@ def test_final_lightcurve_keeps_differential_magnitude_when_apparent_calibration
         (tmp_path / "working_artifacts").glob("FinalLightCurve_Uncalibratedb_2026-07-08.csv")
     ).read_text()
     expected_differential = -2.5 * np.log10(0.8)
-    assert f"{expected_differential:.6f}" in output_text
+    assert f"{expected_differential:.4f}" in output_text
     assert ", na, na, V" in output_text
 
 
@@ -566,11 +568,12 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
     magnitude_row = aavso_json_header(output_text, "MAGNITUDE-XC")
     assert magnitude_fields["apparent_calibrated"] is True
     assert magnitude_fields["differential_magnitude"].startswith("target minus")
-    assert magnitude_row["differential_magnitude"] == pytest.approx(differential_mag)
-    assert magnitude_row["differential_magnitude_error"] == pytest.approx(differential_error)
-    assert magnitude_row["apparent_magnitude"] == pytest.approx(12.0 + differential_mag)
-    assert magnitude_row["apparent_magnitude_error"] == pytest.approx(
-        np.hypot(0.02, differential_error)
+    assert magnitude_row["differential_magnitude"] == round(differential_mag, 4)
+    assert magnitude_row["differential_magnitude_error"] == round(differential_error, 4)
+    assert magnitude_row["apparent_magnitude"] == round(12.0 + differential_mag, 4)
+    assert magnitude_row["apparent_magnitude_error"] == round(
+        np.hypot(0.02, differential_error),
+        4,
     )
 
 
@@ -711,7 +714,7 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
     assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.3457,0.0123,V,NO,STD" in output_text
-    assert "|DIFFMAG=0.245670|DIFFERR=0.006789" in output_text
+    assert "|DIFFMAG=0.2457|DIFFERR=0.0068" in output_text
     magnitude_fields = aavso_json_header(output_text, "MAGNITUDE_FIELDS-XC")
     assert magnitude_fields["apparent_magnitude"] == "MAG"
     assert magnitude_fields["differential_magnitude"] == "NOTES subfield DIFFMAG"
@@ -780,7 +783,7 @@ def test_aid_output_records_calibrated_ensemble_members(tmp_path):
     assert ensemble_metadata["members"][1]["ra_deg"] == pytest.approx(10.2)
     assert ensemble_metadata["members"][1]["dec_deg"] == pytest.approx(-20.2)
     assert "Target,2450000.12345,12.3400,0.0200,V,NO,STD,ENSEMBLE (2 stars),na" in output_text
-    assert "|DIFFMAG=1.234567|DIFFERR=0.007890" in output_text
+    assert "|DIFFMAG=1.2346|DIFFERR=0.0079" in output_text
 
 
 def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):
@@ -997,7 +1000,7 @@ def test_final_planetary_params_reports_nextastro_variability_reference(tmp_path
     assert "NextAstro photometry catalog" in reference
     assert "RA=10.1000000" in reference
     assert "Dec=-20.2000000" in reference
-    assert "V=12.345 +/- 0.067" in reference
+    assert "V=12.3450 +/- 0.0670" in reference
 
 
 def test_transit_outputs_use_rprs_fallback_uncertainty_when_model_error_missing(tmp_path):

@@ -213,6 +213,44 @@ def test_comp_params_reads_apparent_and_exact_comparison_options(tmp_path):
     assert inputs.info_dict["use_exactly_the_comps_provided"] is True
 
 
+def test_comp_params_accepts_exact_comparison_option_beside_user_coordinates(tmp_path):
+    init_data = {
+        "user_info": {
+            "Comparison Star(s) RA & Dec": [[279.3869583, 18.7609444]],
+            "use_exactly_the_comps_provided": True,
+        },
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data), encoding="utf-8")
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_exactly_the_comps_provided"] is True
+
+
+def test_optional_info_exact_comparison_option_overrides_user_info_alias(tmp_path):
+    init_data = {
+        "user_info": {
+            "Comparison Star(s) RA & Dec": [[279.3869583, 18.7609444]],
+            "use_exactly_the_comps_provided": True,
+        },
+        "optional_info": {
+            "use_exactly_the_comps_provided": False,
+        },
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data), encoding="utf-8")
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_exactly_the_comps_provided"] is False
+
+
 def test_comp_params_defaults_stellar_variability_ensemble_to_true(tmp_path):
     init_data = {
         "user_info": {},

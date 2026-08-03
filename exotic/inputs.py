@@ -485,6 +485,10 @@ class Inputs:
                 'Comparison Star(s) RA and Dec',
                 'Comparison Star(s) RA & Dec (degrees)',
             ),
+            # Accept existing init files that placed this option beside the
+            # comparison coordinates. optional_info is parsed later and wins
+            # when both locations are populated.
+            'use_exactly_the_comps_provided': 'use_exactly_the_comps_provided',
         }
         planet_params = {
             'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'pName': "Planet Name", 'sName': "Host Star Name",

@@ -21575,6 +21575,34 @@ def stellar_variability_label(comp_label, comp_star):
     return comp_label
 
 
+def annotate_differential_magnitude_raw_photometry(lc_fit, target_flux, reference_flux,
+                                                    target_flux_error=None,
+                                                    reference_flux_error=None):
+    """Retain the unnormalized flux pair used by differential-magnitude outputs."""
+    if lc_fit is None:
+        return False
+
+    fit_shape = np.asarray(getattr(lc_fit, 'data', []), dtype=float).shape
+    target_flux = np.asarray(target_flux if target_flux is not None else [], dtype=float)
+    reference_flux = np.asarray(reference_flux if reference_flux is not None else [], dtype=float)
+    if target_flux.shape != fit_shape or reference_flux.shape != fit_shape:
+        return False
+
+    def aligned_error(values):
+        if values is None:
+            return np.full(fit_shape, np.nan, dtype=float)
+        array = np.asarray(values, dtype=float)
+        if array.shape != fit_shape:
+            return np.full(fit_shape, np.nan, dtype=float)
+        return array
+
+    lc_fit.differential_magnitude_target_flux = target_flux.copy()
+    lc_fit.differential_magnitude_reference_flux = reference_flux.copy()
+    lc_fit.differential_magnitude_target_flux_error = aligned_error(target_flux_error).copy()
+    lc_fit.differential_magnitude_reference_flux_error = aligned_error(reference_flux_error).copy()
+    return True
+
+
 def annotate_stellar_variability_raw_photometry(lc_fit, target_flux, comp_flux,
                                                  target_flux_error=None, comp_flux_error=None):
     if lc_fit is None:
@@ -28030,7 +28058,8 @@ def select_stellar_variability_ensemble_members(
 
 def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flux_error,
                                                          comp_flux_map, comp_error_map, members,
-                                                         minimum_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS):
+                                                         minimum_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
+                                                         validity_mask_func=valid_comparison_frame_mask):
     target_flux = np.asarray(target_flux, dtype=float)
     if target_flux.ndim != 1:
         target_flux = target_flux.reshape(-1)
@@ -28043,6 +28072,8 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
 
     zero_points = []
     zero_point_errors = []
+    raw_member_keys = []
+    raw_comp_error_map = {}
     magnitude_factor = 2.5 / np.log(10.0)
     for member in members or []:
         ckey = member.get('key')
@@ -28056,6 +28087,8 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
             comp_flux_error = np.asarray(comp_error_map[ckey], dtype=float).reshape(-1)
         if comp_flux_error is None or comp_flux_error.shape != comp_flux.shape:
             comp_flux_error = np.sqrt(np.clip(np.abs(comp_flux), 1.0, None))
+        raw_member_keys.append(ckey)
+        raw_comp_error_map[ckey] = comp_flux_error
 
         member_keep_mask = np.asarray(
             member.get('summary', {}).get('ensemble_frame_keep_mask', np.ones(frame_count, dtype=bool)),
@@ -28079,6 +28112,29 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
         zero_points.append(zero_point)
         zero_point_errors.append(zero_point_error)
 
+    raw_reference_flux = np.full(target_flux.shape, np.nan, dtype=float)
+    raw_reference_flux_error = np.full(target_flux.shape, np.nan, dtype=float)
+    built_raw_reference, built_raw_member_keys = build_absolute_comp_ensemble_flux(
+        comp_flux_map,
+        raw_member_keys,
+        validity_mask_func=validity_mask_func,
+    )
+    if built_raw_reference is not None and built_raw_member_keys == raw_member_keys:
+        built_raw_reference = np.asarray(built_raw_reference, dtype=float)
+        if built_raw_reference.shape == target_flux.shape:
+            raw_reference_flux = built_raw_reference
+            built_raw_reference_error = build_absolute_comp_ensemble_uncertainty(
+                comp_flux_map,
+                raw_comp_error_map,
+                raw_member_keys,
+                validity_mask_func=validity_mask_func,
+            )
+            if (
+                built_raw_reference_error is not None
+                and np.asarray(built_raw_reference_error).shape == target_flux.shape
+            ):
+                raw_reference_flux_error = np.asarray(built_raw_reference_error, dtype=float)
+
     selected_member_count = len(members or [])
     try:
         minimum_required_members = max(1, int(minimum_members))
@@ -28101,6 +28157,8 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
         'relative_flux_error': np.full(target_flux.shape, np.nan, dtype=float),
         'synthetic_reference_flux': np.full(target_flux.shape, np.nan, dtype=float),
         'synthetic_reference_flux_error': np.full(target_flux.shape, np.nan, dtype=float),
+        'raw_reference_flux': raw_reference_flux,
+        'raw_reference_flux_error': raw_reference_flux_error,
         'valid_member_count': np.zeros(target_flux.shape, dtype=int),
     }
     if len(zero_points) < required_members:
@@ -28174,9 +28232,71 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
         'relative_flux_error': relative_flux_error,
         'synthetic_reference_flux': synthetic_reference_flux,
         'synthetic_reference_flux_error': synthetic_reference_flux_error,
+        'raw_reference_flux': raw_reference_flux,
+        'raw_reference_flux_error': raw_reference_flux_error,
         'valid_member_count': valid_member_count,
         'baseline_magnitude': baseline_magnitude,
     }
+
+
+def annotate_stellar_variability_ensemble_differential_photometry(lc_fit, ensemble_series):
+    """Attach the real ensemble flux scale without replacing normalized fitting inputs."""
+    fit_shape = np.asarray(getattr(lc_fit, 'data', []), dtype=float).shape
+    source_indices = np.asarray(
+        getattr(lc_fit, 'stellar_variability_source_indices', []),
+        dtype=int,
+    )
+    raw_reference_flux = np.asarray(
+        ensemble_series.get('raw_reference_flux', []),
+        dtype=float,
+    )
+    raw_reference_flux_error = np.asarray(
+        ensemble_series.get('raw_reference_flux_error', []),
+        dtype=float,
+    )
+    target_flux = np.asarray(
+        getattr(lc_fit, 'stellar_variability_target_flux', []),
+        dtype=float,
+    )
+    target_flux_error = np.asarray(
+        getattr(lc_fit, 'stellar_variability_target_flux_error', []),
+        dtype=float,
+    )
+
+    if source_indices.shape != fit_shape or target_flux.shape != fit_shape:
+        raise RuntimeError(
+            "Calibrated comparison-ensemble fit did not retain aligned target fluxes for "
+            "differential-magnitude output."
+        )
+    if (
+        raw_reference_flux.ndim != 1
+        or source_indices.size == 0
+        or np.any(source_indices < 0)
+        or np.any(source_indices >= raw_reference_flux.size)
+    ):
+        raise RuntimeError(
+            "Raw comparison-ensemble reference flux is unavailable; refusing to report a "
+            "median-normalized light curve as differential magnitude."
+        )
+    selected_reference_flux = raw_reference_flux[source_indices]
+    selected_reference_error = (
+        raw_reference_flux_error[source_indices]
+        if raw_reference_flux_error.shape == raw_reference_flux.shape
+        else np.full(fit_shape, np.nan, dtype=float)
+    )
+    attached = annotate_differential_magnitude_raw_photometry(
+        lc_fit,
+        target_flux,
+        selected_reference_flux,
+        target_flux_error=target_flux_error,
+        reference_flux_error=selected_reference_error,
+    )
+    if not attached:
+        raise RuntimeError(
+            "Raw target and comparison-ensemble fluxes could not be aligned for "
+            "differential-magnitude output."
+        )
+    return lc_fit
 
 
 def stellar_variability_json_safe(value):
@@ -28804,6 +28924,9 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     comp_error_map,
                     calibrated_members,
                     minimum_members=len(calibrated_members),
+                    validity_mask_func=(
+                        robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
+                    ),
                 )
                 if prebuilt_ensemble_series.get('applied'):
                     ensemble_members = calibrated_members
@@ -28833,6 +28956,8 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'relative_flux_error': relative_series['relative_flux_error'],
                         'synthetic_reference_flux': relative_series['reference_flux'],
                         'synthetic_reference_flux_error': relative_series['reference_flux_error'],
+                        'raw_reference_flux': relative_series['reference_flux'],
+                        'raw_reference_flux_error': relative_series['reference_flux_error'],
                         'valid_member_count': valid_member_count,
                         'baseline_magnitude': np.nan,
                     }
@@ -28909,6 +29034,9 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                 comp_flux_map,
                 comp_error_map,
                 ensemble_members,
+                validity_mask_func=(
+                    robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
+                ),
             )
             if ensemble_series.get('applied'):
                 fit_mask = (
@@ -28983,6 +29111,10 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     plot_time_range=plot_time_range,
                 )
                 if fit_result is not None:
+                    annotate_stellar_variability_ensemble_differential_photometry(
+                        fit_result,
+                        ensemble_series,
+                    )
                     selected_source_indices = np.asarray(
                         fit_result.stellar_variability_source_indices,
                         dtype=int,
@@ -29852,6 +29984,11 @@ def process_fortuitous_variables(
                     comp_error_map,
                     members,
                     minimum_members=required_comparison_members,
+                    validity_mask_func=(
+                        robust_flux_floor_mask
+                        if comparison_calibration.get('method') == 'psf'
+                        else valid_comparison_frame_mask
+                    ),
                 )
             else:
                 relative_series = build_relative_comparison_ensemble_series(
@@ -29886,6 +30023,8 @@ def process_fortuitous_variables(
                     'synthetic_reference_flux_error': relative_series.get(
                         'reference_flux_error'
                     ),
+                    'raw_reference_flux': relative_series.get('reference_flux'),
+                    'raw_reference_flux_error': relative_series.get('reference_flux_error'),
                     'magnitude': np.full(target_flux.shape, np.nan, dtype=float),
                     'magnitude_error': instrumental_magnitude_error,
                     'valid_member_count': np.where(
@@ -30007,6 +30146,11 @@ def process_fortuitous_variables(
             )
             if fit is None:
                 raise ValueError('stellar-variability light curve construction failed')
+            if not use_single_comparison:
+                annotate_stellar_variability_ensemble_differential_photometry(
+                    fit,
+                    ensemble_series,
+                )
             variable_dir.mkdir(parents=True, exist_ok=True)
             differential_csv_path = write_differential_magnitude_csv(
                 fit,

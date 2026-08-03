@@ -748,12 +748,15 @@ def plot_differential_magnitude(fit, target_name, save, date, observed_filter=No
             '.',
             color='royalblue',
         )
-    correction_label = (
-        'Airmass-corrected target/reference ratio'
-        if series['airmass_corrected']
-        else 'Raw target/reference ratio; no airmass correction'
-    )
-    ax.set_title(f"{target_name}\n{correction_label}")
+    if getattr(fit, 'stellar_variability_only', False) or save_stellar_variability_alias:
+        ax.set_title(target_name)
+    else:
+        correction_label = (
+            'Airmass-corrected target/reference ratio'
+            if series['airmass_corrected']
+            else 'Raw target/reference ratio'
+        )
+        ax.set_title(f"{target_name}\n{correction_label}")
     band_label = f" ({observed_filter})" if observed_filter else ''
     ax.set_ylabel(f"Differential Magnitude{band_label}")
     ax.invert_yaxis()

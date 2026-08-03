@@ -216,19 +216,35 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
         return None
 
     target_flux = np.asarray(
-        getattr(fit, 'stellar_variability_target_flux', []),
+        getattr(
+            fit,
+            'differential_magnitude_target_flux',
+            getattr(fit, 'stellar_variability_target_flux', []),
+        ),
         dtype=float,
     ).reshape(-1)
     reference_flux = np.asarray(
-        getattr(fit, 'stellar_variability_comp_flux', []),
+        getattr(
+            fit,
+            'differential_magnitude_reference_flux',
+            getattr(fit, 'stellar_variability_comp_flux', []),
+        ),
         dtype=float,
     ).reshape(-1)
     target_error = np.asarray(
-        getattr(fit, 'stellar_variability_target_flux_error', []),
+        getattr(
+            fit,
+            'differential_magnitude_target_flux_error',
+            getattr(fit, 'stellar_variability_target_flux_error', []),
+        ),
         dtype=float,
     ).reshape(-1)
     reference_error = np.asarray(
-        getattr(fit, 'stellar_variability_comp_flux_error', []),
+        getattr(
+            fit,
+            'differential_magnitude_reference_flux_error',
+            getattr(fit, 'stellar_variability_comp_flux_error', []),
+        ),
         dtype=float,
     ).reshape(-1)
 
@@ -375,6 +391,31 @@ def magnitude_series_from_fit(fit, out_of_transit_only=False,
         getattr(fit, 'stellar_variability_params', None)
     )
     if calibration is None:
+        return result
+
+    # A calibrated comparison ensemble already carries its independently
+    # derived apparent-magnitude series.  Do not reconstruct that series by
+    # adding a constant to the raw instrumental differential magnitudes: the
+    # calibrated ensemble and the raw median-scaled ensemble intentionally use
+    # different reference constructions and can have different time trends.
+    calibrated_magnitude = np.asarray(
+        getattr(fit, 'stellar_variability_ensemble_magnitudes', []),
+        dtype=float,
+    ).reshape(-1)
+    calibrated_error = np.asarray(
+        getattr(fit, 'stellar_variability_ensemble_magnitude_errors', []),
+        dtype=float,
+    ).reshape(-1)
+    if calibrated_magnitude.shape == fit_data.shape:
+        calibrated_mask = source_mask & np.isfinite(calibrated_magnitude)
+        result['apparent_magnitude'][calibrated_mask] = calibrated_magnitude[calibrated_mask]
+        if calibrated_error.shape == fit_data.shape:
+            calibrated_error_mask = calibrated_mask & np.isfinite(calibrated_error)
+            result['apparent_magnitude_error'][calibrated_error_mask] = (
+                calibrated_error[calibrated_error_mask]
+            )
+        result['band'] = calibration['band']
+        result['apparent_calibrated'] = bool(np.any(calibrated_mask))
         return result
 
     magnitude_offset = np.nan

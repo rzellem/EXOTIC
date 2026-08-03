@@ -398,6 +398,61 @@ def test_magnitude_series_preserves_raw_ratio_for_later_apparent_recalibration()
     )
 
 
+def test_calibrated_ensemble_keeps_apparent_magnitudes_independent_of_raw_differential():
+    target_flux = np.array([1000.0, 1010.0])
+    raw_reference_flux = np.full(2, 375.0)
+    calibrated_magnitude = np.array([11.25, 11.27])
+    calibrated_error = np.array([0.02, 0.021])
+    expected_differential = -2.5 * np.log10(target_flux / raw_reference_flux)
+    fit = SimpleNamespace(
+        stellar_variability_only=True,
+        time=np.array([2461229.9, 2461229.91]),
+        data=np.ones(2),
+        detrended=np.ones(2),
+        dataerr=np.full(2, 0.001),
+        airmass=np.array([1.1, 1.2]),
+        airmass_model=np.ones(2),
+        transit=np.ones(2),
+        # The calibrated ensemble's normalized fitting reference remains
+        # separate from the raw instrumental reference used for DIFFMAG.
+        stellar_variability_target_flux=target_flux,
+        stellar_variability_comp_flux=target_flux.copy(),
+        stellar_variability_target_flux_error=np.ones(2),
+        stellar_variability_comp_flux_error=np.ones(2),
+        differential_magnitude_target_flux=target_flux,
+        differential_magnitude_reference_flux=raw_reference_flux,
+        differential_magnitude_target_flux_error=np.ones(2),
+        differential_magnitude_reference_flux_error=np.ones(2),
+        stellar_variability_ensemble_magnitudes=calibrated_magnitude,
+        stellar_variability_ensemble_magnitude_errors=calibrated_error,
+        stellar_variability_params=[
+            {
+                'time': 2461229.9,
+                'mag': calibrated_magnitude[0],
+                'mag_err': calibrated_error[0],
+                'differential_mag': expected_differential[0],
+                'differential_mag_err': 0.002,
+                'mag_band': 'V',
+            },
+            {
+                'time': 2461229.91,
+                'mag': calibrated_magnitude[1],
+                'mag_err': calibrated_error[1],
+                'differential_mag': expected_differential[1],
+                'differential_mag_err': 0.002,
+                'mag_band': 'V',
+            },
+        ],
+    )
+
+    series = magnitude_series_from_fit(fit, apply_airmass_correction=False)
+
+    np.testing.assert_allclose(series['differential_magnitude'], expected_differential)
+    np.testing.assert_allclose(series['apparent_magnitude'], calibrated_magnitude)
+    np.testing.assert_allclose(series['apparent_magnitude_error'], calibrated_error)
+    assert series['apparent_calibrated'] is True
+
+
 def aavso_json_header(output_text, header_name):
     prefix = f"#{header_name}="
     for line in output_text.splitlines():

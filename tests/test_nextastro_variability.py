@@ -2950,6 +2950,8 @@ def test_calibrated_stellar_variability_ensemble_combines_catalog_zero_points():
     assert result['applied'] is True
     np.testing.assert_allclose(result['magnitude'], expected_target_magnitude, atol=1.0e-10)
     np.testing.assert_allclose(result['relative_flux'], 1.0, atol=1.0e-10)
+    np.testing.assert_allclose(result['raw_reference_flux'], 375.0, atol=1.0e-10)
+    assert np.all(np.isfinite(result['raw_reference_flux_error']))
     np.testing.assert_array_equal(result['valid_member_count'], np.full(frame_count, 2))
     assert np.all(result['magnitude_error'] > 0)
 
@@ -3519,6 +3521,41 @@ def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkey
     assert selected['ensemble_member_keys'] == ['comp1', 'comp2']
     assert selected['fit'].stellar_variability_ensemble_members
     assert len(selected['fit'].stellar_variability_ensemble_magnitudes) == len(selected['fit'].time)
+    np.testing.assert_allclose(
+        selected['fit'].differential_magnitude_reference_flux,
+        375.0,
+        atol=1.0e-10,
+    )
+    differential_series = exotic_module.differential_magnitude_series_from_fit(
+        selected['fit'],
+        apply_airmass_correction=False,
+    )
+    expected_differential = -2.5 * np.log10(target_flux / 375.0)
+    np.testing.assert_allclose(
+        differential_series['magnitude'],
+        expected_differential,
+        atol=1.0e-10,
+    )
+    assert abs(float(np.nanmedian(differential_series['magnitude']))) > 0.5
+
+    # Final output preparation may refresh the normalized fitting photometry.
+    # That must never overwrite the separately retained raw ensemble reference.
+    exotic_module.annotate_stellar_variability_raw_photometry(
+        selected['fit'],
+        target_flux,
+        target_flux,
+        target_flux_error=np.ones(frame_count),
+        comp_flux_error=np.ones(frame_count),
+    )
+    differential_after_fit_refresh = exotic_module.differential_magnitude_series_from_fit(
+        selected['fit'],
+        apply_airmass_correction=False,
+    )
+    np.testing.assert_allclose(
+        differential_after_fit_refresh['magnitude'],
+        expected_differential,
+        atol=1.0e-10,
+    )
 
     vsp_params = exotic_module.build_stellar_variability_params_from_photometry_selection(
         result,
@@ -3547,6 +3584,16 @@ def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkey
     ).aavso()
 
     assert len(vsp_params) == frame_count
+    np.testing.assert_allclose(
+        [row['mag'] for row in vsp_params],
+        selected['fit'].stellar_variability_ensemble_magnitudes,
+        atol=1.0e-10,
+    )
+    np.testing.assert_allclose(
+        [row['differential_mag'] for row in vsp_params],
+        expected_differential,
+        atol=1.0e-10,
+    )
     assert aid_path.is_file()
     aid_text = aid_path.read_text(encoding='utf-8')
     assert '#ENSEMBLE-COMPARISONS-XC=' in aid_text

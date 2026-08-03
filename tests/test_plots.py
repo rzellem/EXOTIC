@@ -166,7 +166,18 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
     assert (tmp_path / "FinalLightCurve_Target_2026-07-08.png").exists()
 
 
-def test_stellar_variability_differential_plot_survives_without_apparent_magnitudes(tmp_path):
+def test_stellar_variability_differential_plot_survives_without_apparent_magnitudes(
+        tmp_path, monkeypatch):
+    from matplotlib.axes import Axes
+
+    captured_titles = []
+    original_set_title = Axes.set_title
+
+    def spy_set_title(self, title, *args, **kwargs):
+        captured_titles.append(title)
+        return original_set_title(self, title, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_title", spy_set_title)
     fit = SimpleNamespace(
         stellar_variability_only=True,
         time=np.array([2461229.5, 2461229.6, 2461229.8]),
@@ -195,6 +206,7 @@ def test_stellar_variability_differential_plot_survives_without_apparent_magnitu
     assert (
         tmp_path / 'working_artifacts' / 'Stellar_Variability_DifferentialMagnitude.png'
     ).exists()
+    assert captured_titles[-1] == 'Variable Star'
 
 
 def test_plot_obs_stats_uses_supplied_background_series(tmp_path, monkeypatch):

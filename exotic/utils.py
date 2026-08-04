@@ -1,5 +1,6 @@
 import logging
 from math import isfinite
+from pathlib import Path
 import re
 import requests
 from numpy import floor, log10
@@ -27,6 +28,15 @@ _FILENAME_WHITESPACE_RE = re.compile(r'\s+')
 MAX_APPARENT_MAGNITUDE = 30.0
 MAGNITUDE_DECIMAL_PLACES = 4
 MINIMUM_MAGNITUDE_ERROR = 0.001
+AAVSO_OUTPUT_FOLDER_NAME = 'AAVSO_Files'
+
+
+def aavso_output_directory(root):
+    """Return the dedicated AAVSO output directory, creating it when needed."""
+
+    output_directory = Path(root) / AAVSO_OUTPUT_FOLDER_NAME
+    output_directory.mkdir(parents=True, exist_ok=True)
+    return output_directory
 
 
 def _clean_filename_text(value):

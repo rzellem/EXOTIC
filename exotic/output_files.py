@@ -6,6 +6,7 @@ import numpy as np
 
 try:
     from utils import (
+        aavso_output_directory,
         MAGNITUDE_DECIMAL_PLACES,
         filename_date_token,
         format_magnitude_error,
@@ -19,6 +20,7 @@ try:
     )
 except ImportError:
     from .utils import (
+        aavso_output_directory,
         MAGNITUDE_DECIMAL_PLACES,
         filename_date_token,
         format_magnitude_error,
@@ -2810,7 +2812,7 @@ class OutputFiles:
         gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
         gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
-        params_file = self.dir / safe_output_filename(
+        params_file = aavso_output_directory(self.dir) / safe_output_filename(
             "AAVSO",
             self.p_dict['pName'],
             filename_date_token(self.i_dict['date']),
@@ -2946,7 +2948,7 @@ class AIDOutputFiles:
         self.vsp_params = vsp_params
 
     def _aavso_path(self):
-        return self.dir / safe_output_filename(
+        return aavso_output_directory(self.dir) / safe_output_filename(
             "AID_AAVSO",
             self.p_dict['sName'],
             filename_date_token(self.i_dict['date']),

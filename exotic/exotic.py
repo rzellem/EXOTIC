@@ -204,6 +204,7 @@ except ImportError:  # package import
         plot_adaptive_aperture_diagnostics
 try:  # tools
     from utils import (
+        AAVSO_OUTPUT_FOLDER_NAME,
         MAX_APPARENT_MAGNITUDE,
         filename_date_token,
         is_usable_apparent_magnitude,
@@ -215,6 +216,7 @@ try:  # tools
     )
 except ImportError: # package import
     from .utils import (
+        AAVSO_OUTPUT_FOLDER_NAME,
         MAX_APPARENT_MAGNITUDE,
         filename_date_token,
         is_usable_apparent_magnitude,
@@ -29771,6 +29773,15 @@ def clear_previous_fortuitous_variable_products(variable_dir):
         for path in output_dir.glob(f'{prefix}*'):
             if path.is_file():
                 path.unlink()
+    aavso_dir = output_dir / AAVSO_OUTPUT_FOLDER_NAME
+    if aavso_dir.is_dir():
+        for path in aavso_dir.glob('AID_AAVSO_*'):
+            if path.is_file():
+                path.unlink()
+        try:
+            aavso_dir.rmdir()
+        except OSError:
+            pass
     plot_path = output_dir / 'working_artifacts' / 'Stellar_Variability.png'
     if plot_path.is_file():
         plot_path.unlink()
@@ -29854,9 +29865,11 @@ def process_fortuitous_variables(
 
     base_dir = Path(info_dict['save']) / 'variables'
     base_dir.mkdir(parents=True, exist_ok=True)
-    for stale_combined_aid in base_dir.glob('AID_AAVSO_FortuitousVariables_*.txt'):
-        if stale_combined_aid.is_file():
-            stale_combined_aid.unlink()
+    for combined_aavso_dir in (base_dir, base_dir / AAVSO_OUTPUT_FOLDER_NAME):
+        for stale_combined_aid in combined_aavso_dir.glob(
+                'AID_AAVSO_FortuitousVariables_*.txt'):
+            if stale_combined_aid.is_file():
+                stale_combined_aid.unlink()
     results = []
     combined_vsp_params = []
     logged_comparison_gap_rejections = set()

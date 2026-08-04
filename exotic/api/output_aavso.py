@@ -43,9 +43,9 @@ from pathlib import Path
 import re
 
 try:
-    from .utils import round_to_2, safe_output_filename
+    from ..utils import aavso_output_directory, round_to_2, safe_output_filename
 except ImportError:
-    from utils import round_to_2, safe_output_filename
+    from utils import aavso_output_directory, round_to_2, safe_output_filename
 try:
     from .version import __version__
 except ImportError:
@@ -228,7 +228,7 @@ class OutputFiles:
         hash_id = hash_object.hexdigest()[:32]
 
         #params_file = self.dir / f"TESS_{hash_id}_{self.plname}_{tmidstr}_AAVSO.txt"
-        params_file = self.dir / safe_output_filename(
+        params_file = aavso_output_directory(self.dir) / safe_output_filename(
             tmidstr,
             hash_id,
             self.plname,
@@ -301,7 +301,7 @@ class OutputFiles:
             gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
             gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
-            params_file = self.dir / safe_output_filename(
+            params_file = aavso_output_directory(self.dir) / safe_output_filename(
                 "TESS",
                 tmidstr,
                 self.p_dict['pl_name'],

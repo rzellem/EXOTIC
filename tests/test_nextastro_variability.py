@@ -3293,15 +3293,19 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert results[0]['output_magnitude_error_rejected_frame_count'] == 1
     assert results[0]['point_count'] == frame_count - 3
     variable_dir = tmp_path / 'variables' / 'optimal_variables' / 'SyntheticVSX'
-    assert next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).is_file()
+    assert next(
+        (variable_dir / 'AAVSO_Files').glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')
+    ).is_file()
     second_variable_dir = (
         tmp_path / 'variables' / 'optimal_variables' / 'SyntheticVSX2'
     )
-    assert next(second_variable_dir.glob('AID_AAVSO_SyntheticVSX2_2024-01-02.txt')).is_file()
+    assert next(
+        (second_variable_dir / 'AAVSO_Files').glob('AID_AAVSO_SyntheticVSX2_2024-01-02.txt')
+    ).is_file()
     assert next(variable_dir.glob('EnsembleSelection_SyntheticVSX_2024-01-02.json')).is_file()
     assert next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv')).is_file()
     combined_aid_path = (
-        tmp_path / 'variables' / 'AID_AAVSO_FortuitousVariables_2024-01-02.txt'
+        tmp_path / 'variables' / 'AAVSO_Files' / 'AID_AAVSO_FortuitousVariables_2024-01-02.txt'
     )
     combined_aid_text = combined_aid_path.read_text(encoding='utf-8')
     combined_aid_rows = [
@@ -3338,9 +3342,9 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert 'exoplanet target overexposure mask is not applied' in (
         selection['target']['saturation_rejection_scope']
     )
-    aid_text = next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).read_text(
-        encoding='utf-8'
-    )
+    aid_text = next(
+        (variable_dir / 'AAVSO_Files').glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')
+    ).read_text(encoding='utf-8')
     assert (
         '#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,'
         'GROUP,CHART,NOTES,DIFFMAG,DIFFERR'
@@ -3404,7 +3408,9 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
         if line.strip()
     ]
     assert float(single_csv_rows[0].split(',')[0]) == pytest.approx(times[3])
-    single_aid = next(single_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt'))
+    single_aid = next(
+        (single_dir / 'AAVSO_Files').glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')
+    )
     single_aid_text = single_aid.read_text(encoding='utf-8')
     assert '#ENSEMBLE-COMPARISONS-XC=' not in single_aid_text
     single_aid_row = next(
@@ -3438,7 +3444,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert differential_only_dir.exists()
     assert next(differential_only_dir.glob('DifferentialMagnitude_*.csv')).is_file()
     assert not list(differential_only_dir.glob('StellarVariability_*.csv'))
-    assert not list(differential_only_dir.glob('AID_AAVSO_*.txt'))
+    assert not list((differential_only_dir / 'AAVSO_Files').glob('AID_AAVSO_*.txt'))
     failed_manifest = json.loads(
         next((failed_root / 'variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
             encoding='utf-8'

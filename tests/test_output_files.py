@@ -553,7 +553,7 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         None,
     )
 
-    output_file = tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt"
+    output_file = tmp_path / "AAVSO_Files" / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "#OBSDATE=2020-01-01" in output_text
@@ -624,7 +624,7 @@ def test_aavso_output_omits_obsname_header_when_blank(tmp_path):
         None,
     )
 
-    output_file = tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt"
+    output_file = tmp_path / "AAVSO_Files" / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "#OBSNAME=" not in output_text
@@ -700,7 +700,9 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
 
     AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
 
-    output_text = (tmp_path / "AID_AAVSO_HAT-P-32_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (
+        tmp_path / "AAVSO_Files" / "AID_AAVSO_HAT-P-32_2020-01-01.txt"
+    ).read_text(encoding="utf-8")
     metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
 
     assert metadata["source"] == "NextAstro photometry catalog"
@@ -774,7 +776,9 @@ def test_aid_output_records_calibrated_ensemble_members(tmp_path):
 
     AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
 
-    output_text = (tmp_path / "AID_AAVSO_Target_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (
+        tmp_path / "AAVSO_Files" / "AID_AAVSO_Target_2020-01-01.txt"
+    ).read_text(encoding="utf-8")
     metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
     ensemble_metadata = aavso_json_header(output_text, "ENSEMBLE-COMPARISONS-XC")
     assert metadata["ensemble_reference"] is True
@@ -832,7 +836,9 @@ def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):
 
     AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
 
-    output_text = (tmp_path / "AID_AAVSO_HAT-P-32_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (
+        tmp_path / "AAVSO_Files" / "AID_AAVSO_HAT-P-32_2020-01-01.txt"
+    ).read_text(encoding="utf-8")
     metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
 
     assert metadata["derived_reference_anchor_count"] == 20
@@ -872,7 +878,9 @@ def test_aid_output_floors_reported_magnitude_errors(tmp_path):
 
     AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
 
-    output_text = (tmp_path / "AID_AAVSO_HAT-P-32_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (
+        tmp_path / "AAVSO_Files" / "AID_AAVSO_HAT-P-32_2020-01-01.txt"
+    ).read_text(encoding="utf-8")
     metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
 
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.001)
@@ -908,7 +916,9 @@ def test_aid_output_skips_over_30_magnitude_rows(tmp_path):
 
     AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
 
-    output_text = (tmp_path / "AID_AAVSO_HAT-P-32_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (
+        tmp_path / "AAVSO_Files" / "AID_AAVSO_HAT-P-32_2020-01-01.txt"
+    ).read_text(encoding="utf-8")
 
     assert "HAT-P-32,2450000.12345" not in output_text
 
@@ -1716,7 +1726,7 @@ def test_aavso_output_writes_zero_airmass_terms_when_correction_is_skipped(tmp_p
         None,
     )
 
-    output_file = tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt"
+    output_file = tmp_path / "AAVSO_Files" / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
 
     assert "Am1=0 +/- 0" in output_text
@@ -1923,7 +1933,9 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
         },
     )
 
-    output_text = (tmp_path / "AAVSO_HAT-P-32b_2020-01-01.txt").read_text(encoding="utf-8")
+    output_text = (
+        tmp_path / "AAVSO_Files" / "AAVSO_HAT-P-32b_2020-01-01.txt"
+    ).read_text(encoding="utf-8")
 
     results = aavso_json_header(output_text, "RESULTS-XC")
     assert "a/R*" in results

@@ -714,10 +714,20 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
     assert "#DATE=BJD_TDB" in output_text
     assert "HAT-P-32,2450000.12345,12.3457,0.0123,V,NO,STD" in output_text
-    assert "|DIFFMAG=0.2457|DIFFERR=0.0068" in output_text
+    assert (
+        "#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,"
+        "GROUP,CHART,NOTES,DIFFMAG,DIFFERR\n"
+    ) in output_text
+    aid_header = next(line for line in output_text.splitlines() if line.startswith("#NAME,"))
+    aid_data_row = next(line for line in output_text.splitlines() if not line.startswith("#"))
+    assert len(aid_header.split(",")) == len(aid_data_row.split(",")) == 17
+    assert aid_data_row.split(",")[-3:] == ["na", "0.2457", "0.0068"]
+    assert "|DIFFMAG=" not in output_text
+    assert "|DIFFERR=" not in output_text
     magnitude_fields = aavso_json_header(output_text, "MAGNITUDE_FIELDS-XC")
     assert magnitude_fields["apparent_magnitude"] == "MAG"
-    assert magnitude_fields["differential_magnitude"] == "NOTES subfield DIFFMAG"
+    assert magnitude_fields["differential_magnitude"] == "DIFFMAG"
+    assert magnitude_fields["differential_magnitude_error"] == "DIFFERR"
 
 
 def test_aid_output_records_calibrated_ensemble_members(tmp_path):
@@ -783,7 +793,7 @@ def test_aid_output_records_calibrated_ensemble_members(tmp_path):
     assert ensemble_metadata["members"][1]["ra_deg"] == pytest.approx(10.2)
     assert ensemble_metadata["members"][1]["dec_deg"] == pytest.approx(-20.2)
     assert "Target,2450000.12345,12.3400,0.0200,V,NO,STD,ENSEMBLE (2 stars),na" in output_text
-    assert "|DIFFMAG=1.2346|DIFFERR=0.0079" in output_text
+    assert output_text.rstrip().endswith(",na,1.2346,0.0079")
 
 
 def test_aid_output_samples_large_derived_anchor_label_lists(tmp_path):

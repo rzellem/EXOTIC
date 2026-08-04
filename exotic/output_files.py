@@ -3001,8 +3001,8 @@ class AIDOutputFiles:
             f.write(format_aavso_json_header("MAGNITUDE_FIELDS-XC", {
                 'apparent_magnitude': 'MAG',
                 'apparent_magnitude_error': 'MERR',
-                'differential_magnitude': 'NOTES subfield DIFFMAG',
-                'differential_magnitude_error': 'NOTES subfield DIFFERR',
+                'differential_magnitude': 'DIFFMAG',
+                'differential_magnitude_error': 'DIFFERR',
                 'differential_magnitude_definition': (
                     'target minus selected comparison reference; '
                     '-2.5 log10(target_flux/reference_flux)'
@@ -3010,7 +3010,10 @@ class AIDOutputFiles:
                 'airmass_corrected': False,
             }))
 
-            f.write("#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,GROUP,CHART,NOTES\n")
+            f.write(
+                "#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,"
+                "AMASS,GROUP,CHART,NOTES,DIFFMAG,DIFFERR\n"
+            )
             for vsp_p in self.vsp_params:
                 variable_name = default_variable_name
                 if use_row_names:
@@ -3055,14 +3058,12 @@ class AIDOutputFiles:
                     default=None,
                     digits=MAGNITUDE_DECIMAL_PLACES,
                 )
-                notes = 'na'
-                if differential_mag_text is not None:
-                    notes = f"|DIFFMAG={differential_mag_text}"
-                    if differential_error_text is not None:
-                        notes += f"|DIFFERR={differential_error_text}"
+                differential_mag_text = differential_mag_text or 'na'
+                differential_error_text = differential_error_text or 'na'
                 f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"
                         f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{cmag},na,na,"
-                        f"{round(vsp_p['airmass'], 7)},na,{chart_id},{notes}\n")
+                        f"{round(vsp_p['airmass'], 7)},na,{chart_id},na,"
+                        f"{differential_mag_text},{differential_error_text}\n")
         return params_file
 
     def aavso(self):

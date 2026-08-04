@@ -3341,8 +3341,16 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     aid_text = next(variable_dir.glob('AID_AAVSO_SyntheticVSX_2024-01-02.txt')).read_text(
         encoding='utf-8'
     )
-    assert '|DIFFMAG=' in aid_text
-    assert '|DIFFERR=' in aid_text
+    assert (
+        '#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,'
+        'GROUP,CHART,NOTES,DIFFMAG,DIFFERR'
+    ) in aid_text
+    assert '|DIFFMAG=' not in aid_text
+    assert '|DIFFERR=' not in aid_text
+    aid_data_row = next(line for line in aid_text.splitlines() if not line.startswith('#'))
+    assert aid_data_row.split(',')[-3] == 'na'
+    assert aid_data_row.split(',')[-2] != 'na'
+    assert aid_data_row.split(',')[-1] != 'na'
     ensemble_header = next(
         line for line in aid_text.splitlines()
         if line.startswith('#ENSEMBLE-COMPARISONS-XC=')

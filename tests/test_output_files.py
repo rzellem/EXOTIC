@@ -542,6 +542,24 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         "wl_min": None,
         "wl_max": None,
     }
+    final_plot_source = tmp_path / "FinalLightCurve_HAT-P-32b_2020-01-01.png"
+    final_plot_source.write_bytes(b"final lightcurve")
+    diagnostics_dir = tmp_path / "Diagnostics"
+    diagnostics_dir.mkdir()
+    diagnostic_sources = [
+        diagnostics_dir / filename
+        for filename in (
+            "FinalTriangle_HAT-P-32b_2020-01-01.png",
+            "Triangle_HAT-P-32b_2020-01-01.png",
+            "ZoomedTrianglePlot_HAT-P-32b_2020-01-01.png",
+            "KTMF_QC_HAT-P-32b_2020-01-01.png",
+            "KTMF_QC_HAT-P-32b_2020-01-01.pdf",
+            "PriorPosteriorComparison_HAT-P-32b_2020-01-01.png",
+            "PriorPosteriorComparison_HAT-P-32b_2020-01-01.pdf",
+        )
+    ]
+    for diagnostic_source in diagnostic_sources:
+        diagnostic_source.write_bytes(diagnostic_source.name.encode("utf-8"))
 
     OutputFiles(fit, p_dict, i_dict, [0.1]).aavso(
         {"ra": "", "dec": "", "x": "493", "y": "202"},
@@ -555,6 +573,13 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
 
     output_file = tmp_path / "AAVSO_Files" / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
+    assert (
+        tmp_path / "AAVSO_Files" / final_plot_source.name
+    ).read_bytes() == b"final lightcurve"
+    for diagnostic_source in diagnostic_sources:
+        assert (
+            tmp_path / "AAVSO_Files" / diagnostic_source.name
+        ).read_bytes() == diagnostic_source.name.encode("utf-8")
 
     assert "#OBSDATE=2020-01-01" in output_text
     assert "#OBSNAME=Whipple Observatory" in output_text
@@ -697,12 +722,21 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
         "source_id": 12345,
         "separation_arcsec": 0.2,
     }]
+    working_artifacts_dir = tmp_path / "working_artifacts"
+    working_artifacts_dir.mkdir()
+    finder_source = (
+        working_artifacts_dir / "FOV_HAT-P-32b_LinearStretch_2020-01-01.png"
+    )
+    finder_source.write_bytes(b"finder chart")
 
     AIDOutputFiles(fit, p_dict, i_dict, auid=None, chart_id=None, vsp_params=vsp_params).aavso()
 
     output_text = (
         tmp_path / "AAVSO_Files" / "AID_AAVSO_HAT-P-32_2020-01-01.txt"
     ).read_text(encoding="utf-8")
+    assert (
+        tmp_path / "AAVSO_Files" / finder_source.name
+    ).read_bytes() == b"finder chart"
     metadata = aavso_json_header(output_text, "COMPARISON-CATALOG-XC")
 
     assert metadata["source"] == "NextAstro photometry catalog"

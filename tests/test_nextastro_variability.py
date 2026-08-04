@@ -1319,6 +1319,29 @@ def test_tracked_comparison_position_keeps_full_field_anchor_index_after_science
     ) == [449.0, 267.0]
 
 
+def test_selected_comparison_finder_entries_include_every_ensemble_member():
+    entries = exotic_module.selected_comparison_finder_entries(
+        [[100.0, 200.0], [300.0, 400.0], [500.0, 600.0]],
+        ensemble_member_keys=['comp3', 'comp1'],
+    )
+
+    assert entries == [
+        {'key': 'comp3', 'label': 'Comp 3', 'position': [500.0, 600.0]},
+        {'key': 'comp1', 'label': 'Comp 1', 'position': [100.0, 200.0]},
+    ]
+
+
+def test_selected_comparison_finder_entries_do_not_depend_on_aavso_metadata():
+    entries = exotic_module.selected_comparison_finder_entries(
+        [[217.0, 210.0]],
+        comp_index=0,
+    )
+
+    assert entries == [
+        {'key': 'comp1', 'label': 'Comp 1', 'position': [217.0, 210.0]},
+    ]
+
+
 def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(monkeypatch):
     calls = []
     supplied_positions = [[100, 200]]

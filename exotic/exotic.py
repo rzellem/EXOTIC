@@ -17738,6 +17738,38 @@ def tracked_comparison_position(tracked_comparison_stars, comp_index):
     return list(tracked_comparison_stars[index])
 
 
+def selected_comparison_finder_entries(comparison_stars, comp_index=None,
+                                       ensemble_member_keys=None):
+    """Return labelled pixel positions for the selected single or ensemble reference."""
+
+    if ensemble_member_keys:
+        keys = list(ensemble_member_keys)
+    elif comp_index is not None:
+        keys = [f'comp{int(comp_index) + 1}']
+    else:
+        keys = []
+
+    entries = []
+    for key in keys:
+        match = re.fullmatch(r'comp(\d+)', str(key).strip(), flags=re.IGNORECASE)
+        if match is None:
+            continue
+        index = int(match.group(1)) - 1
+        try:
+            position = tracked_comparison_position(comparison_stars, index)
+            position_values = np.asarray(position, dtype=float).reshape(-1)
+        except (IndexError, TypeError, ValueError):
+            continue
+        if position_values.size < 2 or not np.all(np.isfinite(position_values[:2])):
+            continue
+        entries.append({
+            'key': f'comp{index + 1}',
+            'label': f'Comp {index + 1}',
+            'position': [float(position_values[0]), float(position_values[1])],
+        })
+    return entries
+
+
 def check_comp_star_exists(user_stars, vsp_star, tol=VSP_COMPARISON_MATCH_TOLERANCE_PIXELS):
     """Return the nearest user-entered comparison within ``tol`` pixels.
 
@@ -31004,6 +31036,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'coverage_rejected': comp_summary.get('coverage_rejected', False),
             'ensemble_frame_rejected_count': comp_summary.get('ensemble_frame_rejected_count', 0),
             'ensemble_frame_required_valid_pairs': comp_summary.get('ensemble_frame_required_valid_pairs', 0),
+            'ensemble_member_keys': list(comp_summary.get('ensemble_member_keys') or []),
             'fit': selection_fit,
             'provisional_fit': None,
             'full_reduction_fit': final_reduction.get('fit'),
@@ -34808,6 +34841,11 @@ def _main_impl():
                         if selected_is_ensemble
                         else science_comp_stars[selected_comp_index]
                     )
+                    finder_entries = selected_comparison_finder_entries(
+                        science_comp_stars,
+                        comp_index=selected_comp_index,
+                        ensemble_member_keys=selected_attempt.get('ensemble_member_keys'),
+                    )
                     selected_min_aperture = 0 if comparison_calibration['method'] == 'psf' else comparison_calibration['aper']
                     selected_min_annulus = comparison_calibration['annulus']
                     selected_a = None if comparison_calibration['method'] == 'psf' else comparison_calibration['a']
@@ -34953,6 +34991,7 @@ def _main_impl():
                                                'ensemble' if selected_is_ensemble else selected_comp_index + 1
                                            ),
                                            comp_star_coords=selected_comp_coords,
+                                           finder_comparison_entries=finder_entries,
                                            min_aperture=selected_min_aperture,
                                            min_annulus=selected_min_annulus,
                                            aperture_index=selected_a,
@@ -35522,7 +35561,16 @@ def _main_impl():
                 np.isfinite(centroid_positions['x_ref'][0])
                 and np.isfinite(centroid_positions['y_ref'][0])
             )
-            if reference_centroid_available:
+            finder_entries = list(photometry_info.get('finder_comparison_entries') or [])
+            if not finder_entries and reference_centroid_available:
+                finder_entries = [{
+                    'label': 'Comp Star',
+                    'position': [
+                        float(centroid_positions['x_ref'][0]),
+                        float(centroid_positions['y_ref'][0]),
+                    ],
+                }]
+            if finder_entries:
                 firstImage = ensure_first_reduction_image_for_fov(
                     firstImage,
                     inputfiles[0],
@@ -35534,21 +35582,33 @@ def _main_impl():
                     demosaic_mult,
                     bad_pixel_reference=bad_pixel_reference,
                 )
+                finder_positions = [entry['position'] for entry in finder_entries]
+                finder_labels = [entry['label'] for entry in finder_entries]
+                finder_target_position = [
+                    float(centroid_positions['x_targ'][0]),
+                    float(centroid_positions['y_targ'][0]),
+                ]
+                first_target_centroid = np.asarray(psf_data['target'][0, :2], dtype=float)
+                if np.all(np.isfinite(first_target_centroid)):
+                    finder_target_position = first_target_centroid.tolist()
                 plot_fov(fov_aperture, fov_annulus, sigma_display,
-                         centroid_positions['x_targ'][0], centroid_positions['y_targ'][0],
-                         centroid_positions['x_ref'][0], centroid_positions['y_ref'][0],
+                         finder_target_position[0], finder_target_position[1],
+                         finder_positions[0][0], finder_positions[0][1],
                          firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'],
                          exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov,
                          sky_inner_radius=fov_sky_geometry['inner_radius'],
-                         sky_outer_radius=fov_sky_geometry['outer_radius'])
+                         sky_outer_radius=fov_sky_geometry['outer_radius'],
+                         comparison_positions=finder_positions,
+                         comparison_labels=finder_labels)
 
+            if reference_centroid_available:
                 plot_centroids(centroid_positions['x_targ'], centroid_positions['y_targ'],
                                centroid_positions['x_ref'], centroid_positions['y_ref'],
                                goodTimes, pDict['pName'], exotic_infoDict['save'], exotic_infoDict['date'])
             else:
                 log_info(
-                    "Skipping reference-star FOV and centroid plots because the selected reference is "
-                    "a comparison-star ensemble rather than a single star."
+                    "Skipping reference-star centroid plots because the selected reference does not "
+                    "have one single-star centroid series."
                 )
 
             plot_flux(goodTimes, flux_values['flux_tar'], flux_values['flux_unc_tar'],

@@ -62,6 +62,64 @@ except ImportError:
     )
 
 
+AAVSO_FINDER_STRETCH_NAMES = (
+    'LinearStretch',
+    'SquaredStretch',
+    'SqrtStretch',
+    'LogStretch',
+)
+
+
+def copy_aavso_supporting_artifacts(save, target_name, observation_date):
+    """Copy final lightcurve, finder, triangle, and QC products into ``AAVSO_Files``."""
+
+    output_dir = Path(save)
+    working_artifacts_dir = output_dir / 'working_artifacts'
+    diagnostics_dir = output_dir / 'Diagnostics'
+    date_token = filename_date_token(observation_date)
+    source_paths = [
+        output_dir / safe_output_filename(
+            'FinalLightCurve', target_name, date_token, extension=extension
+        )
+        for extension in ('png', 'pdf')
+    ]
+    source_paths.append(
+        working_artifacts_dir / safe_output_filename(
+            'FinalLightCurve', target_name, date_token, extension='csv'
+        )
+    )
+    for stretch_name in AAVSO_FINDER_STRETCH_NAMES:
+        source_paths.extend(
+            working_artifacts_dir / safe_output_filename(
+                'FOV', target_name, stretch_name, date_token, extension=extension
+            )
+            for extension in ('png', 'pdf')
+        )
+    for prefix, extensions in (
+        ('FinalTriangle', ('png',)),
+        ('Triangle', ('png',)),
+        ('ZoomedTrianglePlot', ('png',)),
+        ('KTMF_QC', ('png', 'pdf')),
+        ('PriorPosteriorComparison', ('png', 'pdf')),
+    ):
+        source_paths.extend(
+            diagnostics_dir / safe_output_filename(
+                prefix, target_name, date_token, extension=extension
+            )
+            for extension in extensions
+        )
+
+    aavso_dir = aavso_output_directory(output_dir)
+    copied_paths = []
+    for source_path in source_paths:
+        if not source_path.is_file():
+            continue
+        destination_path = aavso_dir / source_path.name
+        shutil.copy2(source_path, destination_path)
+        copied_paths.append(destination_path)
+    return copied_paths
+
+
 def aavso_airmass_results(fit):
     if getattr(fit, 'airmass_fit_skipped', False):
         return (
@@ -2928,6 +2986,12 @@ class OutputFiles:
                 f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC], 7)},"
                         f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
                         f"{round(detrend_model[aavsoC], 7)}\n")
+        copy_aavso_supporting_artifacts(
+            self.dir,
+            self.p_dict['pName'],
+            self.i_dict['date'],
+        )
+
     def plate_status(self, plate_status: PlateStatus):
         plate_status_file = self.dir / "working_artifacts" / safe_output_filename(
             "PlateStatus",
@@ -3069,15 +3133,27 @@ class AIDOutputFiles:
         return params_file
 
     def aavso(self):
-        return self._write_aavso(self._aavso_path())
+        params_file = self._write_aavso(self._aavso_path())
+        copy_aavso_supporting_artifacts(
+            self.dir,
+            self.p_dict.get('pName') or self.p_dict.get('sName'),
+            self.i_dict['date'],
+        )
+        return params_file
 
     def combined_aavso(self):
         """Write one AID file containing rows for multiple named variables."""
-        return self._write_aavso(
+        params_file = self._write_aavso(
             self._aavso_path(),
             use_row_names=True,
             include_comparison_metadata=False,
         )
+        copy_aavso_supporting_artifacts(
+            self.dir,
+            self.p_dict.get('pName') or self.p_dict.get('sName'),
+            self.i_dict['date'],
+        )
+        return params_file
 
 
 def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):

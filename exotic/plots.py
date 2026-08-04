@@ -100,13 +100,38 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
     plt.close()
 
 def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_scale, targ_name, save, date,
-             opt_method, min_aper_fov, min_annulus_fov, sky_inner_radius=None, sky_outer_radius=None):
+             opt_method, min_aper_fov, min_annulus_fov, sky_inner_radius=None, sky_outer_radius=None,
+             comparison_positions=None, comparison_labels=None):
 
-    ref_circle, ref_circle_sky = None, None
+    if comparison_positions is None:
+        comparison_positions = [[x_ref, y_ref]]
+    valid_comparison_positions = []
+    for position in comparison_positions:
+        try:
+            position_values = np.asarray(position, dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            continue
+        if position_values.size < 2 or not np.all(np.isfinite(position_values[:2])):
+            continue
+        valid_comparison_positions.append((
+            float(position_values[0]),
+            float(position_values[1]),
+        ))
+    if aper < 0:
+        valid_comparison_positions = []
+
+    labels = list(comparison_labels or [])
+    if len(labels) != len(valid_comparison_positions):
+        if len(valid_comparison_positions) == 1:
+            labels = ['Comp Star']
+        else:
+            labels = [f'Comp {index + 1}' for index in range(len(valid_comparison_positions))]
+
     picframe = 10. * (aper + 15. * sigma)
-
-    pltx = [max([0, min([x_targ, x_ref]) - picframe]), min([np.shape(image)[1], max([x_targ, x_ref]) + picframe])]
-    plty = [max([0, min([y_targ, y_ref]) - picframe]), min([np.shape(image)[0], max([y_targ, y_ref]) + picframe])]
+    plotted_x = [x_targ, *(position[0] for position in valid_comparison_positions)]
+    plotted_y = [y_targ, *(position[1] for position in valid_comparison_positions)]
+    pltx = [max(0, min(plotted_x) - picframe), min(np.shape(image)[1], max(plotted_x) + picframe)]
+    plty = [max(0, min(plotted_y) - picframe), min(np.shape(image)[0], max(plotted_y) + picframe)]
 
     for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
         fig, ax = plt.subplots()
@@ -135,12 +160,6 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         target_circle_sky_inner = plt.Circle((x_targ, y_targ), local_sky_inner_radius, color=outer_circle_color, fill=False, ls='--')
         target_circle_sky_outer = plt.Circle((x_targ, y_targ), local_sky_outer_radius, color=outer_circle_color, fill=False, ls='-')
 
-        # IF EXOTIC is using a comparison star, create its circles
-        if aper >= 0:
-            ref_circle = plt.Circle((x_ref, y_ref), aper, color=outer_circle_color, fill=False, ls='-')
-            ref_circle_sky_inner = plt.Circle((x_ref, y_ref), local_sky_inner_radius, color=outer_circle_color, fill=False, ls='--')
-            ref_circle_sky = plt.Circle((x_ref, y_ref), local_sky_outer_radius, color=outer_circle_color, fill=False, ls='-')
-
         interval = ZScaleInterval()
         vmin, vmax = interval.get_limits(image)
 
@@ -155,12 +174,31 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
         ax.text(x_targ + local_sky_outer_radius + 5, y_targ, targ_name, color='w', fontsize=10,
                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
-        if aper >= 0: #EXOTIC is using a comparison star
+        for (comparison_x, comparison_y), comparison_label in zip(
+                valid_comparison_positions, labels):
+            ref_circle = plt.Circle(
+                (comparison_x, comparison_y), aper,
+                color=outer_circle_color, fill=False, ls='-'
+            )
+            ref_circle_sky_inner = plt.Circle(
+                (comparison_x, comparison_y), local_sky_inner_radius,
+                color=outer_circle_color, fill=False, ls='--'
+            )
+            ref_circle_sky = plt.Circle(
+                (comparison_x, comparison_y), local_sky_outer_radius,
+                color=outer_circle_color, fill=False, ls='-'
+            )
             ax.add_artist(ref_circle)
             ax.add_artist(ref_circle_sky_inner)
             ax.add_artist(ref_circle_sky)
-            ax.text(x_ref + local_sky_outer_radius + 5, y_ref, 'Comp Star', color='w', fontsize=10,
-                    path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
+            ax.text(
+                comparison_x + local_sky_outer_radius + 5,
+                comparison_y,
+                comparison_label,
+                color='w',
+                fontsize=10,
+                path_effects=[path_effects.withStroke(linewidth=2, foreground='black')],
+            )
 
         handles = []
         if opt_method == "PSF":

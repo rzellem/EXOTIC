@@ -297,6 +297,42 @@ def test_plot_fov_psf_legend_omits_aperture_annulus_text(tmp_path, monkeypatch):
     assert set(labels) == {"PSF Photometry"}
 
 
+def test_plot_fov_marks_every_ensemble_comparison(tmp_path, monkeypatch):
+    plotted_labels = []
+    original_text = Axes.text
+
+    def spy_text(self, x, y, text, *args, **kwargs):
+        plotted_labels.append(text)
+        return original_text(self, x, y, text, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "text", spy_text)
+
+    plot_fov(
+        aper=8.0,
+        annulus=20.0,
+        sigma=2.0,
+        x_targ=50.0,
+        y_targ=60.0,
+        x_ref=90.0,
+        y_ref=100.0,
+        image=np.ones((220, 220)),
+        image_scale="Image scale in arcsec/pixel: 0.53",
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+        opt_method="Aperture",
+        min_aper_fov=8.0,
+        min_annulus_fov=20.0,
+        comparison_positions=[[90.0, 100.0], [130.0, 140.0], [170.0, 180.0]],
+        comparison_labels=["Comp 1", "Comp 3", "Comp 4"],
+    )
+
+    assert {"Target", "Comp 1", "Comp 3", "Comp 4"}.issubset(plotted_labels)
+    assert (
+        tmp_path / "working_artifacts" / "FOV_Target_LinearStretch_2026-03-09.png"
+    ).is_file()
+
+
 def test_plot_individual_comp_star_calibration_series_writes_outputs(tmp_path):
     plot_individual_comp_star_calibration_series(
         times=np.array([1.0, 2.0, 3.0]),

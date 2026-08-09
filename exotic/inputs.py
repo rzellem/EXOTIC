@@ -11,10 +11,10 @@ import astropy.units as u
 import re
 
 try:
-    from utils import user_input, init_params, typecast_check, \
+    from utils import coerce_boolean_config_value, user_input, init_params, typecast_check, \
         process_lat_long, find, open_elevation
 except ImportError:
-    from .utils import user_input, init_params, typecast_check, \
+    from .utils import coerce_boolean_config_value, user_input, init_params, typecast_check, \
         process_lat_long, find, open_elevation
 try:
     from animate import animate_toggle
@@ -265,6 +265,7 @@ class Inputs:
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': False, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
+            'allow_pixel_alignment_fallback': False,
             'prefer_pixel_values_over_wcs_for_target': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'stellar_variability_only': False,
@@ -547,6 +548,11 @@ class Inputs:
                 'Ignore WCS in Header and Do Manual Alignment',
                 'Ignore WCS in header and do manual alignment',
                 'ignore_header_wcs',
+            ),
+            'allow_pixel_alignment_fallback': (
+                'allow_pixel_alignment_fallback',
+                'Allow Pixel Alignment Fallback',
+                'Allow Pixel Alignment Fallback? (y/n)',
             ),
             'prefer_pixel_values_over_wcs_for_target': (
                 'prefer_pixel_values_over_wcs_for_target',
@@ -1209,23 +1215,23 @@ def obs_notes(notes):
 
 
 def plate_solution_opt(opt):
-    if opt:
-        opt = opt.lower().strip()
-    if opt not in ('y', 'n'):
+    parsed = None if is_blank_value(opt) else coerce_boolean_config_value(opt)
+    if parsed is None:
         opt = user_input("\nWould you like to upload the your image for a plate solution?"
                          "\nThis will allow EXOTIC to translate your image's pixels into coordinates on the sky."
                          "\nDISCLAIMER: One of your imaging files will be publicly viewable on "
                          "nova.astrometry.net. (y/n): ", type_=str, values=['y', 'n'])
-    return opt
+        parsed = coerce_boolean_config_value(opt)
+    return 'y' if parsed else 'n'
 
 
 def aavso_comp(opt):
-    if opt:
-        opt = opt.lower().strip()
-    if opt not in ('y', 'n'):
+    parsed = None if is_blank_value(opt) else coerce_boolean_config_value(opt)
+    if parsed is None:
         opt = user_input("\nWould you like Comparison Stars added automatically from AAVSO? (y/n): ",
                          type_=str, values=['y', 'n'])
-    return opt
+        parsed = coerce_boolean_config_value(opt)
+    return 'y' if parsed else 'n'
 
 
 def target_star_coords(coords, planet):

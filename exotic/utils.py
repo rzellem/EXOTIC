@@ -29,6 +29,34 @@ MAX_APPARENT_MAGNITUDE = 30.0
 MAGNITUDE_DECIMAL_PLACES = 4
 MINIMUM_MAGNITUDE_ERROR = 0.001
 AAVSO_OUTPUT_FOLDER_NAME = 'AAVSO_Files'
+BOOLEAN_CONFIG_TRUE_STRINGS = frozenset(('y', 'yes', 'true', '1', 'on'))
+BOOLEAN_CONFIG_FALSE_STRINGS = frozenset(('n', 'no', 'false', '0', 'off', ''))
+
+
+def coerce_boolean_config_value(value):
+    """Return a configured boolean, or ``None`` when the value is not boolean-like.
+
+    JSON booleans and numeric 1/0 are accepted directly. String values are
+    case-insensitive and accept y/n, yes/no, true/false, 1/0, and on/off.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if not isfinite(value):
+            return None
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in BOOLEAN_CONFIG_TRUE_STRINGS:
+            return True
+        if normalized in BOOLEAN_CONFIG_FALSE_STRINGS:
+            return False
+    return None
 
 
 def aavso_output_directory(root):

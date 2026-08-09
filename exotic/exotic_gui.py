@@ -416,7 +416,8 @@ def main():
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
-                "Bad WCS Threshold Percent": "Set optional_info 'bad_wcs_threshold_percent' to the maximum percent of images allowed to lack celestial WCS before EXOTIC keeps them and falls back to legacy alignment. If the missing-WCS fraction is below this threshold, those images are dropped. Default 3.",
+                "Pixel Alignment Fallback": "Set optional_info 'allow_pixel_alignment_fallback' to true only to permit legacy Astroalign image registration when a frame's WCS-derived star locations are unusable. Default false; WCS headers are authoritative.",
+                "Bad WCS Threshold Percent": "When allow_pixel_alignment_fallback is true, set optional_info 'bad_wcs_threshold_percent' to the maximum percent of images allowed to lack celestial WCS before EXOTIC keeps them for legacy alignment. With the default WCS-authoritative mode, every image without celestial WCS is dropped. Default 3.",
                 "Prefer Pixel Coordinates Over WCS": "Set optional_info 'prefer_pixel_values_over_wcs_for_target' to y to keep the entered target pixel coordinates when they conflict with WCS-derived target coordinates. Default n.",
                 "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
                 "Stellar Variability Only": "Set optional_info 'stellar_variability_only' to true to skip transit fitting, select comparison-star photometry by out-of-transit scatter, and discard predicted ingress-to-egress transit-window points. Default false.",
@@ -443,6 +444,7 @@ def main():
                 "Photometry Noise Budget": "Optional noise terms for raw-image photometry: gain_electrons_per_adu, read_noise_electrons, dark_current_electrons_per_second_per_pixel, flat_field_fractional_error, telescope_aperture_m, and scintillation_coefficient. Leave null to ignore an optional term.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
                 "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
+                "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -460,6 +462,7 @@ def main():
             }
             new_inits['optional_info'] = {
                 "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                "allow_pixel_alignment_fallback": False,
                 "bad_wcs_threshold_percent": 3.0,
                 "prefer_pixel_values_over_wcs_for_target": "n",
                 "disable vertical flux normalization": False,
@@ -1530,7 +1533,8 @@ def main():
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
-                "Bad WCS Threshold Percent": "Set optional_info 'bad_wcs_threshold_percent' to the maximum percent of images allowed to lack celestial WCS before EXOTIC keeps them and falls back to legacy alignment. If the missing-WCS fraction is below this threshold, those images are dropped. Default 3.",
+                "Pixel Alignment Fallback": "Set optional_info 'allow_pixel_alignment_fallback' to true only to permit legacy Astroalign image registration when a frame's WCS-derived star locations are unusable. Default false; WCS headers are authoritative.",
+                "Bad WCS Threshold Percent": "When allow_pixel_alignment_fallback is true, set optional_info 'bad_wcs_threshold_percent' to the maximum percent of images allowed to lack celestial WCS before EXOTIC keeps them for legacy alignment. With the default WCS-authoritative mode, every image without celestial WCS is dropped. Default 3.",
                 "Prefer Pixel Coordinates Over WCS": "Set optional_info 'prefer_pixel_values_over_wcs_for_target' to y to keep the entered target pixel coordinates when they conflict with WCS-derived target coordinates. Default n.",
                 "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
                 "Stellar Variability Only": "Set optional_info 'stellar_variability_only' to true to skip transit fitting, select comparison-star photometry by out-of-transit scatter, and discard predicted ingress-to-egress transit-window points. Default false.",
@@ -1556,6 +1560,7 @@ def main():
                 "Overexposure Threshold Fraction": "Set optional_info 'overexposure_threshold_fraction' to the fraction of saturation used for rejection. Default 0.9.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
                 "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
+                "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -1621,6 +1626,7 @@ def main():
                     "Filter Maximum Wavelength (nm)": input_data.get('filtermax', null),
                     "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
                     "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                    "allow_pixel_alignment_fallback": False,
                     "bad_wcs_threshold_percent": 3.0,
                     "prefer_pixel_values_over_wcs_for_target": "n",
                     "disable vertical flux normalization": False,
@@ -1698,6 +1704,7 @@ def main():
                     "Exposure Time (s)": input_data['exp'],
                     "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
                     "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                    "allow_pixel_alignment_fallback": False,
                     "bad_wcs_threshold_percent": 3.0,
                     "prefer_pixel_values_over_wcs_for_target": "n",
                     "disable vertical flux normalization": False,

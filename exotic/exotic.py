@@ -94,7 +94,7 @@ import dateutil.parser as dup
 import imreg_dft as ird
 from pathlib import Path
 import logging
-from logging.handlers import TimedRotatingFileHandler
+import tempfile
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
 import bottleneck as bn
@@ -206,6 +206,7 @@ try:  # tools
     from utils import (
         AAVSO_OUTPUT_FOLDER_NAME,
         MAX_APPARENT_MAGNITUDE,
+        coerce_boolean_config_value,
         filename_date_token,
         is_usable_apparent_magnitude,
         magnitude_text,
@@ -218,6 +219,7 @@ except ImportError: # package import
     from .utils import (
         AAVSO_OUTPUT_FOLDER_NAME,
         MAX_APPARENT_MAGNITUDE,
+        coerce_boolean_config_value,
         filename_date_token,
         is_usable_apparent_magnitude,
         magnitude_text,
@@ -248,6 +250,8 @@ _UNHANDLED_EXCEPTION_LOGGED = False
 _BJD_FALLBACK_WARNING_LOGGED = False
 _RUNTIME_FILE_HANDLER_NAME = "exotic-runtime-file"
 _RUNTIME_CONSOLE_HANDLER_NAME = "exotic-runtime-console"
+_RUNTIME_LOG_BASENAME = None
+_RUNTIME_LOG_PATH = None
 _RUNTIME_TRACEBACK_WATCHDOG_SECONDS_ENV = "EXOTIC_RUNTIME_TRACEBACK_WATCHDOG_SECONDS"
 _RUNTIME_TRACEBACK_WATCHDOG_DEFAULT_SECONDS = 1800.0
 _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = False
@@ -432,6 +436,9 @@ NEXTASTRO_GAIA_COLOR_LOOKUP_MAX_PER_SELECTOR = 25
 CATALOG_REFERENCE_MAGNITUDE_ERROR_MAX = 0.05
 CATALOG_BV_REFERENCE_MAGNITUDE_ERROR_FALLBACK_MAX = 0.10
 VSP_COMPARISON_MATCH_TOLERANCE_PIXELS = 3.0
+AAVSO_VSP_REQUEST_TIMEOUT_SECONDS = 30
+AAVSO_VSP_RETRY_DELAY_SECONDS = 60
+AAVSO_VSP_MAX_RETRIES = 5
 REFERENCE_FALLBACK_COMPARISON_LIMIT = 10
 REFERENCE_FALLBACK_DETECTION_MAX_STARS = 60
 REFERENCE_FALLBACK_DETECTION_MIN_SEP_PIXELS = 12
@@ -7972,28 +7979,160 @@ def cancel_runtime_traceback_watchdog():
     _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = False
 
 
-def configure_runtime_logging():
-    global _RUNTIME_LOGGING_CONFIGURED
+def _runtime_output_directory_from_command_line(argv=None):
+    """Return the configured output directory when an init file is on the command line."""
+    command_line = list(sys.argv[1:] if argv is None else argv)
+    init_options = {
+        '-red', '--reduce', '-pre', '--prereduced', '-phot', '--photometry', '-rt', '--realtime',
+    }
+    init_path = None
+
+    for index, argument in enumerate(command_line):
+        if argument in init_options:
+            if index + 1 < len(command_line) and command_line[index + 1]:
+                init_path = command_line[index + 1]
+            break
+        for option in init_options:
+            option_prefix = f"{option}="
+            if argument.startswith(option_prefix):
+                init_path = argument[len(option_prefix):]
+                break
+        if init_path is not None:
+            break
+
+    if not init_path:
+        return None
+
+    try:
+        with open(Path(init_path).expanduser(), encoding='utf-8') as init_file:
+            init_data = json.load(init_file)
+        output_directory = init_data.get('user_info', {}).get('Directory to Save Plots')
+    except (OSError, TypeError, ValueError):
+        return None
+
+    return output_directory or None
+
+
+def _new_runtime_log_basename():
+    run_timestamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
+    return f"EXOTIC_RunLog_{run_timestamp}_pid{os.getpid()}.log"
+
+
+def _runtime_log_directory(output_dir=None):
+    if output_dir:
+        return Path(output_dir).expanduser().resolve() / "Diagnostics"
+    return Path(tempfile.gettempdir()).resolve() / "exotic-runtime-logs"
+
+
+def _available_runtime_log_path(directory, basename):
+    candidate = directory / basename
+    if not candidate.exists():
+        return candidate
+
+    stem = Path(basename).stem
+    suffix = Path(basename).suffix
+    duplicate_number = 2
+    while True:
+        candidate = directory / f"{stem}_{duplicate_number}{suffix}"
+        if not candidate.exists():
+            return candidate
+        duplicate_number += 1
+
+
+def _runtime_file_formatter():
+    return logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
+        "%(funcName)s:%(lineno)d - %(message)s",
+        "%Y-%m-%dT%H:%M:%S",
+    )
+
+
+def _open_runtime_file_handler(log_path):
+    file_handler = logging.FileHandler(filename=log_path, mode='a', encoding='utf-8')
+    file_handler._exotic_runtime_handler_name = _RUNTIME_FILE_HANDLER_NAME
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(_runtime_file_formatter())
+    log.addHandler(file_handler)
+    return file_handler
+
+
+def _close_runtime_file_handler():
+    file_handler = _find_runtime_handler(_RUNTIME_FILE_HANDLER_NAME)
+    if file_handler is None:
+        return
+
+    log.removeHandler(file_handler)
+    try:
+        file_handler.flush()
+    finally:
+        file_handler.close()
+
+
+def close_runtime_logging():
+    global _RUNTIME_LOGGING_CONFIGURED, _RUNTIME_LOG_BASENAME, _RUNTIME_LOG_PATH
+
+    _close_runtime_file_handler()
+    _RUNTIME_LOGGING_CONFIGURED = False
+    _RUNTIME_LOG_BASENAME = None
+    _RUNTIME_LOG_PATH = None
+
+
+def configure_runtime_logging(output_dir=None, start_new_run=False):
+    global _RUNTIME_LOGGING_CONFIGURED, _RUNTIME_LOG_BASENAME, _RUNTIME_LOG_PATH
 
     logging.root.setLevel(logging.DEBUG)
     log.setLevel(logging.DEBUG)
 
-    if _find_runtime_handler(_RUNTIME_FILE_HANDLER_NAME) is None:
+    if start_new_run:
+        _close_runtime_file_handler()
+        _RUNTIME_LOG_BASENAME = _new_runtime_log_basename()
+        _RUNTIME_LOG_PATH = None
+        if output_dir is None:
+            output_dir = _runtime_output_directory_from_command_line()
+    elif _RUNTIME_LOG_BASENAME is None:
+        _RUNTIME_LOG_BASENAME = _new_runtime_log_basename()
+
+    try:
+        requested_log_directory = _runtime_log_directory(output_dir)
+        requested_log_directory.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        print(f"Warning: Could not initialize the EXOTIC run log directory ({exc}).")
+        requested_log_directory = _runtime_log_directory()
+        requested_log_directory.mkdir(parents=True, exist_ok=True)
+        output_dir = None
+
+    file_handler = _find_runtime_handler(_RUNTIME_FILE_HANDLER_NAME)
+    if file_handler is not None and output_dir:
+        current_log_path = Path(file_handler.baseFilename).resolve()
+        requested_parent = requested_log_directory.resolve()
+        if current_log_path.parent != requested_parent:
+            destination = _available_runtime_log_path(requested_parent, _RUNTIME_LOG_BASENAME)
+            log.debug(f"Relocating EXOTIC run log to {destination}")
+            _close_runtime_file_handler()
+            try:
+                shutil.move(str(current_log_path), str(destination))
+            except Exception as exc:
+                print(f"Warning: Could not move the EXOTIC run log into Diagnostics ({exc}).")
+                destination = current_log_path
+            try:
+                file_handler = _open_runtime_file_handler(destination)
+                _RUNTIME_LOG_PATH = destination
+                _RUNTIME_LOG_BASENAME = destination.name
+                print(f"EXOTIC run log: {destination}", flush=True)
+            except Exception as exc:
+                file_handler = None
+                print(f"Warning: Could not reopen the EXOTIC run log ({exc}).")
+
+    if file_handler is None:
+        log_path = _available_runtime_log_path(requested_log_directory, _RUNTIME_LOG_BASENAME)
         try:
-            file_handler = TimedRotatingFileHandler(filename="exotic.log", when="midnight", backupCount=2)
+            file_handler = _open_runtime_file_handler(log_path)
         except Exception as exc:
-            print(f"Warning: Could not initialize exotic.log ({exc}).")
+            print(f"Warning: Could not initialize the EXOTIC run log ({exc}).")
         else:
-            file_handler._exotic_runtime_handler_name = _RUNTIME_FILE_HANDLER_NAME
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s.%(msecs)03d [%(threadName)-12.12s] %(levelname)-5.5s  "
-                    "%(funcName)s:%(lineno)d - %(message)s",
-                    "%Y-%m-%dT%H:%M:%S",
-                )
-            )
-            log.addHandler(file_handler)
+            _RUNTIME_LOG_PATH = log_path
+            _RUNTIME_LOG_BASENAME = log_path.name
+            print(f"EXOTIC run log: {log_path}", flush=True)
 
     console_handler = _find_runtime_handler(_RUNTIME_CONSOLE_HANDLER_NAME)
     if console_handler is None:
@@ -8992,16 +9131,9 @@ def configure_rprs_search_bound_max(config_value):
 def parse_bool_config_value(config_value, default, option_name):
     if config_value is None:
         return default
-    if isinstance(config_value, bool):
-        return config_value
-    if isinstance(config_value, (int, float)):
-        return bool(config_value)
-    if isinstance(config_value, str):
-        normalized = config_value.strip().lower()
-        if normalized in ('y', 'yes', 'true', '1', 'on'):
-            return True
-        if normalized in ('n', 'no', 'false', '0', 'off', ''):
-            return False
+    parsed = coerce_boolean_config_value(config_value)
+    if parsed is not None:
+        return parsed
 
     default_text = "enabled" if default else "disabled"
     log_info(
@@ -9453,6 +9585,28 @@ def should_ignore_header_wcs(config_value):
 
     log_info("Warning: Invalid 'Ignore WCS in Header and Do Manual Alignment? (y/n)' value; "
              "using header WCS when available.", warn=True)
+    return False
+
+
+def should_allow_pixel_alignment_fallback(config_value):
+    if config_value is None:
+        return False
+    if isinstance(config_value, bool):
+        return config_value
+    if isinstance(config_value, (int, float)):
+        return bool(config_value)
+    if isinstance(config_value, str):
+        normalized = config_value.strip().lower()
+        if normalized in ('y', 'yes', 'true', '1', 'on'):
+            return True
+        if normalized in ('n', 'no', 'false', '0', 'off', ''):
+            return False
+
+    log_info(
+        "Warning: Invalid 'allow_pixel_alignment_fallback' value; "
+        "pixel-based image alignment will remain disabled.",
+        warn=True,
+    )
     return False
 
 
@@ -13745,16 +13899,19 @@ def nonlinear_ld(ld, info_dict, non_interactive_run=False):
                     "Non-interactive runs require a recognized standard filter or both wl_min and wl_max."
                 )
 
-            opt = info_dict.get('ld_uncertainties')
+            raw_opt = info_dict.get('ld_uncertainties')
+            opt = (
+                None
+                if raw_opt is None or (isinstance(raw_opt, str) and not raw_opt.strip())
+                else coerce_boolean_config_value(raw_opt)
+            )
 
-            if isinstance(opt, str):
-                opt = opt.lower().strip()
-
-            if opt not in ('y', 'n'):
+            if opt is None:
                 opt = user_input("\nWould you like EXOTIC to calculate your limb darkening parameters "
                                  "with uncertainties? (y/n):", type_=str, values=['y', 'n'])
+                opt = coerce_boolean_config_value(opt)
 
-            if opt == 'y':
+            if opt:
                 opt = user_input("Please enter 1 to use a standard filter or 2 for a customized filter:",
                                  type_=int, values=[1, 2])
                 if opt == 1:
@@ -14212,6 +14369,7 @@ def sigma_clip_pointing_positions(positions, sigma=3.0, max_iters=5):
 
 
 def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ignore_header_wcs=False,
+                                   allow_pixel_alignment_fallback=False,
                                    frame_loader=None, return_alignment_transforms=False,
                                    multiprocess_transformations=None,
                                    generalDark=None, generalBias=None, generalFlat=None,
@@ -14244,6 +14402,8 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
     usable_mask = None
     mode_label = None
 
+    pixel_alignment_enabled = bool(ignore_header_wcs or allow_pixel_alignment_fallback)
+
     if not ignore_header_wcs:
         wcs_positions, wcs_usable_mask = collect_wcs_frame_center_pointings(inputfiles)
         usable_wcs_count = int(np.count_nonzero(wcs_usable_mask))
@@ -14251,13 +14411,21 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
             positions = wcs_positions
             usable_mask = wcs_usable_mask
             mode_label = "WCS"
-        elif usable_wcs_count > 0:
+        elif usable_wcs_count > 0 and pixel_alignment_enabled:
             log_info(
                 f"Pointing precheck: usable WCS-derived pointing centers found for "
                 f"{usable_wcs_count}/{len(inputfiles)} frame(s); falling back to alignment-derived positions."
             )
-        else:
+        elif pixel_alignment_enabled:
             log_info("Pointing precheck: no usable WCS-derived pointing centers found; using alignment-derived positions.")
+        else:
+            positions = wcs_positions
+            usable_mask = wcs_usable_mask
+            mode_label = "WCS"
+            log_info(
+                f"Pointing precheck: usable WCS-derived pointing centers found for "
+                f"{usable_wcs_count}/{len(inputfiles)} frame(s). Pixel alignment fallback is disabled."
+            )
 
     if positions is None:
         positions, usable_mask, alignment_transforms = collect_transform_frame_pointings(
@@ -14306,7 +14474,8 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
     return format_result(retained_files, keep_mask, dropped_files)
 
 
-def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_missing_fraction=None):
+def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_missing_fraction=None,
+                                     allow_pixel_alignment_fallback=False):
     inputfiles = np.array(inputfiles)
     keep_mask = np.ones(len(inputfiles), dtype=bool)
     if ignore_header_wcs or len(inputfiles) == 0:
@@ -14320,6 +14489,16 @@ def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_mi
     total_files = len(inputfiles)
     if missing_count == 0:
         return inputfiles, keep_mask, []
+
+    if not allow_pixel_alignment_fallback:
+        retained_files = inputfiles[keep_mask]
+        log_info(
+            f"WCS-authoritative precheck: {len(retained_files)}/{total_files} files have celestial WCS. "
+            f"Dropping all {missing_count} file(s) without celestial WCS because pixel alignment fallback "
+            "is disabled."
+        )
+        log_missing_celestial_wcs_preview(missing_wcs_files)
+        return retained_files, keep_mask, missing_wcs_files
 
     missing_fraction = missing_count / total_files
     if missing_count < total_files and missing_fraction < max_missing_fraction:
@@ -14336,13 +14515,18 @@ def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_mi
     return inputfiles, np.ones(total_files, dtype=bool), []
 
 
-def should_use_multiprocess_transform_precompute(inputfiles, requested_processes, ignore_header_wcs=False):
+def should_use_multiprocess_transform_precompute(inputfiles, requested_processes, ignore_header_wcs=False,
+                                                 allow_pixel_alignment_fallback=False):
     if requested_processes is None or requested_processes <= 0:
         return False
 
     if ignore_header_wcs:
         log_info("Header WCS ignore override enabled. Keeping multiprocessing transformation precompute.")
         return True
+
+    if not allow_pixel_alignment_fallback:
+        log_info("Pixel alignment fallback is disabled. Skipping multiprocessing transformation precompute.")
+        return False
 
     all_have_celestial_wcs, missing_wcs_files = evaluate_celestial_wcs_coverage(inputfiles)
     if all_have_celestial_wcs:
@@ -17479,6 +17663,50 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
         image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
     return image_data
 
+class AAVSOVSPUnavailableError(RuntimeError):
+    """Raised after the AAVSO VSP endpoint exhausts its response retries."""
+
+
+def fetch_aavso_vsp_chart(url):
+    """Fetch and validate a VSP chart, retrying transient/unusable responses."""
+    total_attempts = AAVSO_VSP_MAX_RETRIES + 1
+    for attempt_number in range(1, total_attempts + 1):
+        try:
+            response = requests.get(url, timeout=AAVSO_VSP_REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError(
+                    f"AAVSO VSP returned {type(data).__name__} instead of a JSON object."
+                )
+            missing_fields = [field for field in ('chartid', 'photometry') if field not in data]
+            if missing_fields:
+                raise ValueError(
+                    "AAVSO VSP JSON response is missing required field(s): "
+                    + ", ".join(missing_fields)
+                )
+            if data['photometry'] is not None and not isinstance(data['photometry'], list):
+                raise ValueError("AAVSO VSP JSON field 'photometry' is not a list.")
+            return data
+        except (requests.RequestException, ValueError) as exc:
+            if attempt_number >= total_attempts:
+                raise AAVSOVSPUnavailableError(
+                    f"AAVSO VSP returned no usable response after {total_attempts} attempts "
+                    f"({AAVSO_VSP_MAX_RETRIES} retries): {describe_retry_exception(exc)}"
+                ) from exc
+
+            retries_remaining = total_attempts - attempt_number
+            log_info(
+                "\nWarning: AAVSO VSP request failed "
+                f"on attempt {attempt_number}/{total_attempts} "
+                f"({describe_retry_exception(exc)}). Retrying in "
+                f"{AAVSO_VSP_RETRY_DELAY_SECONDS} seconds; "
+                f"{retries_remaining} retr{'y' if retries_remaining == 1 else 'ies'} remain.",
+                warn=True,
+            )
+            sleep(AAVSO_VSP_RETRY_DELAY_SECONDS)
+
+
 def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None,
               user_targ_star=None, max_new_comp_stars=2):
     if user_comp_stars is None:
@@ -17503,8 +17731,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
         maglimit = 12
 
     url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
-    result = requests.get(url)
-    data = result.json()
+    data = fetch_aavso_vsp_chart(url)
     chart_id = data['chartid']
 
     obs_filter = aavso_vsp_band_for_filter(obs_filter)
@@ -17639,7 +17866,8 @@ def catalog_calibration_is_usable_for_filter(star, observed_filter, max_error=No
 def merge_aavso_vsp_v_calibration_fallback(
         file, axis, obs_filter, img_scale, calibration_stars, user_comp_stars,
         user_targ_star=None,
-        max_new_comp_stars=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS):
+        max_new_comp_stars=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
+        vsp_query_available=True):
     """Query VSP when a V-family observation has no usable direct V calibration.
 
     Existing AAVSO VSP calibrations mean the field has already been queried. The
@@ -17675,6 +17903,14 @@ def merge_aavso_vsp_v_calibration_fallback(
         if isinstance(star, dict)
     )
     if usable_vsp_v:
+        return unified_calibrations, {}, None, False
+
+    if not vsp_query_available:
+        log_info(
+            "Skipping the AAVSO VSP V-band calibration fallback because the earlier "
+            "VSP request already exhausted all retries.",
+            warn=True,
+        )
         return unified_calibrations, {}, None, False
 
     log_info(
@@ -18848,10 +19084,6 @@ def _parallel_alignment_task(task):
                 pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
                 pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
                 projected_coords = np.column_stack((pix_x, pix_y))
-                if i == 0:
-                    projected_coords[0] = target_and_comp_pixels[0]
-                    if first_frame_uses_input_comp_pixels:
-                        projected_coords = np.array(target_and_comp_pixels, dtype=float, copy=True)
 
                 wcs_candidate = _fit_alignment_candidate_psfs(
                     image_data,
@@ -19149,6 +19381,33 @@ def wcs_alignment_candidate_is_acceptable(result, frame_index, psf_data, tar_com
     )
 
 
+def log_wcs_authoritative_candidate_diagnostics(result, frame_index, psf_data, tar_comp_dist, comp_keys):
+    file_name = _display_filename(result.get('file_name')) if isinstance(result, dict) else '<unknown>'
+    if not isinstance(result, dict) or result.get('wcs') is None:
+        detail = result.get('wcs_error') if isinstance(result, dict) else None
+        suffix = f" ({detail})" if detail else ""
+        log.debug(
+            f"WCS-authoritative frame has no usable WCS candidate for {file_name}{suffix}; "
+            "pixel alignment fallback is disabled."
+        )
+        return
+
+    _, _, diagnostics = select_alignment_candidate(
+        result,
+        frame_index,
+        psf_data,
+        tar_comp_dist,
+        comp_keys,
+    )
+    decision = diagnostics.get('wcs_decision', {})
+    log.debug(
+        "WCS-authoritative mode retained the frame-WCS-derived candidate without pixel alignment "
+        f"for {file_name}: reason={decision.get('reason', 'unknown')}, "
+        f"geometry={decision.get('geometry_match_count', 0)}/"
+        f"{decision.get('geometry_test_count', 0)}, wcs_score={diagnostics.get('wcs_score')}."
+    )
+
+
 def classify_wcs_fallback_frames(results, target_and_comp_pixels):
     """Return missing and rejected WCS frame indices without running legacy alignment."""
     target_and_comp_pixels = np.asarray(target_and_comp_pixels, dtype=float).reshape(-1, 2)
@@ -19243,7 +19502,7 @@ def build_multiprocess_alignment_results(inputfiles, max_processes, target_and_c
                                          generalDark=None, generalBias=None, generalFlat=None,
                                          demosaic_fmt=None, demosaic_out=None, demosaic_mult=None,
                                          bad_pixel_reference=None, use_fast_centroid_cadence=False,
-                                         use_adaptive_apertures=False, compute_fallback_transform=True,
+                                         use_adaptive_apertures=False, compute_fallback_transform=False,
                                          first_frame_uses_input_comp_pixels=False,
                                          precomputed_fallback_transforms=None):
     total_jobs = len(inputfiles)
@@ -19281,7 +19540,7 @@ def build_multiprocess_alignment_results(inputfiles, max_processes, target_and_c
         demosaic_out=demosaic_out,
         demosaic_mult=demosaic_mult,
         bad_pixel_reference=bad_pixel_reference,
-        progress_label='WCS-first alignment',
+        progress_label='WCS coordinate projection',
     )
     results = [wcs_results_by_index.get(i) for i in range(total_jobs)]
     if not compute_fallback_transform:
@@ -19419,16 +19678,20 @@ def build_multiprocess_transformations(inputfiles, max_processes):
     return transforms
 
 
-def log_alignment_progress(i, total_jobs, file_name, use_multiprocess_progress):
+def log_alignment_progress(i, total_jobs, file_name, use_multiprocess_progress,
+                           pixel_alignment_enabled=False):
     if use_multiprocess_progress:
         completed = i + 1
         if completed == total_jobs or completed % 10 == 0:
-            log_info(f"Multiprocessing alignment progress: {completed}/{total_jobs}")
+            mode = "pixel alignment" if pixel_alignment_enabled else "WCS coordinate projection"
+            log_info(f"Multiprocessing {mode} progress: {completed}/{total_jobs}")
         return
 
     display_file_name = _display_filename(file_name)
-    sys.stdout.write(f"Aligning frame {i + 1} of {total_jobs} : {display_file_name}\n")
-    log.debug(f"Aligning frame {i + 1} of {total_jobs} : {display_file_name}\n")
+    action = "Pixel-aligning" if pixel_alignment_enabled else "WCS-locating stars in"
+    message = f"{action} frame {i + 1} of {total_jobs} : {display_file_name}\n"
+    sys.stdout.write(message)
+    log.debug(message)
     sys.stdout.flush()
 
 
@@ -22445,6 +22708,19 @@ def save_comp_ra_dec(wcs_file, ra_file, dec_file, comp_coords):
 def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astrometry=False, multiprocess_transformations=None):
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
     ignore_header_wcs = should_ignore_header_wcs(info_dict.get('ignore_header_wcs'))
+    allow_pixel_alignment_fallback = should_allow_pixel_alignment_fallback(
+        info_dict.get('allow_pixel_alignment_fallback', False)
+    )
+    pixel_alignment_enabled = bool(ignore_header_wcs or allow_pixel_alignment_fallback)
+    if ignore_header_wcs:
+        log_info("Pixel alignment enabled explicitly: header WCS will be ignored for manual alignment.")
+    elif allow_pixel_alignment_fallback:
+        log_info("WCS-first coordinate projection enabled with explicit pixel alignment fallback.")
+    else:
+        log_info(
+            "WCS-authoritative coordinate mode enabled: each frame's header WCS will supply star pixel "
+            "positions; Astroalign/pixel alignment fallback is disabled."
+        )
     bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(info_dict.get('bad_wcs_threshold_percent'))
     pointing_rejection_sigma = get_pointing_rejection_sigma(info_dict.get('pointing_rejection_sigma'))
     detect_bad_pixels_before_photometry = should_detect_bad_pixels_before_photometry(
@@ -22478,10 +22754,17 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         inputfiles,
         ignore_header_wcs=ignore_header_wcs,
         max_missing_fraction=bad_wcs_threshold_fraction,
+        allow_pixel_alignment_fallback=allow_pixel_alignment_fallback,
     )
     if dropped_wcs_files:
         times = times[wcs_keep_mask]
         plateStatus.initializeFilenames(list(inputfiles))
+    if len(inputfiles) == 0:
+        log_info(
+            "Error: no input frame has celestial WCS and pixel alignment fallback is disabled.",
+            error=True,
+        )
+        return
     target_wcs_precheck_inputfiles = np.array(inputfiles, copy=True)
     target_wcs_reference_file = inputfiles[0] if len(inputfiles) else None
     inputfiles, target_wcs_keep_mask, dropped_target_wcs_files = filter_wcs_target_out_of_frame_frames(
@@ -22514,6 +22797,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         inputfiles,
         pointing_rejection_sigma=pointing_rejection_sigma,
         ignore_header_wcs=ignore_header_wcs,
+        allow_pixel_alignment_fallback=allow_pixel_alignment_fallback,
         return_alignment_transforms=True,
         multiprocess_transformations=multiprocess_transformations,
     )
@@ -22687,7 +22971,7 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
             bad_pixel_reference=bad_pixel_reference,
             use_fast_centroid_cadence=True,
             use_adaptive_apertures=use_adaptive_apertures,
-            compute_fallback_transform=True,
+            compute_fallback_transform=pixel_alignment_enabled,
             first_frame_uses_input_comp_pixels=True,
             precomputed_fallback_transforms=pointing_alignment_transforms,
         )
@@ -22749,23 +23033,19 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
 
             if has_wcs_alignment and target_and_comp_radec is not None:
                 try:
-                    if i == 0:
-                        projected_coords = np.array(target_and_comp_pixels, dtype=float, copy=True)
-                    else:
-                        pix_x, pix_y = wcs_hdr.world_to_pixel_values(
-                            target_and_comp_radec[:, 0],
-                            target_and_comp_radec[:, 1],
-                        )
-                        pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
-                        pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
-                        projected_coords = np.column_stack((pix_x, pix_y))
+                    pix_x, pix_y = wcs_hdr.world_to_pixel_values(
+                        target_and_comp_radec[:, 0],
+                        target_and_comp_radec[:, 1],
+                    )
+                    pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
+                    pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
+                    projected_coords = np.column_stack((pix_x, pix_y))
 
                     wcs_candidate = _fit_alignment_candidate_psfs(
                         imageData,
                         projected_coords,
                         target_fast_centroid,
                         frame_fast_centroid,
-                        previous_psf_rows=previous_psf_rows,
                     )
                     wcs_candidate['projected_off_frame'] = any_projected_coord_out_of_frame(
                         projected_coords,
@@ -22780,15 +23060,25 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
                 len(inputfiles),
                 fileName,
                 use_multiprocess_transform_precompute,
+                pixel_alignment_enabled=pixel_alignment_enabled,
             )
 
-            if not wcs_alignment_candidate_is_acceptable(
+            wcs_candidate_acceptable = wcs_alignment_candidate_is_acceptable(
                 alignment_result,
                 i,
                 psf_data,
                 tar_comp_dist,
                 ['comp'],
-            ):
+            )
+            if not pixel_alignment_enabled and not wcs_candidate_acceptable:
+                log_wcs_authoritative_candidate_diagnostics(
+                    alignment_result,
+                    i,
+                    psf_data,
+                    tar_comp_dist,
+                    ['comp'],
+                )
+            if pixel_alignment_enabled and not wcs_candidate_acceptable:
                 cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
                 if cached_tform is not None:
                     tform = cached_tform
@@ -31568,6 +31858,7 @@ def _main_impl():
             init_path, userpDict = inputs_obj.search_init(args.realtime, userpDict)
 
         exotic_infoDict, userpDict['pName'] = inputs_obj.real_time(userpDict['pName'])
+        configure_runtime_logging(output_dir=exotic_infoDict.get('save'))
 
         while True:
             carry_on = user_input(f"\nType continue after the first image has been taken and saved: ", type_=str)
@@ -31650,6 +31941,7 @@ def _main_impl():
                     header_motion_value = exotic_infoDict.get(motion_key)
                     if header_motion_value is not None:
                         userpDict[motion_key] = header_motion_value
+        configure_runtime_logging(output_dir=exotic_infoDict.get('save'))
         disable_vertical_flux_normalization = is_vertical_flux_normalization_disabled(
             exotic_infoDict.get('disable_vertical_flux_normalization', False)
         )
@@ -32177,6 +32469,19 @@ def _main_impl():
             if finite_plot_times.size:
                 full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
             ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
+            allow_pixel_alignment_fallback = should_allow_pixel_alignment_fallback(
+                exotic_infoDict.get('allow_pixel_alignment_fallback', False)
+            )
+            pixel_alignment_enabled = bool(ignore_header_wcs or allow_pixel_alignment_fallback)
+            if ignore_header_wcs:
+                log_info("Pixel alignment enabled explicitly: header WCS will be ignored for manual alignment.")
+            elif allow_pixel_alignment_fallback:
+                log_info("WCS-first coordinate projection enabled with explicit pixel alignment fallback.")
+            else:
+                log_info(
+                    "WCS-authoritative coordinate mode enabled: each frame's header WCS will supply star pixel "
+                    "positions; Astroalign/pixel alignment fallback is disabled."
+                )
             bad_wcs_threshold_fraction = get_bad_wcs_threshold_fraction(
                 exotic_infoDict.get('bad_wcs_threshold_percent')
             )
@@ -32193,12 +32498,19 @@ def _main_impl():
                 inputfiles,
                 ignore_header_wcs=ignore_header_wcs,
                 max_missing_fraction=bad_wcs_threshold_fraction,
+                allow_pixel_alignment_fallback=allow_pixel_alignment_fallback,
             )
             if dropped_wcs_files:
                 times = times[wcs_keep_mask]
                 jd_times = jd_times[wcs_keep_mask]
                 header_exptimes = header_exptimes[wcs_keep_mask]
                 plateStatus.initializeFilenames(list(inputfiles))
+            if len(inputfiles) == 0:
+                log_info(
+                    "Error: no input frame has celestial WCS and pixel alignment fallback is disabled.",
+                    error=True,
+                )
+                return
             post_wcs_inputfile_count = int(len(inputfiles))
             target_wcs_precheck_inputfiles = np.array(inputfiles, copy=True)
             target_wcs_reference_file = inputfiles[0] if len(inputfiles) else None
@@ -32239,6 +32551,7 @@ def _main_impl():
                 inputfiles,
                 pointing_rejection_sigma=pointing_rejection_sigma,
                 ignore_header_wcs=ignore_header_wcs,
+                allow_pixel_alignment_fallback=allow_pixel_alignment_fallback,
                 frame_loader=lambda file_name: load_calibrated_reduction_image(
                     file_name,
                     generalDark,
@@ -32319,7 +32632,7 @@ def _main_impl():
 
             # fit target in the first image and use it to determine aperture and annulus range
             inc = 0
-            if reference_fallback is None:
+            if pixel_alignment_enabled and reference_fallback is None:
                 for ifile in inputfiles:
                     plateStatus.setCurrentFilename(ifile)
                     if bad_pixel_reference is not None:
@@ -32345,11 +32658,16 @@ def _main_impl():
                         inc += 1
                     finally:
                         del first_image
-            else:
+            elif reference_fallback is not None:
                 log_info(
                     "Skipping the old-pixel target precheck because the original reference image was "
                     "removed; the target will be projected from RA/Dec after the new reference WCS is ready.",
                     warn=True,
+                )
+            else:
+                log.debug(
+                    "Skipping the old-pixel target precheck in WCS-authoritative mode; target coordinates "
+                    "will be projected independently from each frame's header WCS."
                 )
 
             if inc > 0:
@@ -32381,6 +32699,7 @@ def _main_impl():
             plateStatus.initializeComparisonStarCount(len(exotic_infoDict['comp_stars']))
             ra_dec_tar, ra_dec_wcs = None, []
             chart_id, vsp_comp_stars, vsp_list = None, {}, []
+            aavso_vsp_query_failed = False
             nextastro_field_catalog = None
             primary_target_catalog_match = None
             science_comp_stars = []
@@ -32476,14 +32795,25 @@ def _main_impl():
                     )
 
                 if exotic_infoDict['aavso_comp'] == 'y' and reference_fallback is None:
-                    vsp_comp_stars, chart_id = vsp_query(wcs_file,[header['NAXIS1'], header['NAXIS2']],
-                                                         exotic_infoDict['filter'], img_scale,
-                                                         user_comp_stars=exotic_infoDict['comp_stars'],
-                                                         user_targ_star = [ exotic_UIprevTPX, exotic_UIprevTPY ],
-                                                         max_new_comp_stars=(
-                                                             0 if use_exactly_the_comps_provided else 2
-                                                         ))
-                    vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
+                    try:
+                        vsp_comp_stars, chart_id = vsp_query(
+                            wcs_file,
+                            [header['NAXIS1'], header['NAXIS2']],
+                            exotic_infoDict['filter'],
+                            img_scale,
+                            user_comp_stars=exotic_infoDict['comp_stars'],
+                            user_targ_star=[exotic_UIprevTPX, exotic_UIprevTPY],
+                            max_new_comp_stars=(0 if use_exactly_the_comps_provided else 2),
+                        )
+                        vsp_list = [vsp_star['pos'] for vsp_star in vsp_comp_stars.values()]
+                    except AAVSOVSPUnavailableError as exc:
+                        aavso_vsp_query_failed = True
+                        log_info(
+                            "\nWarning: AAVSO VSP comparison-star lookup remains unavailable "
+                            f"after five retries ({describe_retry_exception(exc)}). Continuing "
+                            "without VSP data so the existing NextAstro/catalog fallback can run.",
+                            warn=True,
+                        )
 
                 try:
                     nextastro_field_catalog = nextastro_photometry_catalog_for_wcs(
@@ -32908,6 +33238,7 @@ def _main_impl():
                             if use_exactly_the_comps_provided
                             else maximum_number_of_ensemble_comparisons_for_stellar_variability
                         ),
+                        vsp_query_available=not aavso_vsp_query_failed,
                     )
                 )
                 if fallback_chart_id is not None:
@@ -33380,7 +33711,7 @@ def _main_impl():
                     bad_pixel_reference=bad_pixel_reference,
                     use_fast_centroid_cadence=False,
                     use_adaptive_apertures=use_adaptive_apertures,
-                    compute_fallback_transform=True,
+                    compute_fallback_transform=pixel_alignment_enabled,
                     precomputed_fallback_transforms=pointing_alignment_transforms,
                 )
                 for alignment_index, alignment_result in enumerate(multiprocess_alignment_results):
@@ -33661,15 +33992,11 @@ def _main_impl():
                             pix_x = np.asarray(pix_x, dtype=float).reshape(-1)
                             pix_y = np.asarray(pix_y, dtype=float).reshape(-1)
                             projected_coords = np.column_stack((pix_x, pix_y))
-                            if i == 0:
-                                projected_coords[0] = target_and_comp_pixels[0]
-
                             wcs_candidate = _fit_alignment_candidate_psfs(
                                 imageData,
                                 projected_coords,
                                 target_fast_centroid,
                                 frame_fast_centroid,
-                                previous_psf_rows=previous_psf_rows,
                             )
                             wcs_candidate['projected_off_frame'] = any_projected_coord_out_of_frame(
                                 projected_coords,
@@ -33684,15 +34011,25 @@ def _main_impl():
                         len(inputfiles),
                         fileName,
                         use_multiprocess_transform_precompute,
+                        pixel_alignment_enabled=pixel_alignment_enabled,
                     )
 
-                    if not wcs_alignment_candidate_is_acceptable(
+                    wcs_candidate_acceptable = wcs_alignment_candidate_is_acceptable(
                         alignment_result,
                         i,
                         psf_data,
                         tar_comp_dist,
                         comp_alignment_keys,
-                    ):
+                    )
+                    if not pixel_alignment_enabled and not wcs_candidate_acceptable:
+                        log_wcs_authoritative_candidate_diagnostics(
+                            alignment_result,
+                            i,
+                            psf_data,
+                            tar_comp_dist,
+                            comp_alignment_keys,
+                        )
+                    if pixel_alignment_enabled and not wcs_candidate_acceptable:
                         cached_tform = fallback_transforms.get(str(fileName)) if fallback_transforms else None
                         if cached_tform is not None:
                             tform = cached_tform
@@ -36518,7 +36855,7 @@ def main():
     global _UNHANDLED_EXCEPTION_LOGGED
 
     _UNHANDLED_EXCEPTION_LOGGED = False
-    configure_runtime_logging()
+    configure_runtime_logging(start_new_run=True)
     install_exception_hooks()
 
     try:
@@ -36530,13 +36867,13 @@ def main():
         raise
     finally:
         cancel_runtime_traceback_watchdog()
+        close_runtime_logging()
 
 
 def cli():
     global _UNHANDLED_EXCEPTION_LOGGED
 
     _UNHANDLED_EXCEPTION_LOGGED = False
-    configure_runtime_logging()
     install_exception_hooks()
 
     try:

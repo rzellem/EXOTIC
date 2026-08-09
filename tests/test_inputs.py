@@ -23,6 +23,21 @@ def test_camera_keeps_dslr_as_dslr():
     assert camera("canon dslr") == "DSLR"
 
 
+@pytest.mark.parametrize("parser", [inputs_module.plate_solution_opt, inputs_module.aavso_comp])
+def test_user_info_boolean_options_accept_supported_forms_without_prompt(monkeypatch, parser):
+    monkeypatch.setattr(
+        inputs_module,
+        "user_input",
+        lambda *_args, **_kwargs: pytest.fail("valid boolean initialization value must not prompt"),
+    )
+
+    for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
+        assert parser(value) == "y"
+
+    for value in (False, 0, "0", "n", "N", "no", "FALSE", "off"):
+        assert parser(value) == "n"
+
+
 def test_comparison_star_coords_accepts_more_than_ten_manual_comps():
     comp_stars = [[float(index), float(index + 1)] for index in range(12)]
 
@@ -515,6 +530,21 @@ def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):
     assert inputs.info_dict["ignore_header_wcs"] == "n"
 
 
+def test_comp_params_defaults_allow_pixel_alignment_fallback_to_false(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["allow_pixel_alignment_fallback"] is False
+
+
 def test_comp_params_defaults_prefer_pixel_values_over_wcs_for_target_to_no(tmp_path):
     init_data = {
         "user_info": {},
@@ -891,6 +921,21 @@ def test_comp_params_reads_ignore_header_wcs_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ignore_header_wcs"] == "y"
+
+
+def test_comp_params_reads_allow_pixel_alignment_fallback_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"allow_pixel_alignment_fallback": True},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["allow_pixel_alignment_fallback"] is True
 
 
 def test_comp_params_reads_prefer_pixel_values_over_wcs_for_target_from_optional_info(tmp_path):

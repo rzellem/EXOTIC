@@ -84,6 +84,85 @@ class UnrecognizedFilterLimbDarkening:
         return False
 
 
+class BooleanOptionLimbDarkening(UnrecognizedFilterLimbDarkening):
+    filter_name = None
+    filter_desc = None
+    wl_min = None
+    wl_max = None
+
+    def calculate_ld(self):
+        return None
+
+
+def set_boolean_option_filter(ld, label):
+    ld.filter_name = label
+    ld.filter_desc = label
+    ld.wl_min = 400.0
+    ld.wl_max = 700.0
+
+
+@pytest.mark.parametrize("config_value", [True, 1, "1", "y", "Y", "yes", "TRUE", "on"])
+def test_nonlinear_ld_boolean_option_accepts_true_forms(monkeypatch, config_value):
+    ld = BooleanOptionLimbDarkening()
+    monkeypatch.setattr(
+        exotic_module,
+        "user_input",
+        lambda prompt, **_kwargs: 1 if "enter 1" in prompt.lower() else pytest.fail(
+            "valid true boolean must not trigger the y/n prompt"
+        ),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "standard_filter",
+        lambda selected_ld, _observed_filter: set_boolean_option_filter(selected_ld, "standard"),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "user_entered_ld",
+        lambda *_args, **_kwargs: pytest.fail("true must select calculated limb darkening"),
+    )
+    info_dict = {
+        "filter": "mystery-band",
+        "wl_min": None,
+        "wl_max": None,
+        "ld_uncertainties": config_value,
+    }
+
+    exotic_module.nonlinear_ld(ld, info_dict)
+
+    assert info_dict["filter"] == "standard"
+
+
+@pytest.mark.parametrize("config_value", [False, 0, "0", "n", "N", "no", "FALSE", "off"])
+def test_nonlinear_ld_boolean_option_accepts_false_forms(monkeypatch, config_value):
+    ld = BooleanOptionLimbDarkening()
+    monkeypatch.setattr(
+        exotic_module,
+        "user_input",
+        lambda *_args, **_kwargs: pytest.fail("valid false boolean must not prompt"),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "standard_filter",
+        lambda *_args, **_kwargs: pytest.fail("false must select user-entered limb darkening"),
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "user_entered_ld",
+        lambda selected_ld, _observed_filter: set_boolean_option_filter(selected_ld, "manual"),
+    )
+    info_dict = {
+        "filter": "mystery-band",
+        "wl_min": None,
+        "wl_max": None,
+        "ld_uncertainties": config_value,
+    }
+
+    exotic_module.nonlinear_ld(ld, info_dict)
+
+    assert info_dict["filter"] == "manual"
+
+
 def test_nonlinear_ld_non_interactive_rejects_unrecognized_filter_without_prompt(monkeypatch):
     monkeypatch.setattr(
         exotic_module,

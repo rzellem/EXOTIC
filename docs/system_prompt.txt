@@ -870,6 +870,7 @@ Example `inits.json` file:
             "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
             "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
             "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
+            "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
             "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
             "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
     },
@@ -892,8 +893,8 @@ Example `inits.json` file:
             "Filter Name (aavso.org/filters)": "CV",
             "Observing Notes": "Weather, seeing was nice.",
 
-            "Plate Solution? (y/n)": "y",
-            "Add Comparison Stars from AAVSO? (y/n)": "n",
+            "Plate Solution? (y/n)": true,
+            "Add Comparison Stars from AAVSO? (y/n)": false,
 
             "Target Star X & Y Pixel": "[424, 286]",
             "Comparison Star(s) X & Y Pixel": "[[465, 183], [512, 263], [], [], [], [], [], [], [], []]",

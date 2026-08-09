@@ -1143,6 +1143,77 @@ def test_merge_nextastro_calibration_stars_deduplicates_catalog_source_ids():
     assert list(calibration_stars) == ['NextAstro-12345']
 
 
+def test_fetch_aavso_vsp_chart_retries_malformed_json_five_times_then_succeeds(monkeypatch):
+    payload = {'chartid': 'X-RETRY', 'photometry': []}
+    responses = [None] * exotic_module.AAVSO_VSP_MAX_RETRIES + [DummyResponse(payload)]
+    request_timeouts = []
+    sleep_delays = []
+    log_messages = []
+
+    class InvalidJSONResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return json.loads('')
+
+    def fake_get(url, timeout):
+        request_timeouts.append(timeout)
+        response = responses.pop(0)
+        return InvalidJSONResponse() if response is None else response
+
+    monkeypatch.setattr(exotic_module.requests, 'get', fake_get)
+    monkeypatch.setattr(exotic_module, 'sleep', sleep_delays.append)
+    monkeypatch.setattr(
+        exotic_module,
+        'log_info',
+        lambda message, **kwargs: log_messages.append((message, kwargs)),
+    )
+
+    assert exotic_module.fetch_aavso_vsp_chart('https://example.invalid/vsp') == payload
+    assert request_timeouts == [
+        exotic_module.AAVSO_VSP_REQUEST_TIMEOUT_SECONDS
+    ] * (exotic_module.AAVSO_VSP_MAX_RETRIES + 1)
+    assert sleep_delays == [
+        exotic_module.AAVSO_VSP_RETRY_DELAY_SECONDS
+    ] * exotic_module.AAVSO_VSP_MAX_RETRIES
+    assert 'attempt 1/6' in log_messages[0][0]
+    assert 'attempt 5/6' in log_messages[-1][0]
+    assert all(kwargs.get('warn') is True for _, kwargs in log_messages)
+
+
+def test_fetch_aavso_vsp_chart_raises_after_five_failed_retries(monkeypatch):
+    request_count = 0
+    sleep_delays = []
+
+    class InvalidJSONResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return json.loads('')
+
+    def fake_get(url, timeout):
+        nonlocal request_count
+        request_count += 1
+        assert timeout == exotic_module.AAVSO_VSP_REQUEST_TIMEOUT_SECONDS
+        return InvalidJSONResponse()
+
+    monkeypatch.setattr(exotic_module.requests, 'get', fake_get)
+    monkeypatch.setattr(exotic_module, 'sleep', sleep_delays.append)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    with pytest.raises(exotic_module.AAVSOVSPUnavailableError) as exc_info:
+        exotic_module.fetch_aavso_vsp_chart('https://example.invalid/vsp')
+
+    assert request_count == exotic_module.AAVSO_VSP_MAX_RETRIES + 1
+    assert sleep_delays == [
+        exotic_module.AAVSO_VSP_RETRY_DELAY_SECONDS
+    ] * exotic_module.AAVSO_VSP_MAX_RETRIES
+    assert 'after 6 attempts (5 retries)' in str(exc_info.value)
+    assert 'JSONDecodeError' in str(exc_info.value)
+
+
 def test_vsp_query_rejects_band_errors_over_limit(monkeypatch):
     class DummyWCS:
         def pixel_to_world_values(self, x_pixel, y_pixel):
@@ -1172,7 +1243,11 @@ def test_vsp_query_rejects_band_errors_over_limit(monkeypatch):
 
     monkeypatch.setattr(exotic_module, 'search_wcs', lambda file: DummyWCS())
     monkeypatch.setattr(exotic_module, 'radec_hours_to_degree', lambda ra, dec: (10.0, 20.0))
-    monkeypatch.setattr(exotic_module.requests, 'get', lambda url: DummyResponse(payload))
+    monkeypatch.setattr(
+        exotic_module.requests,
+        'get',
+        lambda url, timeout: DummyResponse(payload),
+    )
     monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
 
     vsp_comp_stars, chart_id = exotic_module.vsp_query(
@@ -1229,7 +1304,11 @@ def test_vsp_query_keeps_late_supplied_matches_after_new_star_limit(monkeypatch)
         'radec_hours_to_degree',
         lambda ra, dec: (float(ra), float(dec)),
     )
-    monkeypatch.setattr(exotic_module.requests, 'get', lambda url: DummyResponse(payload))
+    monkeypatch.setattr(
+        exotic_module.requests,
+        'get',
+        lambda url, timeout: DummyResponse(payload),
+    )
     monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
 
     vsp_comp_stars, chart_id = exotic_module.vsp_query(
@@ -1280,7 +1359,11 @@ def test_vsp_query_assigns_only_nearest_catalog_source_to_supplied_coordinate(mo
         'radec_hours_to_degree',
         lambda ra, dec: (float(ra), float(dec)),
     )
-    monkeypatch.setattr(exotic_module.requests, 'get', lambda url: DummyResponse(payload))
+    monkeypatch.setattr(
+        exotic_module.requests,
+        'get',
+        lambda url, timeout: DummyResponse(payload),
+    )
     monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
 
     vsp_comp_stars, _ = exotic_module.vsp_query(
@@ -1431,6 +1514,38 @@ def test_clear_v_calibration_fallback_skips_vsp_when_nextastro_has_usable_v(monk
     assert fallback_stars == {}
     assert chart_id is None
     assert queried is False
+
+
+def test_clear_v_calibration_fallback_does_not_repeat_exhausted_vsp_query(monkeypatch):
+    def unexpected_vsp_query(*args, **kwargs):
+        raise AssertionError('An exhausted VSP request must not start another retry cycle')
+
+    log_messages = []
+    monkeypatch.setattr(exotic_module, 'vsp_query', unexpected_vsp_query)
+    monkeypatch.setattr(
+        exotic_module,
+        'log_info',
+        lambda message, **kwargs: log_messages.append((message, kwargs)),
+    )
+
+    combined, fallback_stars, chart_id, queried = (
+        exotic_module.merge_aavso_vsp_v_calibration_fallback(
+            'frame.fits',
+            [512, 512],
+            'Clear',
+            1.2,
+            {},
+            [[100, 200]],
+            vsp_query_available=False,
+        )
+    )
+
+    assert combined == {}
+    assert fallback_stars == {}
+    assert chart_id is None
+    assert queried is False
+    assert 'already exhausted all retries' in log_messages[-1][0]
+    assert log_messages[-1][1].get('warn') is True
 
 
 @pytest.mark.parametrize(

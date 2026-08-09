@@ -121,7 +121,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",
 
-            "Plate Solution? (y/n)": "y",
+            "Plate Solution? (y/n)": true,
 
             "Target Star X & Y Pixel": [424, 286],
             "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []],
@@ -162,9 +162,10 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Maximum Wavelength (nm)": null,
 
             "Fast Aperture Mask (y/n)": false,
-            "prefer_pixel_values_over_wcs_for_target": "n",
-            "use_psf_photometry": "y",
-            "use_aperture_photometry": "y",
+            "allow_pixel_alignment_fallback": false,
+            "prefer_pixel_values_over_wcs_for_target": false,
+            "use_psf_photometry": true,
+            "use_aperture_photometry": true,
             "use_aperture_corrections_and_full_image_fwhm": false,
             "use_ensemble_photometry_rather_than_single_comp": false,
             "stellar_variability_only": false,
@@ -176,15 +177,15 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "photometer_fortuitous_variables": true,
             "use_single_comparison_for_fortuitous_variables": true,
             "use_nextastro_vsx_cache_first": false,
-            "skip_low_comparison_coverage_rejection": "n",
-            "fit_lightcurve_to_every_comparison_candidate": "n",
+            "skip_low_comparison_coverage_rejection": false,
+            "fit_lightcurve_to_every_comparison_candidate": false,
             "detrend_on_outoftransit_baseline": true,
             "final_fit_baseline_duration_multiplier": 1.0,
-            "use_eebls_to_initialize_tmid_and_bounds": "y",
-            "pick_comparison_by_eebls_snr": "y",
-            "use_impactparameter_rather_than_inclination_to_fit": "y",
-            "Use target-driven comp selection rather than comp-driven comp selection": "n",
-            "require_comp_star": "y",
+            "use_eebls_to_initialize_tmid_and_bounds": true,
+            "pick_comparison_by_eebls_snr": true,
+            "use_impactparameter_rather_than_inclination_to_fit": true,
+            "Use target-driven comp selection rather than comp-driven comp selection": false,
+            "require_comp_star": true,
 
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
 
@@ -195,9 +196,11 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 ### Comparison-star mode tags
 
-Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` and `false`) are recommended; EXOTIC also accepts equivalent values such as `"y"` and `"n"`.
+Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` and `false`) are recommended. Every initialization boolean also accepts numeric `1`/`0` and case-insensitive strings `"y"`/`"n"`, `"yes"`/`"no"`, `"true"`/`"false"`, and `"on"`/`"off"`.
 
-Comparison stars may be supplied in `user_info` using either `"Comparison Star(s) X & Y Pixel"` or `"Comparison Star(s) RA & Dec"`. Do not populate both. RA/Dec values may be decimal degrees, such as `[[31.04125, 46.68972]]`, or sexagesimal strings, such as `[["02:04:09.90", "+46:41:23.0"]]`. Sexagesimal values must be quoted because they are JSON strings; forms such as `[[02:04:09.90, +46:41:23.0]]` are not valid JSON. Celestial coordinates require a usable WCS and are projected onto the selected reference image before photometry; after projection they are treated identically to supplied X/Y positions.
+Raw-image reductions are WCS-authoritative by default. For every frame with celestial WCS, EXOTIC projects the target and comparison-star sky coordinates through that frame's own FITS header and starts centroiding at those projected pixels. It does not register the image to a reference frame with Astroalign. Set `"allow_pixel_alignment_fallback": true` only when you explicitly want legacy pixel-based registration for a frame whose WCS-derived candidate is unusable. The existing `"Ignore WCS in Header and Do Manual Alignment? (y/n)": "y"` option explicitly enables pixel alignment for the entire run.
+
+Comparison stars may be supplied in `user_info` using either `"Comparison Star(s) X & Y Pixel"` or `"Comparison Star(s) RA & Dec"`. Do not populate both. RA/Dec values may be decimal degrees, such as `[[31.04125, 46.68972]]`, or sexagesimal strings, such as `[["02:04:09.90", "+46:41:23.0"]]`. Sexagesimal values must be quoted because they are JSON strings; forms such as `[[02:04:09.90, +46:41:23.0]]` are not valid JSON. Supplied X/Y positions are converted to sky coordinates with the reference frame's WCS; during photometry those sky coordinates are projected independently through every retained frame's own WCS header.
 
 | Reduction | Requested comparison mode | `optional_info` settings |
 |---|---|---|
@@ -215,7 +218,7 @@ Ensemble settings retain a single-comparison fallback when EXOTIC cannot build a
 
 Differential-magnitude CSV and plot products are always attempted independently of catalogue calibration. Set `"require_apparent_magnitudes": false` when catalogue-calibrated apparent magnitudes are not required; EXOTIC still writes apparent-magnitude products when calibration is available. Stellar-variability apparent and differential magnitudes use the raw target/reference flux ratio and are explicitly not airmass-corrected, because a real time-dependent stellar signal can be correlated with airmass. Airmass remains in the output as metadata.
 
-Flux-bearing result files retain both magnitude representations. Final-lightcurve CSV rows include differential magnitude and uncertainty plus apparent magnitude and uncertainty (or `na` when no catalogue calibration is available). Transit AAVSO files retain their standard exoplanet columns and add one preserved `#MAGNITUDE-XC` record per data row. AID rows retain the standard Extended format and store `DIFFMAG` and `DIFFERR` in the `NOTES` field while `MAG` and `MERR` remain the apparent magnitude measurement. All transit and AID AAVSO files are written in an `AAVSO_Files` subfolder of their corresponding output directory. That folder also receives copies of the final-lightcurve PNG, PDF, and CSV; every FOV finder-chart PNG and PDF; the normal, final, and zoomed triangle plots; the KTMF QC PNG and PDF; and the prior-versus-posterior comparison PNG and PDF. Finder charts label every selected comparison member, including ensembles and comparisons sourced outside AAVSO. This preserves the target-minus-reference measurement needed to apply a revised apparent-magnitude calibration later.
+Flux-bearing result files retain both magnitude representations. Final-lightcurve CSV rows include differential magnitude and uncertainty plus apparent magnitude and uncertainty (or `na` when no catalogue calibration is available). Transit AAVSO files retain their standard exoplanet columns and add one preserved `#MAGNITUDE-XC` record per data row. AID rows retain the standard Extended format and store `DIFFMAG` and `DIFFERR` in the `NOTES` field while `MAG` and `MERR` remain the apparent magnitude measurement. All transit and AID AAVSO files are written in an `AAVSO_Files` subfolder of their corresponding output directory. That folder also receives copies of the final-lightcurve PNG, PDF, and CSV; every FOV finder-chart PNG and PDF; the normal, final, and zoomed triangle plots; the KTMF QC PNG and PDF; and the prior-versus-posterior comparison PNG and PDF. Finder charts label every selected comparison member, including ensembles and comparisons sourced outside AAVSO. This preserves the target-minus-reference measurement needed to apply a revised apparent-magnitude calibration later. Each reduction writes its run log from startup through shutdown to a unique `Diagnostics/EXOTIC_RunLog_<timestamp>_pid<PID>.log`, so separate or midnight-spanning runs do not overwrite or split one another.
 
 For fortuitous VSX variables found during a transit reduction, `"photometer_fortuitous_variables": true` turns their photometry on; `"use_single_comparison_for_fortuitous_variables": true` selects one comparison (the default), while `false` requests an ensemble capped by `"maximum_number_of_ensemble_comparisons_for_stellar_variability"`. Fortuitous-variable differential products remain available when catalogue calibration is unavailable. Fortuitous-variable photometry has no no-comparison mode.
 

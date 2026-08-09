@@ -2,6 +2,19 @@ from exotic.utils import *
 from unittest.mock import patch
 
 
+def test_coerce_boolean_config_value_accepts_all_supported_forms():
+    for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
+        assert coerce_boolean_config_value(value) is True
+
+    for value in (False, 0, "0", "n", "N", "no", "FALSE", "off"):
+        assert coerce_boolean_config_value(value) is False
+
+
+def test_coerce_boolean_config_value_rejects_non_boolean_values():
+    for value in (None, 2, -1, "sometimes", [], {}):
+        assert coerce_boolean_config_value(value) is None
+
+
 def test_filename_date_token_uses_date_only_for_iso_timestamp():
     assert filename_date_token("2026-05-06T19:51:13.964-0700") == "2026-05-06"
     assert filename_date_token("20260506T195113") == "2026-05-06"

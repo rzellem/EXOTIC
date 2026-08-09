@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -8240,7 +8241,7 @@ def test_cli_logs_unhandled_exception_once(monkeypatch):
 
     logged = []
 
-    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda: None)
+    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(exotic_module, "install_exception_hooks", lambda: None)
     monkeypatch.setattr(exotic_module, "main", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
 
@@ -8278,30 +8279,103 @@ def test_package_init_loads_nested_runtime_for_archive_layout(monkeypatch):
     assert exotic._load_runtime_callable("main")() == "nested-main"
 
 
-def test_configure_runtime_logging_rebinds_console_handler_to_current_stdout(monkeypatch):
+def test_configure_runtime_logging_rebinds_console_handler_to_current_stdout(monkeypatch, tmp_path):
     import io
     import exotic.exotic as exotic_module
 
     original_handlers = list(exotic_module.log.handlers)
     original_configured = exotic_module._RUNTIME_LOGGING_CONFIGURED
+    original_basename = exotic_module._RUNTIME_LOG_BASENAME
+    original_path = exotic_module._RUNTIME_LOG_PATH
 
     try:
         exotic_module.log.handlers = []
         exotic_module._RUNTIME_LOGGING_CONFIGURED = False
+        exotic_module._RUNTIME_LOG_BASENAME = None
+        exotic_module._RUNTIME_LOG_PATH = None
+        monkeypatch.setattr(exotic_module, "_reset_runtime_traceback_watchdog", lambda: None)
 
         first_stdout = io.StringIO()
         monkeypatch.setattr(exotic_module.sys, "stdout", first_stdout)
-        exotic_module.configure_runtime_logging()
+        exotic_module.configure_runtime_logging(output_dir=tmp_path, start_new_run=True)
         handler = exotic_module._find_runtime_handler(exotic_module._RUNTIME_CONSOLE_HANDLER_NAME)
         assert handler.stream is first_stdout
 
         second_stdout = io.StringIO()
         monkeypatch.setattr(exotic_module.sys, "stdout", second_stdout)
-        exotic_module.configure_runtime_logging()
+        exotic_module.configure_runtime_logging(output_dir=tmp_path)
         assert handler.stream is second_stdout
     finally:
+        exotic_module._close_runtime_file_handler()
         exotic_module.log.handlers = original_handlers
         exotic_module._RUNTIME_LOGGING_CONFIGURED = original_configured
+        exotic_module._RUNTIME_LOG_BASENAME = original_basename
+        exotic_module._RUNTIME_LOG_PATH = original_path
+
+
+def test_runtime_output_directory_is_read_from_command_line_init_file(tmp_path):
+    import exotic.exotic as exotic_module
+
+    output_dir = tmp_path / "run output"
+    init_path = tmp_path / "inits.json"
+    init_path.write_text(json.dumps({
+        "user_info": {"Directory to Save Plots": str(output_dir)},
+    }), encoding="utf-8")
+
+    assert exotic_module._runtime_output_directory_from_command_line(
+        ["-red", str(init_path), "-ov"]
+    ) == str(output_dir)
+    assert exotic_module._runtime_output_directory_from_command_line(
+        [f"--reduce={init_path}"]
+    ) == str(output_dir)
+
+
+def test_runtime_logging_relocates_startup_content_and_keeps_runs_unique(monkeypatch, tmp_path):
+    import exotic.exotic as exotic_module
+
+    original_handlers = list(exotic_module.log.handlers)
+    original_configured = exotic_module._RUNTIME_LOGGING_CONFIGURED
+    original_basename = exotic_module._RUNTIME_LOG_BASENAME
+    original_path = exotic_module._RUNTIME_LOG_PATH
+
+    try:
+        exotic_module.log.handlers = []
+        exotic_module._RUNTIME_LOGGING_CONFIGURED = False
+        exotic_module._RUNTIME_LOG_BASENAME = None
+        exotic_module._RUNTIME_LOG_PATH = None
+        monkeypatch.setattr(exotic_module.tempfile, "gettempdir", lambda: str(tmp_path / "staging"))
+        monkeypatch.setattr(exotic_module, "_reset_runtime_traceback_watchdog", lambda: None)
+
+        exotic_module.configure_runtime_logging(start_new_run=True)
+        staged_log = Path(exotic_module._RUNTIME_LOG_PATH)
+        exotic_module.log_info("startup message before the save directory was known")
+
+        output_dir = tmp_path / "output"
+        exotic_module.configure_runtime_logging(output_dir=output_dir)
+        first_log = Path(exotic_module._RUNTIME_LOG_PATH)
+        exotic_module.log_info("message after the save directory was known")
+        exotic_module.close_runtime_logging()
+
+        assert not staged_log.exists()
+        assert first_log.parent == output_dir.resolve() / "Diagnostics"
+        first_content = first_log.read_text(encoding="utf-8")
+        assert "startup message before the save directory was known" in first_content
+        assert "message after the save directory was known" in first_content
+
+        exotic_module.configure_runtime_logging(output_dir=output_dir, start_new_run=True)
+        second_log = Path(exotic_module._RUNTIME_LOG_PATH)
+        exotic_module.log_info("second run message")
+        exotic_module.close_runtime_logging()
+
+        assert second_log != first_log
+        assert len(list((output_dir / "Diagnostics").glob("EXOTIC_RunLog_*.log"))) == 2
+        assert "second run message" in second_log.read_text(encoding="utf-8")
+    finally:
+        exotic_module._close_runtime_file_handler()
+        exotic_module.log.handlers = original_handlers
+        exotic_module._RUNTIME_LOGGING_CONFIGURED = original_configured
+        exotic_module._RUNTIME_LOG_BASENAME = original_basename
+        exotic_module._RUNTIME_LOG_PATH = original_path
 
 
 def test_log_exception_with_fallback_writes_traceback_to_current_stdout(monkeypatch, capsys):
@@ -8328,7 +8402,7 @@ def test_log_exception_with_fallback_writes_traceback_to_current_stdout(monkeypa
 def test_main_logs_direct_call_exceptions_to_current_stdout(monkeypatch, capsys):
     import exotic.exotic as exotic_module
 
-    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda: None)
+    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(exotic_module, "install_exception_hooks", lambda: None)
     monkeypatch.setattr(exotic_module, "_logger_has_current_stdout_handler", lambda logger: False)
     monkeypatch.setattr(exotic_module, "_main_impl", lambda: (_ for _ in ()).throw(RuntimeError("boom")))

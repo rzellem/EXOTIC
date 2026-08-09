@@ -472,8 +472,18 @@ def test_get_img_scale_uses_first_image_extension_header(tmp_path):
 
 def test_should_ignore_header_wcs_defaults_to_false():
     assert exotic_module.should_ignore_header_wcs(None) is False
-    assert exotic_module.should_ignore_header_wcs("n") is False
-    assert exotic_module.should_ignore_header_wcs("y") is True
+    for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
+        assert exotic_module.should_ignore_header_wcs(value) is True
+    for value in (False, 0, "0", "n", "N", "no", "FALSE", "off"):
+        assert exotic_module.should_ignore_header_wcs(value) is False
+
+
+def test_should_allow_pixel_alignment_fallback_defaults_to_false():
+    assert exotic_module.should_allow_pixel_alignment_fallback(None) is False
+    for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
+        assert exotic_module.should_allow_pixel_alignment_fallback(value) is True
+    for value in (False, 0, "0", "n", "N", "no", "FALSE", "off"):
+        assert exotic_module.should_allow_pixel_alignment_fallback(value) is False
 
 
 def test_get_bad_wcs_threshold_fraction_defaults_to_three_percent():
@@ -531,7 +541,7 @@ def test_format_plate_solution_reference_uses_basename_only():
     )
 
 
-def test_log_alignment_progress_prints_basename(monkeypatch):
+def test_log_alignment_progress_reports_wcs_location_and_basename(monkeypatch):
     stdout = io.StringIO()
     debug_messages = []
 
@@ -545,8 +555,25 @@ def test_log_alignment_progress_prints_basename(monkeypatch):
         False,
     )
 
-    assert stdout.getvalue() == "Aligning frame 145 of 220 : frame_145.fits.fz\n"
-    assert debug_messages == ["Aligning frame 145 of 220 : frame_145.fits.fz\n"]
+    expected = "WCS-locating stars in frame 145 of 220 : frame_145.fits.fz\n"
+    assert stdout.getvalue() == expected
+    assert debug_messages == [expected]
+
+
+def test_log_alignment_progress_only_says_pixel_aligning_when_enabled(monkeypatch):
+    stdout = io.StringIO()
+    monkeypatch.setattr(exotic_module.sys, "stdout", stdout)
+    monkeypatch.setattr(exotic_module.log, "debug", lambda _message: None)
+
+    exotic_module.log_alignment_progress(
+        0,
+        2,
+        "frame_1.fits",
+        False,
+        pixel_alignment_enabled=True,
+    )
+
+    assert stdout.getvalue() == "Pixel-aligning frame 1 of 2 : frame_1.fits\n"
 
 
 def test_collect_transform_frame_pointings_logs_alignment_progress(monkeypatch):
@@ -879,6 +906,82 @@ def test_build_multiprocess_alignment_results_runs_legacy_batch_only_for_wcs_fai
     assert results[3]["fallback"] is not None
 
 
+def test_build_multiprocess_alignment_results_does_not_fallback_by_default(monkeypatch):
+    batches = []
+
+    def fake_run_batch(tasks, *_args, **_kwargs):
+        batches.append(tasks)
+        return {
+            task[0]: {
+                "index": task[0],
+                "file_name": task[1],
+                "wcs": None,
+                "fallback": None,
+            }
+            for task in tasks
+        }
+
+    monkeypatch.setattr(exotic_module, "_run_multiprocess_alignment_task_batch", fake_run_batch)
+
+    results = exotic_module.build_multiprocess_alignment_results(
+        np.array(["frame0.fits", "frame1.fits"]),
+        2,
+        np.array([[10.0, 10.0], [20.0, 10.0]]),
+        target_and_comp_radec=np.array([[1.0, 2.0], [1.1, 2.1]]),
+    )
+
+    assert len(batches) == 1
+    assert all(task[7] is False for task in batches[0])
+    assert all(result["fallback"] is None for result in results)
+
+
+def test_parallel_wcs_task_uses_first_frames_own_wcs_projection(monkeypatch):
+    projected = np.array([[101.25, 202.5], [303.75, 404.5]], dtype=float)
+    captured = {}
+
+    class FakeWcs:
+        is_celestial = True
+
+        @staticmethod
+        def world_to_pixel_values(_ra, _dec):
+            return projected[:, 0], projected[:, 1]
+
+    monkeypatch.setattr(
+        exotic_module,
+        "_load_alignment_worker_frame",
+        lambda _file_name: (object(), np.ones((512, 512), dtype=float)),
+    )
+    monkeypatch.setattr(exotic_module, "search_wcs_from_header", lambda _header: FakeWcs())
+
+    def fake_fit(_image, predicted_coords, *_args, **_kwargs):
+        captured["coords"] = np.array(predicted_coords, dtype=float, copy=True)
+        return {
+            "coords": np.array(predicted_coords, dtype=float, copy=True),
+            "psf_rows": {
+                "target": np.array([101.25, 202.5, 1.0, 1.0, 1.0, 0.0, 0.0]),
+                "comp1": np.array([303.75, 404.5, 1.0, 1.0, 1.0, 0.0, 0.0]),
+            },
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(exotic_module, "_fit_alignment_candidate_psfs", fake_fit)
+
+    exotic_module._parallel_alignment_task((
+        0,
+        "frame0.fits",
+        np.array([[10.0, 20.0], [30.0, 40.0]]),
+        np.array([[1.0, 2.0], [1.1, 2.1]]),
+        False,
+        False,
+        False,
+        False,
+        True,
+        None,
+    ))
+
+    np.testing.assert_allclose(captured["coords"], projected)
+
+
 def test_downsampled_fallback_transformation_restores_full_resolution_translation(monkeypatch):
     calls = []
 
@@ -963,7 +1066,7 @@ def test_filter_sparse_missing_wcs_frames_drops_files_below_three_percent(monkey
     assert dropped == [missing_frame]
 
 
-def test_filter_sparse_missing_wcs_frames_keeps_files_at_three_percent_or_higher(monkeypatch):
+def test_filter_sparse_missing_wcs_frames_drops_all_missing_wcs_by_default(monkeypatch):
     frames = [f"frame_{i}.fits" for i in range(33)]
     missing_frame = frames[5]
 
@@ -975,6 +1078,27 @@ def test_filter_sparse_missing_wcs_frames_keeps_files_at_three_percent_or_higher
     )
 
     filtered, keep_mask, dropped = exotic_module.filter_sparse_missing_wcs_frames(frames)
+
+    assert filtered.tolist() == [frame for frame in frames if frame != missing_frame]
+    assert keep_mask.tolist() == [frame != missing_frame for frame in frames]
+    assert dropped == [missing_frame]
+
+
+def test_filter_sparse_missing_wcs_frames_can_keep_missing_wcs_when_pixel_fallback_is_explicit(monkeypatch):
+    frames = [f"frame_{i}.fits" for i in range(33)]
+    missing_frame = frames[5]
+
+    monkeypatch.setattr(exotic_module, "get_first_image_header", lambda file_name: str(file_name))
+    monkeypatch.setattr(
+        exotic_module,
+        "search_wcs_from_header",
+        lambda header: types.SimpleNamespace(is_celestial=header != missing_frame),
+    )
+
+    filtered, keep_mask, dropped = exotic_module.filter_sparse_missing_wcs_frames(
+        frames,
+        allow_pixel_alignment_fallback=True,
+    )
 
     assert filtered.tolist() == frames
     assert keep_mask.tolist() == [True] * len(frames)
@@ -1143,6 +1267,7 @@ def test_filter_pointing_outlier_frames_falls_back_to_transform_when_wcs_is_inco
     filtered, keep_mask, dropped, cached_transforms = exotic_module.filter_pointing_outlier_frames(
         frames,
         pointing_rejection_sigma=3.0,
+        allow_pixel_alignment_fallback=True,
         return_alignment_transforms=True,
     )
 

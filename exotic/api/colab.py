@@ -379,6 +379,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "Filter Minimum Wavelength (nm)": %s,
             "Filter Maximum Wavelength (nm)": %s,
             "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+            "allow_pixel_alignment_fallback": false,
             "bad_wcs_threshold_percent": 3.0,
             "detrend_on_outoftransit_baseline": true,
             "use_eebls_to_initialize_tmid_and_bounds": "y",

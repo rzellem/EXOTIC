@@ -1,6 +1,8 @@
 from exotic.utils import *
 from unittest.mock import patch
 
+import pytest
+
 
 def test_coerce_boolean_config_value_accepts_all_supported_forms():
     for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
@@ -491,6 +493,23 @@ class TestProcessLatLong:
         assert self._EXPECTED_LONGITUDE_RESULT == process_lat_long("+152:30:36", "longitude")
         assert self._EXPECTED_LATITUDE_RESULT == process_lat_long("+37:2:24", "latitude")
 
+    @pytest.mark.parametrize(
+        ("value", "coordinate_type", "expected"),
+        (
+            ("28 17 58.8 N", "latitude", 28.2996666667),
+            ("28 17 58.8 S", "latitude", -28.2996666667),
+            ("16 30 39.7 E", "longitude", 16.5110277778),
+            ("16 30 39.7 W", "longitude", -16.5110277778),
+            ("-16 30 39.7 W", "longitude", -16.5110277778),
+            ("S28:17:58.8", "latitude", -28.2996666667),
+        ),
+    )
+    def test_process_lat_long_hemisphere_inputs(self, value, coordinate_type, expected):
+        assert float(process_lat_long(value, coordinate_type)) == pytest.approx(expected)
+
+    def test_process_lat_long_rejects_wrong_hemisphere_for_axis(self):
+        assert process_lat_long("28 17 58.8 W", "latitude") is None
+
     @patch("builtins.print")
     def test_bad_inputs(self, mock_print):
         result = process_lat_long("foo", "longitude")
@@ -614,6 +633,18 @@ class TestFind:
         mock_pll.assert_called_once()
         assert result == hdr["LAT"]
         # NOTE: actual return value is "+34.560000" but I mocked this call
+
+    def test_generic_hdr_interprets_coordinate_hemispheres(self):
+        hdr = {
+            "SITELAT": "28 17 58.8 S",
+            "SITELONG": "16 30 39.7 W",
+        }
+
+        latitude_result = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
+        longitude_result = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
+
+        assert float(latitude_result) == pytest.approx(-28.2996666667)
+        assert float(longitude_result) == pytest.approx(-16.5110277778)
 
     @patch("exotic.utils.get_val")
     def test_ks_zero_not_expected(self, mock_get_val):

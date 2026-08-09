@@ -13182,6 +13182,9 @@ MJD_START_EXPOSURE_HEADER_KEYS = ("MJD-OBS", "MJD")
 UTC_START_EXPOSURE_HEADER_KEYS = ("DATE-UTC", "DATE-BEG", "DATE-OBS", "UT-OBS")
 UTC_END_EXPOSURE_HEADER_KEYS = ("DATE-END", "END-OBS")
 EXPOSURE_VARIATION_REQUIRE_COMP_STAR_FRACTION = 0.01
+HEADER_NUMERIC_TOKEN_RE = re.compile(
+    r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+)
 
 
 def header_scalar_value(value):
@@ -13190,7 +13193,7 @@ def header_scalar_value(value):
     return value
 
 
-def finite_header_float(value):
+def finite_header_float(value, allow_unit_text=False):
     value = header_scalar_value(value)
     if value is None:
         return None
@@ -13199,15 +13202,23 @@ def finite_header_float(value):
     try:
         numeric_value = float(str(value).strip())
     except (TypeError, ValueError):
-        return None
+        if not allow_unit_text:
+            return None
+        numeric_match = HEADER_NUMERIC_TOKEN_RE.search(str(value))
+        if numeric_match is None:
+            return None
+        try:
+            numeric_value = float(numeric_match.group(0))
+        except (TypeError, ValueError):
+            return None
     return numeric_value if np.isfinite(numeric_value) else None
 
 
-def first_header_float(hdr, keys):
+def first_header_float(hdr, keys, allow_unit_text=False):
     for key in keys:
         if key not in hdr:
             continue
-        numeric_value = finite_header_float(hdr[key])
+        numeric_value = finite_header_float(hdr[key], allow_unit_text=allow_unit_text)
         if numeric_value is not None:
             return key, numeric_value
     return None, None
@@ -13374,7 +13385,7 @@ def julian_date(hdr, time_unit, exp):
     return julian_time + offset
 
 def get_exp_time(hdr):
-    _, exp_time = first_header_float(hdr, EXPOSURE_TIME_HEADER_KEYS)
+    _, exp_time = first_header_float(hdr, EXPOSURE_TIME_HEADER_KEYS, allow_unit_text=True)
     return exp_time if exp_time is not None else 0.0
 
 def img_time_jd(hdr):

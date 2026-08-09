@@ -83,6 +83,25 @@ _install_stub_module(
 from exotic import exotic as exotic_module
 
 
+@pytest.mark.parametrize(
+    ("header_value", "expected"),
+    (
+        ("120", 120.0),
+        ("120.0s", 120.0),
+        ("120.0 sec", 120.0),
+        ("120.0 secs", 120.0),
+        ("120.0 seconds", 120.0),
+        ("exposure 1.2e2 seconds", 120.0),
+    ),
+)
+def test_get_exp_time_accepts_numeric_strings_with_unit_text(header_value, expected):
+    assert exotic_module.get_exp_time({"EXPTIME": header_value}) == pytest.approx(expected)
+
+
+def test_get_exp_time_rejects_unit_text_without_a_number():
+    assert exotic_module.get_exp_time({"EXPTIME": "seconds"}) == 0.0
+
+
 def _gaussian_image(shape=(80, 80), center=(40.0, 35.0), amplitude=5000.0, sigma=2.0, background=100.0):
     y, x = np.indices(shape, dtype=float)
     cx, cy = center

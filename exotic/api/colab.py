@@ -182,20 +182,42 @@ def get_val(hdr, ks):
 #########################################################
 
 def process_lat_long(val, key):
-  m = re.search(r"\'?([+-]?\d+)[\s\:](\d+)[\s\:](\d+\.?\d*)", val)
-  if m:
-    deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
-    if deg < 0:
-      v = deg - (((60*min) + sec)/3600)
-    else:
-      v = deg + (((60*min) + sec)/3600)
-    return(add_sign(v))
-  m = re.search(r"^'?([+-]?\d+\.\d+)", val)
-  if m:
-    v = float(m.group(1))
-    return(add_sign(v))
-  else:
+  text = str(val).strip()
+  coordinate_type = str(key).strip().lower()
+  valid_hemispheres = {
+      "latitude": {"N", "S"},
+      "longitude": {"E", "W"},
+  }.get(coordinate_type)
+  hemisphere = None
+  trailing_hemisphere = re.search(r"([NSEW])\s*$", text)
+  leading_hemisphere = re.match(r"\s*([NSEW])(?=\s|[+-]?\d)", text)
+  hemisphere_match = trailing_hemisphere or leading_hemisphere
+  if hemisphere_match:
+    hemisphere = hemisphere_match.group(1)
+    if valid_hemispheres is not None and hemisphere not in valid_hemispheres:
+      print(f"Cannot match value {val}, which is meant to be {key}.")
+      return None
+    start, end = hemisphere_match.span(1)
+    text = f"{text[:start]}{text[end:]}".strip()
+
+  number_tokens = re.findall(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", text)
+  if not 1 <= len(number_tokens) <= 3:
     print(f"Cannot match value {val}, which is meant to be {key}.")
+    return None
+  if (len(number_tokens) == 1 and hemisphere is None and
+      "." not in number_tokens[0] and number_tokens[0][0] not in "+-"):
+    print(f"Cannot match value {val}, which is meant to be {key}.")
+    return None
+
+  degrees = float(number_tokens[0])
+  minutes = abs(float(number_tokens[1])) if len(number_tokens) >= 2 else 0.0
+  seconds = abs(float(number_tokens[2])) if len(number_tokens) >= 3 else 0.0
+  magnitude = abs(degrees) + minutes / 60.0 + seconds / 3600.0
+  if hemisphere:
+    sign = -1.0 if hemisphere in {"S", "W"} else 1.0
+  else:
+    sign = -1.0 if number_tokens[0].startswith("-") else 1.0
+  return(add_sign(sign * magnitude))
 
 #########################################################
 

@@ -443,8 +443,9 @@ def process_lat_long(val, key):
     Parameters
     ----------
     val : str
-        either a longitude or latitude coordinate, with a preceding + or -,
-        expressed in _either_ HH:MM:SS or degree values. ex: +152.51 or +37:2:24.
+        Either a longitude or latitude coordinate expressed in HH:MM:SS or
+        decimal degrees. It may use a leading + or - or a FITS-style N/S/E/W
+        hemisphere letter. Examples: +152.51, +37:2:24, or 16 30 39.7 W.
     key : str
         expects "longitude" or "latitude"
 
@@ -454,26 +455,48 @@ def process_lat_long(val, key):
         longitude or latitude expressed in degree coordinates with a preceding
         + or -. Six digits of precision after the decimal. ex: +152.510000
     """
-    m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val) or \
-        re.search(r"\'?([+-]?\d+)[\s:](\d+\.\d*)", val)
-    if m:
-        try:
-            deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
-        except IndexError:
-            deg, min, sec = float(m.group(1)), float(m.group(2)), 0
-        if deg < 0:
-            v = deg - (((60 * min) + sec) / 3600)
-        else:
-            v = deg + (((60 * min) + sec) / 3600)
-        return add_sign(v)
+    text = str(val).strip()
+    coordinate_type = str(key).strip().lower()
+    valid_hemispheres = {
+        "latitude": {"N", "S"},
+        "longitude": {"E", "W"},
+    }.get(coordinate_type)
+    hemisphere = None
 
-    m = re.search(r"^'?([+-]?\d+\.\d+)", val)
+    # FITS writers commonly append a hemisphere letter to an otherwise
+    # unsigned decimal or sexagesimal coordinate.  A hemisphere overrides a
+    # redundant leading sign so that ``-16 30 W`` is not double-negated.
+    trailing_hemisphere = re.search(r"([NSEW])\s*$", text)
+    leading_hemisphere = re.match(r"\s*([NSEW])(?=\s|[+-]?\d)", text)
+    hemisphere_match = trailing_hemisphere or leading_hemisphere
+    if hemisphere_match:
+        hemisphere = hemisphere_match.group(1)
+        if valid_hemispheres is not None and hemisphere not in valid_hemispheres:
+            print(f"Cannot match value {val}, which is meant to be {key}.")
+            return None
+        start, end = hemisphere_match.span(1)
+        text = f"{text[:start]}{text[end:]}".strip()
 
-    if m:
-        v = float(m.group(1))
-        return add_sign(v)
-    else:
+    number_tokens = re.findall(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", text)
+    if not 1 <= len(number_tokens) <= 3:
         print(f"Cannot match value {val}, which is meant to be {key}.")
+        return None
+    if len(number_tokens) == 1 and hemisphere is None \
+            and "." not in number_tokens[0] and number_tokens[0][0] not in "+-":
+        # Preserve the historical rejection of an unsigned integer while
+        # accepting one when a hemisphere supplies the otherwise missing sign.
+        print(f"Cannot match value {val}, which is meant to be {key}.")
+        return None
+
+    degrees = float(number_tokens[0])
+    minutes = abs(float(number_tokens[1])) if len(number_tokens) >= 2 else 0.0
+    seconds = abs(float(number_tokens[2])) if len(number_tokens) >= 3 else 0.0
+    magnitude = abs(degrees) + minutes / 60.0 + seconds / 3600.0
+    if hemisphere:
+        sign = -1.0 if hemisphere in {"S", "W"} else 1.0
+    else:
+        sign = -1.0 if number_tokens[0].startswith("-") else 1.0
+    return add_sign(sign * magnitude)
 
 
 # Credit: Kalee Tock

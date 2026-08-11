@@ -8080,8 +8080,12 @@ def close_runtime_logging():
 def configure_runtime_logging(output_dir=None, start_new_run=False):
     global _RUNTIME_LOGGING_CONFIGURED, _RUNTIME_LOG_BASENAME, _RUNTIME_LOG_PATH
 
-    logging.root.setLevel(logging.DEBUG)
     log.setLevel(logging.DEBUG)
+    # EXOTIC owns both of the handlers it needs below.  Do not also propagate
+    # records into environment-owned root handlers: notebook runtimes such as
+    # Colab can leave one of those handlers attached to a disconnected output
+    # transport while the current sys.stdout remains usable.
+    log.propagate = False
 
     if start_new_run:
         _close_runtime_file_handler()

@@ -8313,6 +8313,54 @@ def test_configure_runtime_logging_rebinds_console_handler_to_current_stdout(mon
         exotic_module._RUNTIME_LOG_PATH = original_path
 
 
+def test_configure_runtime_logging_does_not_use_environment_root_handlers(monkeypatch, tmp_path, capsys):
+    import io
+    import logging
+    import exotic.exotic as exotic_module
+
+    class DisconnectedColabStream(io.StringIO):
+        def write(self, _value):
+            raise OSError(107, "Transport endpoint is not connected")
+
+        def flush(self):
+            raise OSError(107, "Transport endpoint is not connected")
+
+    original_handlers = list(exotic_module.log.handlers)
+    original_propagate = exotic_module.log.propagate
+    original_configured = exotic_module._RUNTIME_LOGGING_CONFIGURED
+    original_basename = exotic_module._RUNTIME_LOG_BASENAME
+    original_path = exotic_module._RUNTIME_LOG_PATH
+    root_logger = logging.getLogger()
+    original_root_handlers = list(root_logger.handlers)
+    original_root_level = root_logger.level
+
+    try:
+        exotic_module.log.handlers = []
+        exotic_module.log.propagate = True
+        exotic_module._RUNTIME_LOGGING_CONFIGURED = False
+        exotic_module._RUNTIME_LOG_BASENAME = None
+        exotic_module._RUNTIME_LOG_PATH = None
+        root_logger.handlers = [logging.StreamHandler(DisconnectedColabStream())]
+        root_logger.setLevel(logging.WARNING)
+        monkeypatch.setattr(exotic_module, "_reset_runtime_traceback_watchdog", lambda: None)
+
+        exotic_module.configure_runtime_logging(output_dir=tmp_path, start_new_run=True)
+        exotic_module.log.debug("frame progress written only to EXOTIC's file handler")
+
+        assert exotic_module.log.propagate is False
+        assert root_logger.level == logging.WARNING
+        assert "Logging error" not in capsys.readouterr().err
+    finally:
+        exotic_module._close_runtime_file_handler()
+        exotic_module.log.handlers = original_handlers
+        exotic_module.log.propagate = original_propagate
+        exotic_module._RUNTIME_LOGGING_CONFIGURED = original_configured
+        exotic_module._RUNTIME_LOG_BASENAME = original_basename
+        exotic_module._RUNTIME_LOG_PATH = original_path
+        root_logger.handlers = original_root_handlers
+        root_logger.setLevel(original_root_level)
+
+
 def test_runtime_output_directory_is_read_from_command_line_init_file(tmp_path):
     import exotic.exotic as exotic_module
 

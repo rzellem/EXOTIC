@@ -8047,8 +8047,63 @@ def _runtime_file_formatter():
     )
 
 
+class FailSoftRuntimeFileHandler(logging.FileHandler):
+    """Keep notebook output usable when a mounted run-log stream disconnects."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._exotic_stream_warning_emitted = False
+
+    def _discard_disconnected_stream(self):
+        stream = self.stream
+        self.stream = None
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+        if self._exotic_stream_warning_emitted:
+            return
+        self._exotic_stream_warning_emitted = True
+        try:
+            print(
+                "Warning: The EXOTIC run log stream disconnected; console output will continue "
+                "and EXOTIC will retry the log file automatically.",
+                file=sys.stdout,
+                flush=True,
+            )
+        except Exception:
+            pass
+
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except OSError:
+            # FileHandler._open() happens outside StreamHandler.emit()'s error
+            # guard, so mounted-drive failures while reopening need handling here.
+            self._discard_disconnected_stream()
+
+    def flush(self):
+        self.acquire()
+        try:
+            if self.stream is not None:
+                try:
+                    self.stream.flush()
+                except OSError:
+                    self._discard_disconnected_stream()
+        finally:
+            self.release()
+
+    def handleError(self, record):
+        if isinstance(sys.exc_info()[1], OSError):
+            self._discard_disconnected_stream()
+            return
+        super().handleError(record)
+
+
 def _open_runtime_file_handler(log_path):
-    file_handler = logging.FileHandler(filename=log_path, mode='a', encoding='utf-8')
+    file_handler = FailSoftRuntimeFileHandler(filename=log_path, mode='a', encoding='utf-8')
     file_handler._exotic_runtime_handler_name = _RUNTIME_FILE_HANDLER_NAME
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(_runtime_file_formatter())
@@ -36870,19 +36925,30 @@ def main():
     global _UNHANDLED_EXCEPTION_LOGGED
 
     _UNHANDLED_EXCEPTION_LOGGED = False
-    configure_runtime_logging(start_new_run=True)
-    install_exception_hooks()
-
+    previous_logging_raise_exceptions = logging.raiseExceptions
+    # Python's logging package prints its own ``--- Logging error ---``
+    # traceback when any handler fails and this development flag is true.
+    # Notebook transports and mounted Drive files can disconnect independently
+    # of the reduction, so suppress all such internal logging tracebacks for the
+    # duration of the run. Genuine EXOTIC exceptions are still reported by the
+    # explicit exception handling below.
+    logging.raiseExceptions = False
     try:
-        return _main_impl()
-    except (KeyboardInterrupt, SystemExit):
-        raise
-    except Exception as exc:
-        _handle_unhandled_exception(type(exc), exc, exc.__traceback__)
-        raise
+        configure_runtime_logging(start_new_run=True)
+        install_exception_hooks()
+
+        try:
+            return _main_impl()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:
+            _handle_unhandled_exception(type(exc), exc, exc.__traceback__)
+            raise
+        finally:
+            cancel_runtime_traceback_watchdog()
+            close_runtime_logging()
     finally:
-        cancel_runtime_traceback_watchdog()
-        close_runtime_logging()
+        logging.raiseExceptions = previous_logging_raise_exceptions
 
 
 def cli():

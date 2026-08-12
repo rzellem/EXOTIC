@@ -8361,6 +8361,45 @@ def test_configure_runtime_logging_does_not_use_environment_root_handlers(monkey
         root_logger.setLevel(original_root_level)
 
 
+def test_runtime_file_handler_suppresses_disconnected_mount_and_reopens(monkeypatch, tmp_path, capsys):
+    import io
+    import logging
+    import exotic.exotic as exotic_module
+
+    class DisconnectedDriveStream(io.StringIO):
+        def write(self, _value):
+            raise OSError(107, "Transport endpoint is not connected")
+
+        def flush(self):
+            raise OSError(107, "Transport endpoint is not connected")
+
+        def close(self):
+            pass
+
+    log_path = tmp_path / "EXOTIC_RunLog_test.log"
+    handler = exotic_module.FailSoftRuntimeFileHandler(log_path, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.stream = DisconnectedDriveStream()
+    recovered_stream = io.StringIO()
+    monkeypatch.setattr(handler, "_open", lambda: recovered_stream)
+
+    try:
+        handler.emit(logging.LogRecord("exotic", logging.DEBUG, __file__, 1, "frame 18", (), None))
+        first_output = capsys.readouterr()
+        assert "Logging error" not in first_output.err
+        assert "run log stream disconnected" in first_output.out
+        assert handler.stream is None
+
+        handler.emit(logging.LogRecord("exotic", logging.DEBUG, __file__, 1, "frame 19", (), None))
+        second_output = capsys.readouterr()
+        assert "Logging error" not in second_output.err
+        assert "run log stream disconnected" not in second_output.out
+        assert recovered_stream.getvalue() == "frame 19\n"
+    finally:
+        handler.stream = None
+        handler.close()
+
+
 def test_runtime_output_directory_is_read_from_command_line_init_file(tmp_path):
     import exotic.exotic as exotic_module
 
@@ -8461,3 +8500,43 @@ def test_main_logs_direct_call_exceptions_to_current_stdout(monkeypatch, capsys)
     output = capsys.readouterr().out
     assert "Unhandled exception during EXOTIC run" in output
     assert "RuntimeError: boom" in output
+
+
+def test_main_suppresses_all_internal_logging_error_tracebacks(monkeypatch, capsys):
+    import io
+    import logging
+    import exotic.exotic as exotic_module
+
+    class DisconnectedColabStream(io.StringIO):
+        def write(self, _value):
+            raise OSError(107, "Transport endpoint is not connected")
+
+        def flush(self):
+            raise OSError(107, "Transport endpoint is not connected")
+
+    environment_logger = logging.getLogger("test.disconnected_colab_handler")
+    environment_logger.handlers = [logging.StreamHandler(DisconnectedColabStream())]
+    environment_logger.propagate = False
+    original_raise_exceptions = logging.raiseExceptions
+
+    monkeypatch.setattr(exotic_module, "configure_runtime_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr(exotic_module, "install_exception_hooks", lambda: None)
+    monkeypatch.setattr(exotic_module, "cancel_runtime_traceback_watchdog", lambda: None)
+    monkeypatch.setattr(exotic_module, "close_runtime_logging", lambda: None)
+
+    def report_through_disconnected_handler():
+        environment_logger.error("frame progress")
+        return "completed"
+
+    monkeypatch.setattr(exotic_module, "_main_impl", report_through_disconnected_handler)
+
+    try:
+        logging.raiseExceptions = True
+        assert exotic_module.main() == "completed"
+        output = capsys.readouterr()
+        assert "--- Logging error ---" not in output.err
+        assert "Transport endpoint is not connected" not in output.err
+        assert logging.raiseExceptions is True
+    finally:
+        environment_logger.handlers = []
+        logging.raiseExceptions = original_raise_exceptions

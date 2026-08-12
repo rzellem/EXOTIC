@@ -132,6 +132,7 @@ from exotic.exotic import (
     alignment_candidate_quality_score,
     aperture_estimation_comparison_stars,
     aperture_frame_sigma_from_psf_data,
+    apply_raw_target_photometry_selection,
     build_tracked_comparison_pool,
     collapse_aperture_data_to_selected_grid_cell,
     ensure_lightcurve_fit_failure_reason,
@@ -7061,6 +7062,110 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
     assert result["best_candidate"]["comp_index"] == 0
     assert result["selected_ktmf_metric"] == pytest.approx(4.85)
     assert result["selected_transit_delta_bic"] == pytest.approx(18.0)
+
+
+def test_apply_raw_target_photometry_selection_sets_no_comparison_aperture_sentinel():
+    fit = types.SimpleNamespace(time=np.linspace(0.0, 0.05, 6))
+    target_flux = np.linspace(1000.0, 1010.0, 6)
+    target_driven_search = {
+        "best_candidate": {
+            "method": "aperture",
+            "a": 1,
+            "an": 2,
+            "aper": 5.0,
+            "annulus": 12.0,
+            "comp_index": None,
+        },
+        "best_fit_lc": fit,
+        "selected_ktmf_metric": 3.5,
+        "selected_transit_delta_bic": 12.0,
+        "selection_metric": "ktmf",
+        "selected_eebls_snr": 7.0,
+        "flux_tar": target_flux,
+        "flux_ref": np.ones(6),
+        "selected_source_indices": np.arange(6),
+        "candidate_summaries": [{"selected": True, "fit_point_count": 6}],
+    }
+    photometry_info = {"min_aperture": None, "comp_star_num": None}
+    flux_values = {}
+    centroid_positions = {}
+    psf_data = {
+        "target": np.column_stack([
+            np.linspace(10.0, 15.0, 6),
+            np.linspace(20.0, 25.0, 6),
+        ])
+    }
+
+    applied = apply_raw_target_photometry_selection(
+        target_driven_search,
+        photometry_info,
+        flux_values,
+        centroid_positions,
+        psf_data,
+    )
+
+    assert applied is True
+    assert photometry_info["best_fit_lc"] is fit
+    assert photometry_info["comp_star_num"] is None
+    assert photometry_info["min_aperture"] == pytest.approx(-5.0)
+    assert photometry_info["min_annulus"] == pytest.approx(12.0)
+    assert photometry_info["selection_basis"] == "raw_target_flux_fallback"
+    assert flux_values["flux_tar"] == pytest.approx(target_flux)
+    assert flux_values["flux_ref"] == pytest.approx(np.ones(6))
+    assert flux_values["flux_unc_ref"] == pytest.approx(np.zeros(6))
+    assert np.isnan(centroid_positions["x_ref"]).all()
+    assert np.isnan(centroid_positions["y_ref"]).all()
+
+
+def test_run_target_driven_photometry_search_can_select_raw_target_without_comparison(monkeypatch):
+    times = np.linspace(0.0, 0.05, 6)
+    target_flux = np.linspace(1000.0, 1010.0, 6)
+
+    def fake_evaluate(task):
+        candidate_times, candidate_target_flux, candidate_reference_flux, *_ = task
+        fit = types.SimpleNamespace(
+            time=np.asarray(candidate_times, dtype=float),
+            residuals=np.full(6, 0.01),
+            data=np.ones(6),
+        )
+        return {
+            "myfit": fit,
+            "accepted": True,
+            "ktmf_metric": 3.0,
+            "fit_point_count": 6,
+        }, np.asarray(candidate_target_flux), np.asarray(candidate_reference_flux)
+
+    monkeypatch.setattr("exotic.exotic.evaluate_lightcurve_candidate", fake_evaluate)
+    psf_data = {
+        "target": np.column_stack([
+            np.linspace(10.0, 15.0, 6),
+            np.linspace(20.0, 25.0, 6),
+        ])
+    }
+    aper_data = {"target": target_flux.reshape(6, 1, 1)}
+
+    result = run_target_driven_photometry_search(
+        times,
+        2460000.0 + times,
+        np.linspace(1.0, 1.5, 6),
+        ld=[0.1, 0.1, 0.1, 0.1],
+        p_dict={},
+        comp_stars=[],
+        psf_data=psf_data,
+        aper_data=aper_data,
+        apers=np.array([5.0]),
+        annuli=np.array([12.0]),
+        sigma=1.0,
+        require_comp_star=False,
+        use_psf_photometry=False,
+        use_aperture_photometry=True,
+    )
+
+    assert result["best_candidate"]["comp_index"] is None
+    assert result["best_candidate"]["method"] == "aperture"
+    assert result["flux_tar"] == pytest.approx(target_flux)
+    assert result["flux_ref"] == pytest.approx(np.ones(6))
+    assert result["selected_source_indices"] == pytest.approx(np.arange(6))
 
 
 def test_run_target_driven_photometry_search_can_prefer_highest_eebls_snr(monkeypatch):

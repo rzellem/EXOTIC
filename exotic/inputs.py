@@ -265,7 +265,7 @@ class Inputs:
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
             'fast_aperture_mask': False, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
-            'allow_pixel_alignment_fallback': False,
+            'allow_pixel_alignment_fallback': True,
             'prefer_pixel_values_over_wcs_for_target': 'n',
             'target_driven_comp_selection': 'n', 'disable_vertical_flux_normalization': False,
             'stellar_variability_only': False,

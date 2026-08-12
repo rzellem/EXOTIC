@@ -497,8 +497,8 @@ def test_should_ignore_header_wcs_defaults_to_false():
         assert exotic_module.should_ignore_header_wcs(value) is False
 
 
-def test_should_allow_pixel_alignment_fallback_defaults_to_false():
-    assert exotic_module.should_allow_pixel_alignment_fallback(None) is False
+def test_should_allow_pixel_alignment_fallback_defaults_to_true():
+    assert exotic_module.should_allow_pixel_alignment_fallback(None) is True
     for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
         assert exotic_module.should_allow_pixel_alignment_fallback(value) is True
     for value in (False, 0, "0", "n", "N", "no", "FALSE", "off"):
@@ -1085,25 +1085,25 @@ def test_filter_sparse_missing_wcs_frames_drops_files_below_three_percent(monkey
     assert dropped == [missing_frame]
 
 
-def test_filter_sparse_missing_wcs_frames_drops_all_missing_wcs_by_default(monkeypatch):
-    frames = [f"frame_{i}.fits" for i in range(33)]
-    missing_frame = frames[5]
+def test_filter_sparse_missing_wcs_frames_keeps_full_sequence_when_most_frames_lack_wcs(monkeypatch):
+    frames = [f"frame_{i}.fits" for i in range(46)]
+    only_wcs_frame = frames[0]
 
     monkeypatch.setattr(exotic_module, "get_first_image_header", lambda file_name: str(file_name))
     monkeypatch.setattr(
         exotic_module,
         "search_wcs_from_header",
-        lambda header: types.SimpleNamespace(is_celestial=header != missing_frame),
+        lambda header: types.SimpleNamespace(is_celestial=header == only_wcs_frame),
     )
 
     filtered, keep_mask, dropped = exotic_module.filter_sparse_missing_wcs_frames(frames)
 
-    assert filtered.tolist() == [frame for frame in frames if frame != missing_frame]
-    assert keep_mask.tolist() == [frame != missing_frame for frame in frames]
-    assert dropped == [missing_frame]
+    assert filtered.tolist() == frames
+    assert keep_mask.tolist() == [True] * len(frames)
+    assert dropped == []
 
 
-def test_filter_sparse_missing_wcs_frames_can_keep_missing_wcs_when_pixel_fallback_is_explicit(monkeypatch):
+def test_filter_sparse_missing_wcs_frames_can_drop_missing_wcs_when_pixel_fallback_is_disabled(monkeypatch):
     frames = [f"frame_{i}.fits" for i in range(33)]
     missing_frame = frames[5]
 
@@ -1116,12 +1116,12 @@ def test_filter_sparse_missing_wcs_frames_can_keep_missing_wcs_when_pixel_fallba
 
     filtered, keep_mask, dropped = exotic_module.filter_sparse_missing_wcs_frames(
         frames,
-        allow_pixel_alignment_fallback=True,
+        allow_pixel_alignment_fallback=False,
     )
 
-    assert filtered.tolist() == frames
-    assert keep_mask.tolist() == [True] * len(frames)
-    assert dropped == []
+    assert filtered.tolist() == [frame for frame in frames if frame != missing_frame]
+    assert keep_mask.tolist() == [frame != missing_frame for frame in frames]
+    assert dropped == [missing_frame]
 
 
 def test_filter_wcs_target_out_of_frame_frames_drops_only_projected_misses(monkeypatch):

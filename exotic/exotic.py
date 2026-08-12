@@ -9649,7 +9649,7 @@ def should_ignore_header_wcs(config_value):
 
 def should_allow_pixel_alignment_fallback(config_value):
     if config_value is None:
-        return False
+        return True
     if isinstance(config_value, bool):
         return config_value
     if isinstance(config_value, (int, float)):
@@ -9663,10 +9663,10 @@ def should_allow_pixel_alignment_fallback(config_value):
 
     log_info(
         "Warning: Invalid 'allow_pixel_alignment_fallback' value; "
-        "pixel-based image alignment will remain disabled.",
+        "allowing pixel-based image alignment when WCS coverage is incomplete.",
         warn=True,
     )
-    return False
+    return True
 
 
 def should_prefer_pixel_values_over_wcs_for_target(config_value):
@@ -14545,7 +14545,7 @@ def filter_pointing_outlier_frames(inputfiles, pointing_rejection_sigma=None, ig
 
 
 def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_missing_fraction=None,
-                                     allow_pixel_alignment_fallback=False):
+                                     allow_pixel_alignment_fallback=True):
     inputfiles = np.array(inputfiles)
     keep_mask = np.ones(len(inputfiles), dtype=bool)
     if ignore_header_wcs or len(inputfiles) == 0:
@@ -14582,11 +14582,18 @@ def filter_sparse_missing_wcs_frames(inputfiles, ignore_header_wcs=False, max_mi
         log_missing_celestial_wcs_preview(missing_wcs_files)
         return retained_files, keep_mask, missing_wcs_files
 
+    threshold_percent = max_missing_fraction * 100.0
+    log_info(
+        f"WCS precheck: {total_files - missing_count}/{total_files} files have celestial WCS. "
+        f"Retaining all {total_files} frame(s) and enabling pixel alignment fallback because the "
+        f"missing-WCS fraction is at or above the {threshold_percent:g}% threshold."
+    )
+    log_missing_celestial_wcs_preview(missing_wcs_files)
     return inputfiles, np.ones(total_files, dtype=bool), []
 
 
 def should_use_multiprocess_transform_precompute(inputfiles, requested_processes, ignore_header_wcs=False,
-                                                 allow_pixel_alignment_fallback=False):
+                                                 allow_pixel_alignment_fallback=True):
     if requested_processes is None or requested_processes <= 0:
         return False
 
@@ -22779,13 +22786,16 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
     timeList, airMassList, exptimes, norm_flux = [], [], [], []
     ignore_header_wcs = should_ignore_header_wcs(info_dict.get('ignore_header_wcs'))
     allow_pixel_alignment_fallback = should_allow_pixel_alignment_fallback(
-        info_dict.get('allow_pixel_alignment_fallback', False)
+        info_dict.get('allow_pixel_alignment_fallback', True)
     )
     pixel_alignment_enabled = bool(ignore_header_wcs or allow_pixel_alignment_fallback)
     if ignore_header_wcs:
         log_info("Pixel alignment enabled explicitly: header WCS will be ignored for manual alignment.")
     elif allow_pixel_alignment_fallback:
-        log_info("WCS-first coordinate projection enabled with explicit pixel alignment fallback.")
+        log_info(
+            "WCS coverage-aware coordinate mode enabled: per-frame WCS is preferred when coverage is "
+            "consistent, with pixel alignment fallback available for incomplete-WCS datasets."
+        )
     else:
         log_info(
             "WCS-authoritative coordinate mode enabled: each frame's header WCS will supply star pixel "
@@ -24523,6 +24533,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             'selected_eebls_snr': np.nan,
             'flux_tar': None,
             'flux_ref': None,
+            'selected_source_indices': None,
         }
 
     fit_tasks = [
@@ -24577,6 +24588,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
     best_cflux = None
     selection_metric = 'ktmf'
     selected_eebls_snr = np.nan
+    selected_source_indices = None
     if successful_candidates:
         has_ktmf = any(np.isfinite(item[0].get('ktmf_metric', np.nan)) for item in successful_candidates)
         has_eebls = any(np.isfinite(item[0].get('eebls_snr', np.nan)) for item in successful_candidates)
@@ -24656,6 +24668,18 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         best_ktmf_metric = selected_summary.get('ktmf_metric', np.nan)
         best_transit_delta_bic = selected_summary.get('transit_delta_bic', np.nan)
         selected_eebls_snr = selected_summary.get('eebls_snr', np.nan)
+        candidate_source_indices = np.flatnonzero(np.asarray(best_candidate['mask'], dtype=bool))
+        fitted_times = np.asarray(getattr(best_fit_lc, 'time', []), dtype=float)
+        candidate_times = np.asarray(times, dtype=float)[candidate_source_indices]
+        fitted_time_indices = (
+            match_time_subset_indices(candidate_times, fitted_times)
+            if fitted_times.size
+            else None
+        )
+        if fitted_time_indices is not None:
+            selected_source_indices = candidate_source_indices[fitted_time_indices]
+        elif best_tflux is not None and len(best_tflux) == len(candidate_source_indices):
+            selected_source_indices = candidate_source_indices
         best_identity = target_fit_candidate_identity(best_candidate)
         for summary in candidate_summaries:
             summary['selected'] = target_fit_candidate_identity(summary) == best_identity
@@ -24673,7 +24697,88 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         'selected_eebls_snr': selected_eebls_snr,
         'flux_tar': best_tflux,
         'flux_ref': best_cflux,
+        'selected_source_indices': selected_source_indices,
     }
+
+
+def apply_raw_target_photometry_selection(target_driven_search, photometry_info, flux_values,
+                                          centroid_positions, psf_data):
+    best_candidate = target_driven_search.get('best_candidate')
+    best_fit_lc = target_driven_search.get('best_fit_lc')
+    if (
+        best_candidate is None
+        or best_fit_lc is None
+        or best_candidate.get('comp_index') is not None
+        or best_candidate.get('method') != 'aperture'
+    ):
+        return False
+
+    aperture = float(best_candidate.get('aper', np.nan))
+    annulus = float(best_candidate.get('annulus', np.nan))
+    if not np.isfinite(aperture) or aperture <= 0 or not np.isfinite(annulus):
+        return False
+
+    target_flux = np.asarray(target_driven_search.get('flux_tar'), dtype=float)
+    reference_flux = np.asarray(target_driven_search.get('flux_ref'), dtype=float)
+    if target_flux.ndim != 1 or reference_flux.shape != target_flux.shape or target_flux.size == 0:
+        return False
+
+    source_indices = target_driven_search.get('selected_source_indices')
+    if source_indices is None:
+        source_indices = np.arange(target_flux.size, dtype=int)
+    source_indices = np.asarray(source_indices, dtype=int)
+    target_rows = np.asarray(psf_data.get('target', []))
+    if (
+        source_indices.shape != target_flux.shape
+        or target_rows.ndim < 2
+        or target_rows.shape[1] < 2
+        or np.any(source_indices < 0)
+        or np.any(source_indices >= target_rows.shape[0])
+    ):
+        return False
+
+    selected_summary = next(
+        (
+            summary for summary in target_driven_search.get('candidate_summaries', [])
+            if summary.get('selected')
+        ),
+        {},
+    )
+    photometry_info.update(
+        best_fit_lc=best_fit_lc,
+        comp_star_num=None,
+        comp_star_coords=None,
+        finder_comparison_entries=[],
+        min_aperture=-abs(aperture),
+        min_annulus=annulus,
+        aperture_index=best_candidate.get('a'),
+        annulus_index=best_candidate.get('an'),
+        selected_source_indices=source_indices,
+        selection_basis='raw_target_flux_fallback',
+        selection_metric=target_driven_search.get('selection_metric', 'ktmf'),
+        comparison_ktmf_metric=target_driven_search.get('selected_ktmf_metric', np.nan),
+        comparison_eebls_snr=target_driven_search.get('selected_eebls_snr', np.nan),
+        comparison_transit_delta_bic=target_driven_search.get('selected_transit_delta_bic', np.nan),
+        selected_comparison_fit_point_count=selected_summary.get('fit_point_count'),
+        selected_comparison_transit_qc_status=selected_summary.get('transit_qc_status'),
+        selected_comparison_transit_qc_summary=selected_summary.get('transit_qc_summary'),
+    )
+    target_uncertainty = np.sqrt(np.clip(target_flux, 0.0, None))
+    flux_values.update(
+        flux_tar=target_flux,
+        flux_ref=reference_flux,
+        flux_unc_tar=target_uncertainty,
+        flux_unc_ref=np.zeros(reference_flux.shape, dtype=float),
+    )
+    target_x = target_rows[source_indices, 0]
+    target_y = target_rows[source_indices, 1]
+    centroid_positions.update(
+        x_targ=target_x,
+        y_targ=target_y,
+        x_ref=np.full(target_x.shape, np.nan, dtype=float),
+        y_ref=np.full(target_y.shape, np.nan, dtype=float),
+    )
+    return True
 
 
 def selected_photometry_method_label(photometry_info):
@@ -32540,13 +32645,16 @@ def _main_impl():
                 full_plot_time_range = (float(np.min(finite_plot_times)), float(np.max(finite_plot_times)))
             ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
             allow_pixel_alignment_fallback = should_allow_pixel_alignment_fallback(
-                exotic_infoDict.get('allow_pixel_alignment_fallback', False)
+                exotic_infoDict.get('allow_pixel_alignment_fallback', True)
             )
             pixel_alignment_enabled = bool(ignore_header_wcs or allow_pixel_alignment_fallback)
             if ignore_header_wcs:
                 log_info("Pixel alignment enabled explicitly: header WCS will be ignored for manual alignment.")
             elif allow_pixel_alignment_fallback:
-                log_info("WCS-first coordinate projection enabled with explicit pixel alignment fallback.")
+                log_info(
+                    "WCS coverage-aware coordinate mode enabled: per-frame WCS is preferred when coverage is "
+                    "consistent, with pixel alignment fallback available for incomplete-WCS datasets."
+                )
             else:
                 log_info(
                     "WCS-authoritative coordinate mode enabled: each frame's header WCS will supply star pixel "
@@ -35590,20 +35698,87 @@ def _main_impl():
                         )
                         attempted_count = len(fit_attempts)
                         ranked_count = len(comparison_fit_search['ranked_summaries'])
-                        log_info(
-                            "Error: Comparison-star calibration exhausted "
+                        failure_message = (
+                            "Comparison-star calibration exhausted "
                             f"{attempted_count}/{ranked_count} ranked comparison star(s) for "
                             f"{comparison_calibration['method_label']} without a usable fully reduced target fit "
-                            f"(last attempt: Comp {failed_comp_index + 1}; reason: {failure_reason}).",
-                            error=True,
+                            f"(last attempt: Comp {failed_comp_index + 1}; reason: {failure_reason})."
                         )
                     else:
-                        log_info(
-                            "Error: Comparison-star calibration did not produce any coverage-qualified "
-                            "comparison stars to fully reduce against the target fit.",
-                            error=True,
+                        failure_message = (
+                            "Comparison-star calibration did not produce any coverage-qualified "
+                            "comparison stars to fully reduce against the target fit."
                         )
+                    if require_comp_star:
+                        log_info(f"Error: {failure_message}", error=True)
+                        return
+                    log_info(
+                        f"Warning: {failure_message} Falling back to raw target-flux aperture photometry "
+                        "because require_comp_star is disabled.",
+                        warn=True,
+                    )
+
+            if photometry_info['best_fit_lc'] is None and not require_comp_star:
+                if not use_aperture_photometry or aper_data is None or apers is None or annuli is None:
+                    log_info(
+                        "Error: require_comp_star is disabled, but raw target-flux fallback requires usable "
+                        "aperture photometry and no aperture grid is available.",
+                        error=True,
+                    )
                     return
+
+                log_info(
+                    "\nNo usable comparison-star reduction was selected. Evaluating raw target-flux "
+                    "aperture candidates because require_comp_star is disabled."
+                )
+                raw_target_search = run_target_driven_photometry_search(
+                    times,
+                    jd_times,
+                    airmass,
+                    ld,
+                    pDict,
+                    [],
+                    psf_data,
+                    aper_data,
+                    apers,
+                    annuli,
+                    sigma_display,
+                    require_comp_star=False,
+                    plot_time_range=full_plot_time_range,
+                    disable_vertical_flux_normalization=disable_vertical_flux_normalization,
+                    skip_low_comparison_coverage_rejection=True,
+                    use_psf_photometry=False,
+                    use_aperture_photometry=True,
+                    multiprocess_lightcurve_fits=args.multiprocess_lightcurve_fits,
+                    use_impactparameter_rather_than_inclination_to_fit=
+                    use_impactparameter_rather_than_inclination_to_fit,
+                    use_eebls_to_initialize_tmid_and_bounds=use_eebls_tmid_initializer,
+                    pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
+                    exposure_times_seconds=exposure_times_seconds,
+                    gain_e_per_adu=fallback_gain_e_per_adu,
+                    psf_flux_data=psf_flux_source,
+                )
+                if not apply_raw_target_photometry_selection(
+                    raw_target_search,
+                    photometry_info,
+                    flux_values,
+                    centroid_positions,
+                    psf_data,
+                ):
+                    candidate_summaries = raw_target_search.get('candidate_summaries', [])
+                    if candidate_summaries:
+                        log_target_fit_candidate_summaries(candidate_summaries)
+                    log_info(
+                        "Error: require_comp_star is disabled, but no raw target-flux aperture candidate "
+                        "completed a usable reduction.",
+                        error=True,
+                    )
+                    return
+                log_info(
+                    "Selected raw target-flux aperture photometry with no comparison star because "
+                    "require_comp_star is disabled.",
+                    warn=True,
+                )
 
             update_photometry_adaptive_summary(
                 photometry_info,

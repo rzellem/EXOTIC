@@ -530,7 +530,7 @@ def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):
     assert inputs.info_dict["ignore_header_wcs"] == "n"
 
 
-def test_comp_params_defaults_allow_pixel_alignment_fallback_to_false(tmp_path):
+def test_comp_params_defaults_allow_pixel_alignment_fallback_to_true(tmp_path):
     init_data = {
         "user_info": {},
         "optional_info": {},
@@ -542,7 +542,7 @@ def test_comp_params_defaults_allow_pixel_alignment_fallback_to_false(tmp_path):
     inputs = Inputs(init_opt="y")
     inputs.comp_params(init_file, {})
 
-    assert inputs.info_dict["allow_pixel_alignment_fallback"] is False
+    assert inputs.info_dict["allow_pixel_alignment_fallback"] is True
 
 
 def test_comp_params_defaults_prefer_pixel_values_over_wcs_for_target_to_no(tmp_path):

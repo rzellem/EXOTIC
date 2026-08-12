@@ -509,7 +509,7 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         "mag_band": "V",
     }]
     p_dict = {
-        "pName": "HAT-P-32 b",
+        "pName": "HAT-P-32b",
         "sName": "HAT-P-32",
         "pPer": 2.1500082,
         "pPerUnc": 1.3e-07,
@@ -582,6 +582,7 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         ).read_bytes() == diagnostic_source.name.encode("utf-8")
 
     assert "#OBSDATE=2020-01-01" in output_text
+    assert "#EXOPLANET_NAME=HAT-P-32 b" in output_text
     assert "#OBSNAME=Whipple Observatory" in output_text
     assert "#OBSLAT=+32.41638889" in output_text
     assert "#OBSLON=-110.73444444" in output_text

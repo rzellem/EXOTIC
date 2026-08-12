@@ -46,6 +46,20 @@ def test_safe_output_filename_removes_spaces_from_planet_names():
     assert " " not in filename
 
 
+@pytest.mark.parametrize(
+    ("planet_name", "expected"),
+    (
+        ("TOI-4010b", "TOI-4010 b"),
+        ("Kepler-11c", "Kepler-11 c"),
+        ("HD 41004Ag", "HD 41004A g"),
+        ("TOI-4010 b", "TOI-4010 b"),
+        ("Candidate", "Candidate"),
+    ),
+)
+def test_format_aavso_exoplanet_name_separates_planet_suffix(planet_name, expected):
+    assert format_aavso_exoplanet_name(planet_name) == expected
+
+
 def test_sanitize_filename_component_cleans_fallback():
     filename = sanitize_filename_component("   ", fallback="bad fallback")
 

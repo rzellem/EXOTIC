@@ -43,9 +43,19 @@ from pathlib import Path
 import re
 
 try:
-    from ..utils import aavso_output_directory, round_to_2, safe_output_filename
+    from ..utils import (
+        aavso_output_directory,
+        format_aavso_exoplanet_name,
+        round_to_2,
+        safe_output_filename,
+    )
 except ImportError:
-    from utils import aavso_output_directory, round_to_2, safe_output_filename
+    from utils import (
+        aavso_output_directory,
+        format_aavso_exoplanet_name,
+        round_to_2,
+        safe_output_filename,
+    )
 try:
     from .version import __version__
 except ImportError:
@@ -246,7 +256,7 @@ class OutputFiles:
                     "#DATE_TYPE=BJD_TDB\n"  # fixed
                     f"#OBSTYPE=CCD\n"
                     f"#STAR_NAME={self.p_dict['hostname']}\n"  # code yields
-                    f"#EXOPLANET_NAME={self.p_dict['pl_name']}\n"  # code yields
+                    f"#EXOPLANET_NAME={format_aavso_exoplanet_name(self.p_dict['pl_name'])}\n"  # code yields
                     f"#BINNING=1x1\n"  # uhhh i just put One. 
                     f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI 
                     f"{gaia_dist_header}"
@@ -318,7 +328,7 @@ class OutputFiles:
                         "#DATE_TYPE=BJD_TDB\n"  # fixed
                         f"#OBSTYPE=CCD\n"
                         f"#STAR_NAME={self.p_dict['hostname']}\n"  # code yields
-                        f"#EXOPLANET_NAME={self.p_dict['pl_name']}\n"  # code yields
+                        f"#EXOPLANET_NAME={format_aavso_exoplanet_name(self.p_dict['pl_name'])}\n"  # code yields
                         f"#BINNING=1x1\n"  # uhhh i just put One. 
                         f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI 
                         f"{gaia_dist_header}"

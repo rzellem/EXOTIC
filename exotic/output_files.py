@@ -9,6 +9,7 @@ try:
         aavso_output_directory,
         MAGNITUDE_DECIMAL_PLACES,
         filename_date_token,
+        format_aavso_exoplanet_name,
         format_magnitude_error,
         format_magnitude,
         magnitude_text,
@@ -23,6 +24,7 @@ except ImportError:
         aavso_output_directory,
         MAGNITUDE_DECIMAL_PLACES,
         filename_date_token,
+        format_aavso_exoplanet_name,
         format_magnitude_error,
         format_magnitude,
         magnitude_text,
@@ -2888,7 +2890,7 @@ class OutputFiles:
                     f"{obs_name_header}"
                     f"#OBSTYPE={self.i_dict['camera']}\n"
                     f"#STAR_NAME={self.p_dict['sName']}\n"  # code yields
-                    f"#EXOPLANET_NAME={self.p_dict['pName']}\n"  # code yields
+                    f"#EXOPLANET_NAME={format_aavso_exoplanet_name(self.p_dict['pName'])}\n"  # code yields
                     f"#BINNING={self.i_dict['pixel_bin']}\n"  # user input
                     f"#EXPOSURE_TIME={self.i_dict.get('exposure', -1)}\n"  # UI
                     f"#OBSLAT={format_aavso_header_value(self.i_dict.get('lat'))}\n"

@@ -162,7 +162,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Maximum Wavelength (nm)": null,
 
             "Fast Aperture Mask (y/n)": false,
-            "allow_pixel_alignment_fallback": false,
+            "allow_pixel_alignment_fallback": true,
             "prefer_pixel_values_over_wcs_for_target": false,
             "use_psf_photometry": true,
             "use_aperture_photometry": true,
@@ -198,7 +198,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` and `false`) are recommended. Every initialization boolean also accepts numeric `1`/`0` and case-insensitive strings `"y"`/`"n"`, `"yes"`/`"no"`, `"true"`/`"false"`, and `"on"`/`"off"`.
 
-Raw-image reductions are WCS-authoritative by default. For every frame with celestial WCS, EXOTIC projects the target and comparison-star sky coordinates through that frame's own FITS header and starts centroiding at those projected pixels. It does not register the image to a reference frame with Astroalign. Set `"allow_pixel_alignment_fallback": true` only when you explicitly want legacy pixel-based registration for a frame whose WCS-derived candidate is unusable. The existing `"Ignore WCS in Header and Do Manual Alignment? (y/n)": "y"` option explicitly enables pixel alignment for the entire run.
+Raw-image reductions prefer per-frame WCS when WCS coverage is consistent across the dataset. With the default `"allow_pixel_alignment_fallback": true`, EXOTIC uses `"bad_wcs_threshold_percent"` to choose the safe path: sparse missing-WCS frames below the threshold are dropped and the retained sequence remains WCS-based; when the missing-WCS fraction reaches or exceeds the threshold, all frames are retained and legacy pixel alignment is available for frames without usable WCS. Set `"allow_pixel_alignment_fallback": false` to require WCS-only processing and drop every frame without celestial WCS. The existing `"Ignore WCS in Header and Do Manual Alignment? (y/n)": "y"` option explicitly enables pixel alignment for the entire run.
 
 Comparison stars may be supplied in `user_info` using either `"Comparison Star(s) X & Y Pixel"` or `"Comparison Star(s) RA & Dec"`. Do not populate both. RA/Dec values may be decimal degrees, such as `[[31.04125, 46.68972]]`, or sexagesimal strings, such as `[["02:04:09.90", "+46:41:23.0"]]`. Sexagesimal values must be quoted because they are JSON strings; forms such as `[[02:04:09.90, +46:41:23.0]]` are not valid JSON. Supplied X/Y positions are converted to sky coordinates with the reference frame's WCS; during photometry those sky coordinates are projected independently through every retained frame's own WCS header.
 

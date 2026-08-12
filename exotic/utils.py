@@ -25,6 +25,7 @@ _WINDOWS_RESERVED_FILENAME_STEMS = {
 }
 _WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 _FILENAME_WHITESPACE_RE = re.compile(r'\s+')
+_COMPACT_EXOPLANET_SUFFIX_RE = re.compile(r'(?<=[0-9A-Z])([b-z])$')
 MAX_APPARENT_MAGNITUDE = 30.0
 MAGNITUDE_DECIMAL_PLACES = 4
 MINIMUM_MAGNITUDE_ERROR = 0.001
@@ -65,6 +66,13 @@ def aavso_output_directory(root):
     output_directory = Path(root) / AAVSO_OUTPUT_FOLDER_NAME
     output_directory.mkdir(parents=True, exist_ok=True)
     return output_directory
+
+
+def format_aavso_exoplanet_name(value):
+    """Separate a compact trailing planet letter for the AAVSO header."""
+
+    name = str(value or '').strip()
+    return _COMPACT_EXOPLANET_SUFFIX_RE.sub(r' \1', name)
 
 
 def _clean_filename_text(value):

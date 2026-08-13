@@ -998,6 +998,9 @@ def test_save_comp_star_calibration_summary_writes_selected_star(tmp_path):
 
     text = summary_path.read_text()
     assert "# Selected comparison star,1" in text
+    assert "intercomparison_score" in text
+    assert "intercomparison_frame_rejected_count" in text
+    assert "ensemble_score" not in text
     assert "suitability_outlier_rejected" in text
     assert "overexposure_rejected_count" in text
     assert "Comp 1,101,202,true" in text

@@ -469,12 +469,12 @@ def _draw_comp_star_calibration_axis(axis, times, summary, colors):
         line_valid = ensemble_time_valid & np.isfinite(line_ratio)
         if np.any(line_valid):
             axis.plot(times[ensemble_time_valid], line_ratio[ensemble_time_valid], color='black', lw=1.8,
-                      label='Ensemble')
+                      label='Intercomparison')
         if has_ensemble_keep_mask:
             rejected = ensemble_valid & ~ensemble_keep_mask
             if np.any(rejected):
                 axis.scatter(times[rejected], ensemble_ratio[rejected], marker='x', s=42,
-                             color='red', linewidths=1.4, label='Ensemble clip')
+                             color='red', linewidths=1.4, label='Intercomparison clip')
 
     selected_text = " selected" if summary.get('selected') else ""
     aggregate = summary.get('aggregate_score', np.nan)
@@ -502,7 +502,7 @@ def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_lab
     fig, ax = plt.subplots(figsize=(max(7, 1.5 * len(labels)), 5))
     width = 0.25
     ax.bar(positions - width, aggregate, width=width, label='Suitability')
-    ax.bar(positions, ensemble, width=width, label='Vs ensemble')
+    ax.bar(positions, ensemble, width=width, label='Intercomparison')
     ax.bar(positions + width, pairwise, width=width, label='Pairwise median')
 
     for position, summary in zip(positions, comp_summaries):

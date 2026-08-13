@@ -6377,7 +6377,7 @@ def test_fit_ranked_comparison_calibration_candidates_masks_target_psf_shape(mon
     assert np.nanmedian(result["selected_result"]["cflux_fit"]) == pytest.approx(2.0 * np.pi * 240.0)
 
 
-def test_fit_ranked_comparison_calibration_candidates_applies_candidate_ensemble_clip(monkeypatch):
+def test_fit_ranked_comparison_calibration_candidates_applies_candidate_intercomparison_clip(monkeypatch):
     observed_lengths = []
 
     def fake_diagnostics(times, *args, **kwargs):
@@ -6473,7 +6473,7 @@ def test_fit_ranked_comparison_calibration_candidates_applies_candidate_ensemble
 
     assert observed_lengths == [("diagnostics", 5), ("finalize", 5)]
     diagnostic = result["attempts"][0]["fit"].frame_filter_diagnostics[0]
-    assert diagnostic["stage"] == "Comparison-candidate ensemble clip"
+    assert diagnostic["stage"] == "Comparison-candidate intercomparison clip"
     assert diagnostic["dropped_point_count"] == 1
     assert result["attempts"][0]["fit_point_count"] == 5
 

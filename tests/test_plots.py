@@ -370,7 +370,7 @@ def test_plot_individual_comp_star_calibration_series_masks_rejected_frame_lines
 
     def spy_plot(self, x, y, *args, **kwargs):
         label = kwargs.get("label")
-        if label in {"vs 2", "Ensemble"}:
+        if label in {"vs 2", "Intercomparison"}:
             captured_lines[label] = (np.asarray(x), np.asarray(y))
         return original_plot(self, x, y, *args, **kwargs)
 
@@ -395,7 +395,7 @@ def test_plot_individual_comp_star_calibration_series_masks_rejected_frame_lines
     )
 
     assert np.isnan(captured_lines["vs 2"][1][1])
-    assert np.isnan(captured_lines["Ensemble"][1][1])
+    assert np.isnan(captured_lines["Intercomparison"][1][1])
 
 
 def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeypatch):

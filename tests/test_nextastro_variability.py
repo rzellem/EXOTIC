@@ -3595,6 +3595,8 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
 
 def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkeypatch, tmp_path):
     monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
+    logged = []
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, **kwargs: logged.append(message))
     frame_count = 12
     times = np.linspace(10.2, 10.3, frame_count)
     target_flux = 1000.0 * (1.0 + np.linspace(-0.002, 0.002, frame_count))
@@ -3672,6 +3674,10 @@ def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkey
     assert selected['comp_index'] is None
     assert selected['ensemble_member_keys'] == ['comp1', 'comp2']
     assert selected['fit'].stellar_variability_ensemble_members
+    assert any(
+        'Using a 2-star comparison ensemble for stellar-variability products only:' in message
+        for message in logged
+    )
     assert len(selected['fit'].stellar_variability_ensemble_magnitudes) == len(selected['fit'].time)
     np.testing.assert_allclose(
         selected['fit'].differential_magnitude_reference_flux,

@@ -17180,7 +17180,8 @@ def select_automatic_optimal_calibration_stars(
         return [], []
 
     log_info(
-        "Scanning the reference frame for bright, non-saturated ensemble candidates."
+        "Scanning the reference frame for bright, non-saturated stellar-variability "
+        "ensemble candidates."
     )
     detection_started = perf_counter()
     detected_stars = detect_reference_fallback_bright_stars(
@@ -17192,7 +17193,7 @@ def select_automatic_optimal_calibration_stars(
         threshold_percentile=AUTOMATIC_CALIBRATION_SELECTOR_DETECTION_PERCENTILE,
     )
     log_info(
-        "Reference-frame ensemble candidate scan found "
+        "Reference-frame stellar-variability ensemble candidate scan found "
         f"{len(detected_stars)} source(s) in {perf_counter() - detection_started:.2f} seconds."
     )
     detected_pool = dedupe_reference_fallback_stars(detected_stars)
@@ -25456,7 +25457,7 @@ def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, 
     )
     if ensemble_frame_rejected_count > 0:
         log_info(
-            "  Candidate ensemble clipping rejects "
+            "  Candidate intercomparison clipping rejects "
             f"{ensemble_frame_rejected_count} comparison-unstable frame(s) before target fitting."
         )
     log_info("  Preparing comparison-candidate light curve for the full reduction.")
@@ -29517,7 +29518,8 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                 else ""
             )
             log_info(
-                "Stellar-variability-only comparison ensemble members: "
+                f"Using a {len(ensemble_members)}-star comparison ensemble for "
+                "stellar-variability products only: "
                 f"{member_text}{threshold_text}."
             )
             if member_selection.get('prelimit_member_count', 0) > len(ensemble_members):
@@ -29848,11 +29850,12 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
             )
             sigma_threshold = comp_summary.get('ensemble_frame_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
             candidate_frame_clip_diagnostic = build_time_rejection_diagnostic(
-                "Comparison-candidate ensemble clip",
+                "Comparison-candidate intercomparison clip",
                 times,
                 candidate_frame_diagnostic_keep_mask,
                 note=(
-                    "Dropped frames where this comparison star disagreed with the comparison-star ensemble "
+                    "Dropped frames where this comparison star disagreed with the peer-star "
+                    "intercomparison reference "
                     f"before target fitting; same-direction pairwise majority exceeded {sigma_threshold:.2f} sigma "
                     f"(min confirming pair count={required_pairs})."
                 ),
@@ -31305,11 +31308,12 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             )
             sigma_threshold = comp_summary.get('ensemble_frame_sigma', COMPARISON_IMAGE_OUTLIER_SIGMA)
             candidate_frame_clip_diagnostic = build_time_rejection_diagnostic(
-                "Comparison-candidate ensemble clip",
+                "Comparison-candidate intercomparison clip",
                 times,
                 candidate_frame_diagnostic_keep_mask,
                 note=(
-                    "Dropped frames where this comparison star disagreed with the comparison-star ensemble "
+                    "Dropped frames where this comparison star disagreed with the peer-star "
+                    "intercomparison reference "
                     f"before target fitting; same-direction pairwise majority exceeded {sigma_threshold:.2f} sigma "
                     f"(min confirming pair count={required_pairs})."
                 ),
@@ -33294,7 +33298,7 @@ def _main_impl():
                     for duplicate_message in fortuitous_duplicate_messages:
                         log_info(duplicate_message)
                     log_info(
-                        "Fortuitous-variable ensemble pool contains "
+                        "Fortuitous-variable pool contains "
                         f"{len(fortuitous_ensemble_stars)} non-variable, non-saturated, "
                         "catalog-matched comparison candidate(s)."
                     )
@@ -34987,7 +34991,8 @@ def _main_impl():
                         times,
                         quality_keep_mask,
                         note=(
-                            "Dropped this star's frame-level photometry before comparison ensemble scoring "
+                            "Dropped this star's frame-level photometry before comparison-star "
+                            "intercomparison scoring "
                             f"based on robust PSF diagnostics ({reason_text})."
                         ),
                     ))
@@ -35142,7 +35147,7 @@ def _main_impl():
                     )
                 for summary in comparison_calibration['comp_summaries']:
                     aggregate_text = "n/a" if not np.isfinite(summary['aggregate_score']) else f"{summary['aggregate_score'] * 100.0:.4f}%"
-                    ensemble_text = "n/a" if not np.isfinite(summary['ensemble_score']) else f"{summary['ensemble_score'] * 100.0:.4f}%"
+                    intercomparison_text = "n/a" if not np.isfinite(summary['ensemble_score']) else f"{summary['ensemble_score'] * 100.0:.4f}%"
                     pairwise_text = "n/a" if not np.isfinite(summary['pairwise_median_score']) else f"{summary['pairwise_median_score'] * 100.0:.4f}%"
                     selected_label = " [selected]" if summary['selected'] else ""
                     position_text = format_comp_star_position(summary['position'])
@@ -35151,10 +35156,10 @@ def _main_impl():
                         coverage_text += " [rejected: low coverage]"
                     if summary.get('suitability_outlier_rejected'):
                         coverage_text += " [rejected: high suitability outlier]"
-                    ensemble_frame_text = ""
+                    intercomparison_frame_text = ""
                     if summary.get('ensemble_frame_rejected_count', 0) > 0:
-                        ensemble_frame_text = (
-                            f", ensemble_frame_rejects={summary['ensemble_frame_rejected_count']}"
+                        intercomparison_frame_text = (
+                            f", intercomparison_frame_rejects={summary['ensemble_frame_rejected_count']}"
                         )
                     psf_quality_text = ""
                     if summary.get('psf_quality_rejected_count', 0) > 0:
@@ -35168,9 +35173,9 @@ def _main_impl():
                         )
                     log_info(
                         f"  {summary['label']}{selected_label} ({position_text}): suitability={aggregate_text}, "
-                        f"ensemble={ensemble_text}, pairwise_median={pairwise_text}, "
+                        f"intercomparison={intercomparison_text}, pairwise_median={pairwise_text}, "
                         f"valid_pairs={summary['valid_pair_count']}, {coverage_text}"
-                        f"{psf_quality_text}{overexposure_text}{ensemble_frame_text}, "
+                        f"{psf_quality_text}{overexposure_text}{intercomparison_frame_text}, "
                         f"reason={summary['selection_reason']}"
                     )
 
@@ -35295,8 +35300,10 @@ def _main_impl():
                     )
                     if use_ensemble_photometry_for_stellar_variability and vsp_comp_stars:
                         log_info(
-                            "Preparing an independent calibrated comparison-star ensemble for "
-                            "out-of-transit stellar-variability AID output."
+                            "Stellar-variability products only: selecting an independent calibrated "
+                            "comparison-star ensemble of up to "
+                            f"{maximum_number_of_ensemble_comparisons_for_stellar_variability} stars for "
+                            "out-of-transit AID output. This ensemble is not used by the transit fit."
                         )
                         stellar_variability_output_selection = select_stellar_variability_only_photometry(
                             times,

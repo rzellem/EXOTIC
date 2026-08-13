@@ -3327,11 +3327,11 @@ def save_comp_star_calibration_summary(save_dir, target_name, date, method_label
         else:
             handle.write("# Field suitability score,\n")
         handle.write(f"# Selected comparison star,{'' if best_comp_index is None else best_comp_index + 1}\n")
-        handle.write("comp_star,x_pixel,y_pixel,selected,suitability_score,ensemble_score,pairwise_median_score,"
+        handle.write("comp_star,x_pixel,y_pixel,selected,suitability_score,intercomparison_score,pairwise_median_score,"
                      "pairwise_max_score,self_score,valid_pair_count,coverage_count,coverage_peer_median,"
                      "coverage_min_required,coverage_rejected,suitability_outlier_rejected,"
-                     "psf_quality_rejected_count,overexposure_rejected_count,ensemble_frame_rejected_count,"
-                     "ensemble_frame_required_valid_pairs\n")
+                     "psf_quality_rejected_count,overexposure_rejected_count,intercomparison_frame_rejected_count,"
+                     "intercomparison_frame_required_valid_pairs\n")
 
         for summary in comp_summaries:
             position = summary.get('position') or [None, None]

@@ -156,6 +156,8 @@ try:  # output files
     from output_files import (
         OutputFiles,
         AIDOutputFiles,
+        baseline_fixed_after_detrending,
+        pre_detrending_baseline_report,
         empirical_red_noise_error_scale,
         differential_magnitude_series_from_fit,
         fit_empirical_transit_uncertainty,
@@ -170,6 +172,8 @@ except ImportError:  # package import
     from .output_files import (
         OutputFiles,
         AIDOutputFiles,
+        baseline_fixed_after_detrending,
+        pre_detrending_baseline_report,
         empirical_red_noise_error_scale,
         differential_magnitude_series_from_fit,
         fit_empirical_transit_uncertainty,
@@ -208,6 +212,7 @@ try:  # tools
         MAX_APPARENT_MAGNITUDE,
         coerce_boolean_config_value,
         filename_date_token,
+        format_value_with_uncertainty,
         is_usable_apparent_magnitude,
         magnitude_text,
         normalized_magnitude_error,
@@ -221,6 +226,7 @@ except ImportError: # package import
         MAX_APPARENT_MAGNITUDE,
         coerce_boolean_config_value,
         filename_date_token,
+        format_value_with_uncertainty,
         is_usable_apparent_magnitude,
         magnitude_text,
         normalized_magnitude_error,
@@ -568,6 +574,27 @@ def annotate_out_of_transit_baseline_parameter_fit(
     fit.oot_baseline_parameter_fit_a0_error = a0_error
     fit.oot_baseline_parameter_fit_a2 = a2
     fit.oot_baseline_parameter_fit_a2_error = a2_error
+
+
+def annotate_pre_detrending_baseline_coefficients(
+    fit,
+    source=None,
+    scale_parameter=None,
+    scale_value=None,
+    scale_error=None,
+    a2_value=None,
+    a2_error=None,
+):
+    """Retain the measured baseline coefficients that preceded detrending."""
+    if fit is None:
+        return
+
+    fit.pre_detrending_baseline_source = source
+    fit.pre_detrending_baseline_scale_parameter = scale_parameter
+    fit.pre_detrending_baseline_scale_value = scale_value
+    fit.pre_detrending_baseline_scale_error = scale_error
+    fit.pre_detrending_baseline_a2_value = a2_value
+    fit.pre_detrending_baseline_a2_error = a2_error
 
 
 def annotate_partial_transit_geometry_prior_assumption(fit, payload):
@@ -5655,6 +5682,21 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         a2=prior.get('a2'),
         a2_error=fixed_errors.get('a2'),
     )
+    if detrend_result.get('applied'):
+        previous_parameters = getattr(previous_fit, 'parameters', {})
+        previous_parameters = previous_parameters if isinstance(previous_parameters, dict) else {}
+        previous_errors = getattr(previous_fit, 'errors', {})
+        previous_errors = previous_errors if isinstance(previous_errors, dict) else {}
+        scale_parameter = 'a1' if 'a1' in previous_parameters else 'a0'
+        annotate_pre_detrending_baseline_coefficients(
+            fit,
+            source="selected fast UltraNest fit before out-of-transit linear baseline detrending",
+            scale_parameter=scale_parameter,
+            scale_value=previous_parameters.get(scale_parameter),
+            scale_error=previous_errors.get(scale_parameter, fixed_errors.get(scale_parameter)),
+            a2_value=previous_parameters.get('a2'),
+            a2_error=previous_errors.get('a2', fixed_errors.get('a2')),
+        )
     annotate_out_of_transit_baseline_detrending(
         fit,
         bool(detrend_result.get('applied')),
@@ -12296,6 +12338,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     baseline_fixed_errors = {}
     baseline_constrained_prior = dict(working_prior)
     baseline_constrained_bounds = clone_lightcurve_bounds(working_bounds)
+    pre_detrending_baseline = None
     if baseline_parameter_result.get('applied'):
         log_info("Prepared out-of-transit airmass/baseline parameter constraints for a fallback final transit refit.")
         log_info(baseline_parameter_result['note'])
@@ -12310,6 +12353,14 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         baseline_constrained_bounds.pop('a0', None)
         baseline_constrained_bounds.pop('a1', None)
         baseline_constrained_bounds.pop('a2', None)
+        pre_detrending_baseline = {
+            'source': "out-of-transit airmass/baseline parameter fit before linear baseline detrending",
+            'scale_parameter': 'a0',
+            'scale_value': baseline_parameter_result.get('a0'),
+            'scale_error': baseline_parameter_result.get('a0_error'),
+            'a2_value': baseline_parameter_result.get('a2'),
+            'a2_error': baseline_parameter_result.get('a2_error'),
+        }
     else:
         annotate_out_of_transit_baseline_parameter_fit(
             fit,
@@ -12513,11 +12564,13 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         note=baseline_parameter_fit_note,
         pre_points=baseline_parameter_result.get('pre_points', 0),
         post_points=baseline_parameter_result.get('post_points', 0),
-        a0=baseline_parameter_result.get('a0') if baseline_parameter_fit_used else None,
-        a0_error=baseline_parameter_result.get('a0_error') if baseline_parameter_fit_used else None,
-        a2=baseline_parameter_result.get('a2') if baseline_parameter_fit_used else None,
-        a2_error=baseline_parameter_result.get('a2_error') if baseline_parameter_fit_used else None,
+        a0=baseline_parameter_result.get('a0') if baseline_parameter_result.get('applied') else None,
+        a0_error=baseline_parameter_result.get('a0_error') if baseline_parameter_result.get('applied') else None,
+        a2=baseline_parameter_result.get('a2') if baseline_parameter_result.get('applied') else None,
+        a2_error=baseline_parameter_result.get('a2_error') if baseline_parameter_result.get('applied') else None,
     )
+    if pre_detrending_baseline is not None:
+        annotate_pre_detrending_baseline_coefficients(refit, **pre_detrending_baseline)
     annotate_transit_detection_qc(refit)
     if extend_sparse_posterior_live_points:
         refit = extend_sparse_posterior_live_points_if_needed(
@@ -26015,7 +26068,7 @@ def format_fit_parameter_with_uncertainty(value, error=None, scale=1.0, suffix="
         return f"{round_to_2(scaled_value)}{suffix}"
 
     scaled_error = float(error) * abs(scale)
-    return f"{round_to_2(scaled_value, scaled_error)} +/- {round_to_2(scaled_error)}{suffix}"
+    return f"{format_value_with_uncertainty(scaled_value, scaled_error)}{suffix}"
 
 
 def summarize_lightcurve_fit_parameters(fit):
@@ -36855,8 +36908,14 @@ def _main_impl():
         )
         if not np.isfinite(ars_report_error) or ars_report_error < 0:
             ars_report_error = myfit.errors.get('ars', np.nan)
-        log_info(f"          Mid-Transit Time [BJD_TDB]: {round_to_2(myfit.parameters['tmid'], tmid_report_error)} +/- {round_to_2(tmid_report_error)}")
-        log_info(f"  Radius Ratio (Planet/Star) [Rp/R*]: {round_to_2(myfit.parameters['rprs'], rprs_report_error)} +/- {round_to_2(rprs_report_error)}")
+        log_info(
+            "          Mid-Transit Time [BJD_TDB]: "
+            f"{format_value_with_uncertainty(myfit.parameters['tmid'], tmid_report_error)}"
+        )
+        log_info(
+            "  Radius Ratio (Planet/Star) [Rp/R*]: "
+            f"{format_value_with_uncertainty(myfit.parameters['rprs'], rprs_report_error)}"
+        )
         rprs_prior_fallback_note = getattr(myfit, 'rprs_prior_fallback_note', None)
         if rprs_prior_fallback_note:
             log_info(f"                 Rp/R* fallback note: {rprs_prior_fallback_note}")
@@ -36866,7 +36925,10 @@ def _main_impl():
             empirical_uncertainty=empirical_uncertainty,
         ).items():
             log_info(f"                         {depth_label}: {depth_text}")
-        log_info(f"           Orbital Inclination [inc]: {round_to_2(myfit.parameters['inc'], inc_report_error)} +/- {round_to_2(inc_report_error)}")
+        log_info(
+            "           Orbital Inclination [inc]: "
+            f"{format_value_with_uncertainty(myfit.parameters['inc'], inc_report_error)}"
+        )
         ars_text = format_parameter_with_error(myfit.parameters.get('ars'), ars_report_error)
         if ars_text is not None:
             log_info(f" Ratio of Distance to Stellar Radius [a/Rs]: {ars_text}")
@@ -36896,13 +36958,42 @@ def _main_impl():
             fit_parameters = getattr(myfit, 'parameters', {}) or {}
             fit_errors = getattr(myfit, 'errors', {}) or {}
             airmass_scale_key = 'a1' if 'a1' in fit_parameters else 'a0'
+            fixed_after_detrending = baseline_fixed_after_detrending(myfit)
+            pre_detrending_report = pre_detrending_baseline_report(myfit)
+            if fixed_after_detrending and pre_detrending_report is not None:
+                if pre_detrending_report.get('source'):
+                    log_info(
+                        " Pre-detrending baseline source: "
+                        f"{pre_detrending_report['source']}"
+                    )
+                if pre_detrending_report.get('scale_text'):
+                    scale_label = (
+                        "baseline flux (a0)"
+                        if pre_detrending_report['scale_parameter'] == 'a0'
+                        else "airmass coefficient 1 (a1)"
+                    )
+                    log_info(
+                        f" Pre-detrending {scale_label}: "
+                        f"{pre_detrending_report['scale_text']}"
+                    )
+                if pre_detrending_report.get('a2_text'):
+                    log_info(
+                        " Pre-detrending airmass coefficient 2 (a2): "
+                        f"{pre_detrending_report['a2_text']}"
+                    )
+                log_info(" Final detrended-fit baseline coefficients:")
             if airmass_scale_key in fit_parameters:
                 airmass_scale_error = fit_errors.get(airmass_scale_key)
-                if airmass_scale_error is not None and np.isfinite(airmass_scale_error):
+                if fixed_after_detrending:
                     log_info(
                         f"               Airmass coefficient 1: "
-                        f"{round_to_2(fit_parameters[airmass_scale_key], airmass_scale_error)} "
-                        f"+/- {round_to_2(airmass_scale_error)}"
+                        f"{round_to_2(fit_parameters[airmass_scale_key])} "
+                        "(fixed after out-of-transit baseline detrending)"
+                    )
+                elif airmass_scale_error is not None and np.isfinite(airmass_scale_error):
+                    log_info(
+                        f"               Airmass coefficient 1: "
+                        f"{format_value_with_uncertainty(fit_parameters[airmass_scale_key], airmass_scale_error)}"
                     )
                 else:
                     log_info(
@@ -36911,10 +37002,16 @@ def _main_impl():
                     )
             if 'a2' in fit_parameters:
                 a2_error = fit_errors.get('a2')
-                if a2_error is not None and np.isfinite(a2_error):
+                if fixed_after_detrending:
                     log_info(
                         f"               Airmass coefficient 2: "
-                        f"{round_to_2(fit_parameters['a2'], a2_error)} +/- {round_to_2(a2_error)}"
+                        f"{round_to_2(fit_parameters['a2'])} "
+                        "(fixed after out-of-transit baseline detrending)"
+                    )
+                elif a2_error is not None and np.isfinite(a2_error):
+                    log_info(
+                        f"               Airmass coefficient 2: "
+                        f"{format_value_with_uncertainty(fit_parameters['a2'], a2_error)}"
                     )
                 else:
                     log_info(
@@ -36960,7 +37057,10 @@ def _main_impl():
                 else:
                     log_info(f"                    Optimal Aperture: {abs(np.round(display_aperture, 2))}")
                     log_info(f"                     Optimal Annulus: {np.round(display_annulus, 2)}")
-        log_info(f"              Transit Duration [day]: {round_to_2(np.mean(durs), np.std(durs))} +/- {round_to_2(np.std(durs))}")
+        log_info(
+            "              Transit Duration [day]: "
+            f"{format_value_with_uncertainty(np.mean(durs), np.std(durs))}"
+        )
         log_info("*********************************************************")
 
         ##########

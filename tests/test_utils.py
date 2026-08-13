@@ -410,6 +410,23 @@ class TestRoundToTwo:
         assert 0.0002 == result
 
 
+class TestFormatValueAndUncertainty:
+    def test_preserves_two_significant_figures_and_matches_value_precision(self):
+        assert format_value_and_uncertainty(0.073, 0.01) == ("0.073", "0.010")
+        assert format_value_and_uncertainty(1.0, 0.00023) == ("1.00000", "0.00023")
+        assert format_value_and_uncertainty(0.0, 0.0031) == ("0.0000", "0.0031")
+
+    def test_formats_uncertainties_above_one_to_two_significant_figures(self):
+        assert format_value_and_uncertainty(89.3511, 2.16) == ("89.4", "2.2")
+        assert format_value_and_uncertainty(1234, 100) == ("1230", "1.0e+02")
+
+    def test_recomputes_precision_when_rounding_crosses_a_decade(self):
+        assert format_value_and_uncertainty(0.0732, 0.00999) == ("0.073", "0.010")
+
+    def test_full_report_text_uses_the_same_precision(self):
+        assert format_value_with_uncertainty(12.0, 0.4) == "12.00 +/- 0.40"
+
+
 class TestGetVal:
     """tests the get_val() function
 

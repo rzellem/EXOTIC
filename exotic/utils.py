@@ -372,6 +372,68 @@ def round_to_2(*args):
     return round(x, roundval)
 
 
+def _two_significant_figure_decimal_places(uncertainty):
+    """Return the decimal place needed to show an uncertainty with two sig figs."""
+
+    uncertainty = float(uncertainty)
+    if not isfinite(uncertainty) or uncertainty < 0:
+        raise ValueError("uncertainty must be a finite, non-negative number")
+    if uncertainty == 0:
+        return 2
+
+    exponent = int(floor(log10(abs(uncertainty))))
+    decimal_places = 1 - exponent
+
+    # A carry can change the exponent (for example, 0.00999 -> 0.010).
+    rounded_uncertainty = round(uncertainty, decimal_places)
+    if rounded_uncertainty:
+        rounded_exponent = int(floor(log10(abs(rounded_uncertainty))))
+        decimal_places = 1 - rounded_exponent
+    return decimal_places
+
+
+def _format_at_decimal_place(value, decimal_places):
+    """Format a number at a decimal place, including insignificant zeroes."""
+
+    value = float(value)
+    if not isfinite(value):
+        raise ValueError("value must be a finite number")
+    if decimal_places >= 0:
+        return f"{value:.{decimal_places}f}"
+    return f"{round(value, decimal_places):.0f}"
+
+
+def format_value_and_uncertainty(value, uncertainty):
+    """Return value/error text with a two-significant-figure uncertainty.
+
+    Both strings end at the same decimal place. Unlike ``round_to_2``, this is
+    a reporting helper: it deliberately retains trailing zeroes which carry
+    precision information.
+    """
+
+    decimal_places = _two_significant_figure_decimal_places(uncertainty)
+    return (
+        _format_at_decimal_place(value, decimal_places),
+        format_uncertainty(uncertainty),
+    )
+
+
+def format_uncertainty(uncertainty):
+    """Format an uncertainty with exactly two significant figures."""
+
+    decimal_places = _two_significant_figure_decimal_places(uncertainty)
+    if decimal_places < 0:
+        return f"{float(uncertainty):.1e}"
+    return _format_at_decimal_place(uncertainty, decimal_places)
+
+
+def format_value_with_uncertainty(value, uncertainty):
+    """Return ``value +/- uncertainty`` using matched two-sig-fig precision."""
+
+    value_text, uncertainty_text = format_value_and_uncertainty(value, uncertainty)
+    return f"{value_text} +/- {uncertainty_text}"
+
+
 # Credit: Kalee Tock
 def get_val(hdr, ks):
     """

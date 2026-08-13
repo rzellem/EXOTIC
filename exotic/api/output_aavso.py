@@ -46,6 +46,8 @@ try:
     from ..utils import (
         aavso_output_directory,
         format_aavso_exoplanet_name,
+        format_value_and_uncertainty,
+        format_value_with_uncertainty,
         round_to_2,
         safe_output_filename,
     )
@@ -53,6 +55,8 @@ except ImportError:
     from utils import (
         aavso_output_directory,
         format_aavso_exoplanet_name,
+        format_value_and_uncertainty,
+        format_value_with_uncertainty,
         round_to_2,
         safe_output_filename,
     )
@@ -94,7 +98,7 @@ def _format_depth(value, error):
     except (TypeError, ValueError):
         error = math.nan
     if math.isfinite(error) and error >= 0:
-        return f"{round_to_2(value, error)} +/- {round_to_2(error)} [%]"
+        return f"{format_value_with_uncertainty(value, error)} [%]"
     return f"{round_to_2(value)} +/- n/a [%]"
 
 
@@ -132,12 +136,21 @@ def _depth_result_entry(value, error):
         error = float(error)
     except (TypeError, ValueError):
         error = math.nan
-    entry = {
-        'value': str(round_to_2(value, error)) if math.isfinite(error) else str(round_to_2(value)),
-        'units': "percent",
-    }
-    if math.isfinite(error):
-        entry['uncertainty'] = str(round_to_2(error))
+    if math.isfinite(error) and error >= 0:
+        value_text, uncertainty_text = format_value_and_uncertainty(value, error)
+    else:
+        value_text, uncertainty_text = str(round_to_2(value)), None
+    entry = {'value': value_text, 'units': "percent"}
+    if uncertainty_text is not None:
+        entry['uncertainty'] = uncertainty_text
+    return entry
+
+
+def _result_entry(value, error, units=None):
+    value_text, uncertainty_text = format_value_and_uncertainty(value, error)
+    entry = {'value': value_text, 'uncertainty': uncertainty_text}
+    if units:
+        entry['units'] = units
     return entry
 
 
@@ -177,16 +190,22 @@ class OutputFiles:
         )
 
         params_num = {
-            "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
-                                       f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB",
-            "Ratio of Planet to Stellar Radius (Rp/Rs)": f"{round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- "
-                                                         f"{round_to_2(self.fit.errors['rprs'])}",
-            "Semi Major Axis/Star Radius (a/Rs)": f"{round_to_2(self.fit.parameters['ars'], self.fit.errors['ars'])} +/- "
-                                                  f"{round_to_2(self.fit.errors['ars'])} ",
-            "Airmass coefficient 1 (a1)": f"{round_to_2(self.fit.parameters['a1'], self.fit.errors['a1'])} +/- "
-                                          f"{round_to_2(self.fit.errors['a1'])}",
-            "Airmass coefficient 2 (a2)": f"{round_to_2(self.fit.parameters['a2'], self.fit.errors['a2'])} +/- "
-                                          f"{round_to_2(self.fit.errors['a2'])}",
+            "Mid-Transit Time (Tmid)": (
+                f"{format_value_with_uncertainty(self.fit.parameters['tmid'], self.fit.errors['tmid'])} "
+                "BJD_TDB"
+            ),
+            "Ratio of Planet to Stellar Radius (Rp/Rs)": format_value_with_uncertainty(
+                self.fit.parameters['rprs'], self.fit.errors['rprs']
+            ),
+            "Semi Major Axis/Star Radius (a/Rs)": (
+                f"{format_value_with_uncertainty(self.fit.parameters['ars'], self.fit.errors['ars'])} "
+            ),
+            "Airmass coefficient 1 (a1)": format_value_with_uncertainty(
+                self.fit.parameters['a1'], self.fit.errors['a1']
+            ),
+            "Airmass coefficient 2 (a2)": format_value_with_uncertainty(
+                self.fit.parameters['a2'], self.fit.errors['a2']
+            ),
             "Scatter in the residuals of the lightcurve fit is": f"{round_to_2(100. * std(self.fit.residuals / median(self.fit.data)))} %",
         }
         depth_params = _depth_final_params(self.fit, self.p_dict)
@@ -216,8 +235,9 @@ class OutputFiles:
                 phot_ext["Optimal Annulus"] = f"{min_annul}"
             params_num.update(phot_ext)
 
-        params_num["Transit Duration (day)"] = (f"{round_to_2(mean(self.durs), std(self.durs))} +/- "
-                                                f"{round_to_2(std(self.durs))}")
+        params_num["Transit Duration (day)"] = format_value_with_uncertainty(
+            mean(self.durs), std(self.durs)
+        )
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 
         with params_file.open('w') as f:
@@ -268,17 +288,17 @@ class OutputFiles:
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
                     f"#FILTER=I\n" 
                     f"#FILTER-XC={dumps(filter_dict)}\n"
-                    f"#PRIORS=Period={round_to_2(self.p_dict['pl_orbper'], self.p_dict['pl_orbpererr1'])} +/- {round_to_2(self.p_dict['pl_orbpererr1'])}"
-                    f",a/R*={round_to_2(self.p_dict['pl_ratdor'], self.p_dict['pl_ratdorerr1'])} +/- {round_to_2(self.p_dict['pl_ratdorerr1'])}"
-                    f",inc={round_to_2(self.p_dict['pl_orbincl'], self.p_dict['pl_orbinclerr1'])} +/- {round_to_2(self.p_dict['pl_orbinclerr1'])}"
+                    f"#PRIORS=Period={format_value_with_uncertainty(self.p_dict['pl_orbper'], self.p_dict['pl_orbpererr1'])}"
+                    f",a/R*={format_value_with_uncertainty(self.p_dict['pl_ratdor'], self.p_dict['pl_ratdorerr1'])}"
+                    f",inc={format_value_with_uncertainty(self.p_dict['pl_orbincl'], self.p_dict['pl_orbinclerr1'])}"
                     f",ecc={round_to_2(self.p_dict['pl_orbeccen'])}"
                     f",u0={round_to_2(ld0)}"
                     f",u1={round_to_2(ld1)}"
                     f",u2={round_to_2(ld2)}"
                     f",u3={round_to_2(ld3)}\n"
                     f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
-                    f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
-                    f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
+                    f"#RESULTS=Tc={format_value_with_uncertainty(self.fit.parameters['tmid'], self.fit.errors['tmid'])}"
+                    f",Rp/R*={format_value_with_uncertainty(self.fit.parameters['rprs'], self.fit.errors['rprs'])}"
                     f",Am1=0"
                     f",Am2=0\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
@@ -340,17 +360,17 @@ class OutputFiles:
                         "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
                         f"#FILTER=I\n" 
                         f"#FILTER-XC={dumps(filter_dict)}\n"
-                        f"#PRIORS=Period={round_to_2(self.p_dict['pl_orbper'], self.p_dict['pl_orbpererr1'])} +/- {round_to_2(self.p_dict['pl_orbpererr1'])}"
-                        f",a/R*={round_to_2(self.p_dict['pl_ratdor'], self.p_dict['pl_ratdorerr1'])} +/- {round_to_2(self.p_dict['pl_ratdorerr1'])}"
-                        f",inc={round_to_2(self.p_dict['pl_orbincl'], self.p_dict['pl_orbinclerr1'])} +/- {round_to_2(self.p_dict['pl_orbinclerr1'])}"
+                        f"#PRIORS=Period={format_value_with_uncertainty(self.p_dict['pl_orbper'], self.p_dict['pl_orbpererr1'])}"
+                        f",a/R*={format_value_with_uncertainty(self.p_dict['pl_ratdor'], self.p_dict['pl_ratdorerr1'])}"
+                        f",inc={format_value_with_uncertainty(self.p_dict['pl_orbincl'], self.p_dict['pl_orbinclerr1'])}"
                         f",ecc={round_to_2(self.p_dict['pl_orbeccen'])}"
                         f",u0={round_to_2(ld0)}"
                         f",u1={round_to_2(ld1)}"
                         f",u2={round_to_2(ld2)}"
                         f",u3={round_to_2(ld3)}\n"
                         f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
-                        f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
-                        f",Rp/R*={round_to_2(self.fit.parameters['rprs'], self.fit.errors['rprs'])} +/- {round_to_2(self.fit.errors['rprs'])}"
+                        f"#RESULTS=Tc={format_value_with_uncertainty(self.fit.parameters['tmid'], self.fit.errors['tmid'])}"
+                        f",Rp/R*={format_value_with_uncertainty(self.fit.parameters['rprs'], self.fit.errors['rprs'])}"
                         f",Am1=0"
                         f",Am2=0\n"
                         f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
@@ -375,20 +395,13 @@ class OutputFiles:
 
 def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
     priors = {
-        'Period': {
-            'value': str(round_to_2(planet_dict['pl_orbper'], planet_dict['pl_orbpererr1'])),
-            'uncertainty': str(round_to_2(planet_dict['pl_orbpererr1'])) if planet_dict['pl_orbpererr1'] else None,
-            'units': "days"
-        },
-        'a/R*': {
-            'value': str(round_to_2(planet_dict['pl_ratdor'], planet_dict['pl_ratdorerr1'])),
-            'uncertainty': str(round_to_2(planet_dict['pl_ratdorerr1'])) if planet_dict['pl_ratdorerr1'] else planet_dict['pl_ratdorerr1'],
-        },
-        'inc': {
-            'value': str(round_to_2(planet_dict['pl_orbincl'], planet_dict['pl_orbinclerr1'])),
-            'uncertainty': str(round_to_2(planet_dict['pl_orbinclerr1'])) if planet_dict['pl_orbinclerr1'] else planet_dict['pl_orbinclerr1'],
-            'units': "degrees"
-        },
+        'Period': _result_entry(
+            planet_dict['pl_orbper'], planet_dict['pl_orbpererr1'], units="days"
+        ),
+        'a/R*': _result_entry(planet_dict['pl_ratdor'], planet_dict['pl_ratdorerr1']),
+        'inc': _result_entry(
+            planet_dict['pl_orbincl'], planet_dict['pl_orbinclerr1'], units="degrees"
+        ),
         'ecc': {
             'value': str(round_to_2(planet_dict['pl_orbeccen'])),
             'uncertainty': None,
@@ -426,15 +439,8 @@ def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
     }
 
     results = {
-        'Tc': {
-            'value': str(round_to_2(fit.parameters['tmid'], fit.errors['tmid'])),
-            'uncertainty': str(round_to_2(fit.errors['tmid'])),
-            'units': "BJD_TDB"
-        },
-        'Rp/R*': {
-            'value': str(round_to_2(fit.parameters['rprs'], fit.errors['rprs'])),
-            'uncertainty': str(round_to_2(fit.errors['rprs']))
-        },
+        'Tc': _result_entry(fit.parameters['tmid'], fit.errors['tmid'], units="BJD_TDB"),
+        'Rp/R*': _result_entry(fit.parameters['rprs'], fit.errors['rprs']),
         'Am1': {
             'value': 0,
             'uncertainty': None
@@ -443,27 +449,18 @@ def aavso_dicts(planet_dict, fit, i_dict, durs, ld0, ld1, ld2, ld3):
             'value': 0,
             'uncertainty': None
         },
-        'Duration': {
-            'value': str(round_to_2(mean(durs))),
-            'uncertainty': str(round_to_2(std(durs))),
-            'units': "days"
-        }
+        'Duration': _result_entry(mean(durs), std(durs), units="days"),
     }
 
     # try to add a/Rs if it exists
     if 'ars' in fit.errors:
-        results['a/R*'] = {
-            'value': str(round_to_2(fit.parameters['ars'], fit.errors['ars'])),
-            'uncertainty': str(round_to_2(fit.errors['ars'])),
-        }
+        results['a/R*'] = _result_entry(fit.parameters['ars'], fit.errors['ars'])
 
     # check for inclination
     if 'inc' in fit.errors:
-        results['inc'] = {
-            'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
-            'uncertainty': str(round_to_2(fit.errors['inc'])),
-            'units': "degrees"
-        }
+        results['inc'] = _result_entry(
+            fit.parameters['inc'], fit.errors['inc'], units="degrees"
+        )
 
     limb_darkening = (ld0, ld1, ld2, ld3)
     depth_summary = fit_transit_depth_summary(

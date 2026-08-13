@@ -1963,7 +1963,7 @@ def test_triangle_payload_titles_follow_weighted_posterior_display_estimate(monk
 
     payload = fit._get_triangle_plot_payload()
 
-    assert payload["titles"][0] == "0.119 +/- 0.0089"
+    assert payload["titles"][0] == "0.1190 +/- 0.0089"
     assert payload["truths"][0] == pytest.approx(0.1186, abs=5e-4)
     np.testing.assert_allclose(payload["display_weights"], weights)
 

@@ -58,6 +58,11 @@ from scipy.special import ndtr, ndtri
 from ultranest import ReactiveNestedSampler
 
 try:
+    from ..utils import format_value_and_uncertainty, format_value_with_uncertainty
+except ImportError:
+    from utils import format_value_and_uncertainty, format_value_with_uncertainty
+
+try:
     from plotting import corner
 except ImportError:
     from .plotting import corner
@@ -599,21 +604,6 @@ def round_to_2(*args):
     return round(x, roundval)
 
 
-def _decimal_places_for_two_sigfig_error(error):
-    try:
-        error = float(error)
-    except (TypeError, ValueError):
-        return None
-
-    if not np.isfinite(error):
-        return None
-    if error == 0:
-        return 2
-
-    exponent = int(np.floor(np.log10(abs(error))))
-    return max(0, 1 - exponent)
-
-
 def format_value_error_for_plot(value, error):
     """Format value/error text with a two-significant-figure uncertainty."""
     try:
@@ -626,14 +616,13 @@ def format_value_error_for_plot(value, error):
     except (TypeError, ValueError):
         error = np.nan
 
-    decimal_places = _decimal_places_for_two_sigfig_error(error)
-    if decimal_places is None:
+    if not np.isfinite(error) or error < 0:
         value_text = f"{value:.6f}".rstrip('0').rstrip('.') if np.isfinite(value) else "n/a"
         return value_text, "n/a"
 
-    value_text = f"{value:.{decimal_places}f}" if np.isfinite(value) else "n/a"
-    error_text = f"{error:.{decimal_places}f}" if np.isfinite(error) else "n/a"
-    return value_text, error_text
+    if not np.isfinite(value):
+        return "n/a", format_value_and_uncertainty(0, error)[1]
+    return format_value_and_uncertainty(value, error)
 
 
 # average data into bins of dt from start to finish
@@ -2752,7 +2741,7 @@ class lc_fitter(object):
             return "n/a"
         if not np.isfinite(error) or error < 0:
             return str(round_to_2(value))
-        return f"{round_to_2(value, error)} +/- {round_to_2(error)}"
+        return format_value_with_uncertainty(value, error)
 
     def _weighted_quantiles(self, values, quantiles, weights=None):
         values = np.asarray(values, dtype=float)
@@ -3327,7 +3316,7 @@ class lc_fitter(object):
             return f"n/a{suffix}"
         if error is None or not np.isfinite(error) or error < 0:
             return f"{round_to_2(value)}{suffix}"
-        return f"{round_to_2(value, error)} +/- {round_to_2(error)}{suffix}"
+        return f"{format_value_with_uncertainty(value, error)}{suffix}"
 
     def _get_triangle_plot_geometry_summary(self, sampled_keys, sample_points):
         bound_keys = list(self.bounds.keys())

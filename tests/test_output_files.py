@@ -1111,7 +1111,7 @@ def test_transit_outputs_use_rprs_fallback_uncertainty_when_model_error_missing(
         (0.4, 0.04),
     )
 
-    assert results["Rp/R*"]["uncertainty"] == "0.005"
+    assert results["Rp/R*"]["uncertainty"] == "0.0050"
 
 
 def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp_path):
@@ -1214,11 +1214,109 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
 
     assert keys[inclination_index + 1] == "Ratio of Distance to Stellar Radius (a/Rs)"
     assert keys[inclination_index + 2] == "Impact Parameter (b)"
-    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.0 +/- 0.4"
+    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.00 +/- 0.40"
 
     expected_b, expected_b_error = fit_impact_parameter_value_error(fit)
     assert expected_b == pytest.approx(12.0 * np.cos(np.deg2rad(88.5)))
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
+
+
+def test_final_planetary_params_matches_values_to_two_sigfig_uncertainties(tmp_path):
+    fit = DummyFit()
+    fit.errors["a1"] = 0.00023
+    fit.errors["a2"] = 0.0031
+    (tmp_path / "working_artifacts").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "filter": "V",
+        "filter_desc": "Johnson V",
+        "wl_min": None,
+        "wl_max": None,
+    }
+
+    OutputFiles(fit, p_dict, i_dict, [0.063, 0.083]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+
+    assert final_params["Flux normalization (a1)"] == "1.00000 +/- 0.00023"
+    assert final_params["Airmass coefficient 2 (a2)"] == "0.0000 +/- 0.0031"
+    assert final_params["Transit Duration (day)"] == "0.073 +/- 0.010"
+
+
+def test_detrended_fixed_baseline_does_not_report_inherited_errors_as_fitted(tmp_path):
+    fit = DummyFit()
+    fit.errors["a1"] = 0.00023
+    fit.errors["a2"] = 0.0031
+    fit.oot_baseline_detrending_applied = True
+    fit.pre_detrending_baseline_source = "test out-of-transit baseline fit"
+    fit.pre_detrending_baseline_scale_parameter = "a1"
+    fit.pre_detrending_baseline_scale_value = 1.004321
+    fit.pre_detrending_baseline_scale_error = 0.00023
+    fit.pre_detrending_baseline_a2_value = -0.01234
+    fit.pre_detrending_baseline_a2_error = 0.0031
+    (tmp_path / "working_artifacts").mkdir()
+
+    p_dict = {"pName": "HAT-P-32 b"}
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "filter": "V",
+        "filter_desc": "Johnson V",
+        "wl_min": None,
+        "wl_max": None,
+    }
+
+    OutputFiles(fit, p_dict, i_dict, [0.063, 0.083]).final_planetary_params(
+        phot_opt=False,
+        vsp_params=[],
+    )
+
+    output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
+    final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+    _, _, results = aavso_dicts(
+        {
+            **p_dict,
+            "pPer": 2.15,
+            "pPerUnc": 0.001,
+            "rprs": 0.1,
+            "rprsUnc": 0.001,
+            "aRs": 12.0,
+            "aRsUnc": 0.4,
+            "inc": 88.5,
+            "incUnc": 0.2,
+            "ecc": 0.0,
+        },
+        fit,
+        i_dict,
+        [0.063, 0.083],
+        (0.1, 0.01),
+        (0.2, 0.02),
+        (0.3, 0.03),
+        (0.4, 0.04),
+    )
+
+    assert final_params["Flux normalization (a1)"] == (
+        "1.0 (fixed after out-of-transit baseline detrending)"
+    )
+    assert final_params["Airmass coefficient 2 (a2)"] == (
+        "0.0 (fixed after out-of-transit baseline detrending)"
+    )
+    assert final_params["Pre-detrending baseline source"] == "test out-of-transit baseline fit"
+    assert final_params["Pre-detrending airmass coefficient 1 (a1)"] == (
+        "1.00432 +/- 0.00023"
+    )
+    assert final_params["Pre-detrending airmass coefficient 2 (a2)"] == (
+        "-0.0123 +/- 0.0031"
+    )
+    assert results["Am1"] == {"value": "1.0", "uncertainty": "0"}
+    assert results["Am2"] == {"value": "0.0", "uncertainty": "0"}
 
 
 def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertainties(tmp_path):
@@ -1242,15 +1340,15 @@ def test_final_planetary_params_reports_fit_uncertainties_not_prior_uncertaintie
     output_file = tmp_path / "working_artifacts" / "FinalParams_HAT-P-32b_2020-01-01.json"
     final_params = json.loads(output_file.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
 
-    assert final_params["Mid-Transit Time (Tmid)"].endswith("+/- 0.0001 BJD_TDB")
-    assert final_params["Ratio of Planet to Stellar Radius (Rp/R*)"] == "0.1234 +/- 0.001"
+    assert final_params["Mid-Transit Time (Tmid)"].endswith("+/- 0.00010 BJD_TDB")
+    assert final_params["Ratio of Planet to Stellar Radius (Rp/R*)"] == "0.1234 +/- 0.0010"
     assert "Transit depth (Rp/Rs)^2" not in final_params
     assert AREA_DEPTH_LABEL in final_params
     assert OBSERVABLE_DEPTH_LABEL in final_params
     assert PRIOR_OBSERVABLE_DEPTH_LABEL in final_params
     assert OBSERVABLE_DEPTH_DELTA_LABEL in final_params
-    assert final_params["Orbital Inclination (inc)"] == "88.5 +/- 0.2 "
-    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.0 +/- 0.4"
+    assert final_params["Orbital Inclination (inc)"] == "88.50 +/- 0.20 "
+    assert final_params["Ratio of Distance to Stellar Radius (a/Rs)"] == "12.00 +/- 0.40"
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
 
 
@@ -1344,7 +1442,7 @@ def test_final_planetary_params_reports_model_and_red_noise_uncertainties(tmp_pa
         final_params["Ratio of Planet to Stellar Radius (Rp/R*) model+red-noise uncertainty"]
     )
     assert final_params["Ratio of Planet to Stellar Radius (Rp/R*) model-fit uncertainty"] == (
-        "0.1 +/- 0.002"
+        "0.1000 +/- 0.0020"
     )
     assert "Ratio of Planet to Stellar Radius (Rp/R*) data-fit red-noise uncertainty" in final_params
     assert "Ratio of Planet to Stellar Radius (Rp/R*) model+red-noise uncertainty" in final_params

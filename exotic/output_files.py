@@ -13,6 +13,9 @@ try:
         format_magnitude_error,
         format_magnitude,
         magnitude_text,
+        format_uncertainty,
+        format_value_and_uncertainty,
+        format_value_with_uncertainty,
         normalized_magnitude_error,
         round_to_2,
         rounded_magnitude_error,
@@ -28,6 +31,9 @@ except ImportError:
         format_magnitude_error,
         format_magnitude,
         magnitude_text,
+        format_uncertainty,
+        format_value_and_uncertainty,
+        format_value_with_uncertainty,
         normalized_magnitude_error,
         round_to_2,
         rounded_magnitude_error,
@@ -129,25 +135,43 @@ def aavso_airmass_results(fit):
             ('Am2', '0', '0'),
         )
 
+    if baseline_fixed_after_detrending(fit):
+        first_key = 'A0' if 'a0' in fit.parameters else 'Am1'
+        first_value = fit.parameters.get('a0', fit.parameters.get('a1', 1.0))
+        return (
+            (first_key, str(round_to_2(first_value)), '0'),
+            ('Am2', str(round_to_2(fit.parameters.get('a2', 0.0))), '0'),
+        )
+
     if 'a0' in fit.parameters:
+        value_text, uncertainty_text = format_value_and_uncertainty(
+            fit.parameters['a0'], fit.errors['a0']
+        )
         first_result = (
             'A0',
-            str(round_to_2(fit.parameters['a0'], fit.errors['a0'])),
-            str(round_to_2(fit.errors['a0'])),
+            value_text,
+            uncertainty_text,
         )
     else:
+        value_text, uncertainty_text = format_value_and_uncertainty(
+            fit.parameters['a1'], fit.errors['a1']
+        )
         first_result = (
             'Am1',
-            str(round_to_2(fit.parameters['a1'], fit.errors['a1'])),
-            str(round_to_2(fit.errors['a1'])),
+            value_text,
+            uncertainty_text,
         )
+
+    a2_value_text, a2_uncertainty_text = format_value_and_uncertainty(
+        fit.parameters.get('a2', 0), fit.errors.get('a2', 0)
+    )
 
     return (
         first_result,
         (
             'Am2',
-            str(round_to_2(fit.parameters.get('a2', 0), fit.errors.get('a2', 0))),
-            str(round_to_2(fit.errors.get('a2', 0))),
+            a2_value_text,
+            a2_uncertainty_text,
         ),
     )
 
@@ -156,6 +180,52 @@ def aavso_detrend_model(fit):
     if getattr(fit, 'airmass_fit_skipped', False):
         return np.ones(len(fit.time), dtype=float)
     return np.asarray(fit.airmass_model, dtype=float)
+
+
+def baseline_fixed_after_detrending(fit):
+    """Return whether the reported neutral baseline was fixed after detrending."""
+
+    return bool(getattr(fit, 'oot_baseline_detrending_applied', False))
+
+
+def fixed_detrended_baseline_text(value):
+    return f"{round_to_2(value)} (fixed after out-of-transit baseline detrending)"
+
+
+def pre_detrending_baseline_report(fit):
+    """Return formatted measured baseline coefficients retained before detrending."""
+    scale_parameter = getattr(fit, 'pre_detrending_baseline_scale_parameter', None)
+    scale_value = getattr(fit, 'pre_detrending_baseline_scale_value', None)
+    scale_error = getattr(fit, 'pre_detrending_baseline_scale_error', None)
+    a2_value = getattr(fit, 'pre_detrending_baseline_a2_value', None)
+    a2_error = getattr(fit, 'pre_detrending_baseline_a2_error', None)
+
+    def formatted_measurement(value, error):
+        try:
+            value_is_finite = np.isfinite(value)
+        except TypeError:
+            value_is_finite = False
+        if not value_is_finite:
+            return None
+        try:
+            error_is_finite = np.isfinite(error) and float(error) >= 0
+        except (TypeError, ValueError):
+            error_is_finite = False
+        if error_is_finite:
+            return format_value_with_uncertainty(value, error)
+        return f"{round_to_2(value)} (uncertainty unavailable)"
+
+    scale_text = formatted_measurement(scale_value, scale_error)
+    a2_text = formatted_measurement(a2_value, a2_error)
+    if scale_text is None and a2_text is None:
+        return None
+
+    return {
+        'source': getattr(fit, 'pre_detrending_baseline_source', None),
+        'scale_parameter': scale_parameter if scale_parameter in {'a0', 'a1'} else 'a1',
+        'scale_text': scale_text,
+        'a2_text': a2_text,
+    }
 
 
 def finite_float(value, default=np.nan):
@@ -850,11 +920,14 @@ def aavso_result_entry(value, uncertainty=None, units=None):
     if not np.isfinite(value):
         return None
 
-    entry = {
-        'value': str(round_to_2(value, uncertainty)) if np.isfinite(uncertainty) else str(round_to_2(value)),
-    }
-    if np.isfinite(uncertainty):
-        entry['uncertainty'] = str(round_to_2(uncertainty))
+    if np.isfinite(uncertainty) and uncertainty >= 0:
+        value_text, uncertainty_text = format_value_and_uncertainty(value, uncertainty)
+    else:
+        value_text, uncertainty_text = str(round_to_2(value)), None
+
+    entry = {'value': value_text}
+    if np.isfinite(uncertainty) and uncertainty >= 0:
+        entry['uncertainty'] = uncertainty_text
     if units:
         entry['units'] = units
     return entry
@@ -1828,35 +1901,33 @@ def format_empirical_transit_uncertainty_final_params(empirical_uncertainty):
         and model_rprs_uncertainty >= 0
     ):
         params["Ratio of Planet to Stellar Radius (Rp/R*) model-fit uncertainty"] = (
-            f"{round_to_2(rprs, model_rprs_uncertainty)} +/- {round_to_2(model_rprs_uncertainty)}"
+            format_value_with_uncertainty(rprs, model_rprs_uncertainty)
         )
     if np.isfinite(rprs) and np.isfinite(data_rprs_uncertainty) and data_rprs_uncertainty >= 0:
         if rprs_prior_fallback:
             params["Ratio of Planet to Stellar Radius (Rp/R*) prior-assumed data-only uncertainty"] = (
-                f"{round_to_2(rprs, data_rprs_uncertainty)} +/- {round_to_2(data_rprs_uncertainty)}"
+                format_value_with_uncertainty(rprs, data_rprs_uncertainty)
             )
         else:
             params["Ratio of Planet to Stellar Radius (Rp/R*) data-fit red-noise uncertainty"] = (
-                f"{round_to_2(rprs, data_rprs_uncertainty)} +/- {round_to_2(data_rprs_uncertainty)}"
+                format_value_with_uncertainty(rprs, data_rprs_uncertainty)
             )
     if np.isfinite(rprs) and np.isfinite(combined_rprs_uncertainty) and combined_rprs_uncertainty >= 0:
         if rprs_prior_fallback:
             params["Ratio of Planet to Stellar Radius (Rp/R*) data-only uncertainty used for primary value"] = (
-                f"{round_to_2(rprs, combined_rprs_uncertainty)} +/- "
-                f"{round_to_2(combined_rprs_uncertainty)}"
+                format_value_with_uncertainty(rprs, combined_rprs_uncertainty)
             )
         else:
             params["Ratio of Planet to Stellar Radius (Rp/R*) model+red-noise uncertainty"] = (
-                f"{round_to_2(rprs, combined_rprs_uncertainty)} +/- "
-                f"{round_to_2(combined_rprs_uncertainty)}"
+                format_value_with_uncertainty(rprs, combined_rprs_uncertainty)
             )
     if np.isfinite(conservative_rprs_uncertainty):
         params["Conservative Rp/R* uncertainty to quote"] = (
-            f"+/- {round_to_2(conservative_rprs_uncertainty)}"
+            f"+/- {format_uncertainty(conservative_rprs_uncertainty)}"
         )
     if np.isfinite(rprs) and np.isfinite(data_rprs_standard_error) and data_rprs_standard_error >= 0:
         params["Ratio of Planet to Stellar Radius (Rp/R*) data-fit standard-error estimate"] = (
-            f"{round_to_2(rprs, data_rprs_standard_error)} +/- {round_to_2(data_rprs_standard_error)}"
+            format_value_with_uncertainty(rprs, data_rprs_standard_error)
         )
     if (
         not rprs_prior_fallback
@@ -1865,8 +1936,7 @@ def format_empirical_transit_uncertainty_final_params(empirical_uncertainty):
         and combined_rprs_standard_error >= 0
     ):
         params["Ratio of Planet to Stellar Radius (Rp/R*) model+standard-error estimate"] = (
-            f"{round_to_2(rprs, combined_rprs_standard_error)} +/- "
-            f"{round_to_2(combined_rprs_standard_error)}"
+            format_value_with_uncertainty(rprs, combined_rprs_standard_error)
         )
     if (
         np.isfinite(rprs)
@@ -1874,8 +1944,7 @@ def format_empirical_transit_uncertainty_final_params(empirical_uncertainty):
         and data_rprs_flux_scatter_uncertainty >= 0
     ):
         params["Ratio of Planet to Stellar Radius (Rp/R*) flux-scatter equivalent"] = (
-            f"{round_to_2(rprs, data_rprs_flux_scatter_uncertainty)} +/- "
-            f"{round_to_2(data_rprs_flux_scatter_uncertainty)}"
+            format_value_with_uncertainty(rprs, data_rprs_flux_scatter_uncertainty)
         )
     if np.isfinite(depth_uncertainty_percent):
         params["Transit depth red-noise uncertainty"] = (
@@ -2080,7 +2149,7 @@ def format_parameter_with_error(value, error):
     if not np.isfinite(value):
         return None
     if np.isfinite(error) and error >= 0:
-        return f"{round_to_2(value, error)} +/- {round_to_2(error)}"
+        return format_value_with_uncertainty(value, error)
     return f"{round_to_2(value)} +/- n/a"
 
 
@@ -2557,12 +2626,15 @@ class OutputFiles:
         if not np.isfinite(ars_report_error) or ars_report_error < 0:
             ars_report_error = self.fit.errors.get('ars', np.nan)
         core_params = {
-            "Mid-Transit Time (Tmid)": f"{round_to_2(self.fit.parameters['tmid'], tmid_report_error)} +/- "
-                                       f"{round_to_2(tmid_report_error)} BJD_TDB",
-            "Ratio of Planet to Stellar Radius (Rp/R*)": f"{round_to_2(self.fit.parameters['rprs'], rprs_report_error)} +/- "
-                                                         f"{round_to_2(rprs_report_error)}",
-            "Orbital Inclination (inc)": f"{round_to_2(self.fit.parameters['inc'], inc_report_error)} +/- "
-                                                    f"{round_to_2(inc_report_error)} ",
+            "Mid-Transit Time (Tmid)": (
+                f"{format_value_with_uncertainty(self.fit.parameters['tmid'], tmid_report_error)} BJD_TDB"
+            ),
+            "Ratio of Planet to Stellar Radius (Rp/R*)": format_value_with_uncertainty(
+                self.fit.parameters['rprs'], rprs_report_error
+            ),
+            "Orbital Inclination (inc)": (
+                f"{format_value_with_uncertainty(self.fit.parameters['inc'], inc_report_error)} "
+            ),
         }
         depth_params = formatted_transit_depth_parameters(
             self.fit,
@@ -2604,16 +2676,15 @@ class OutputFiles:
             params_num["Impact Parameter (b)"] = impact_text
         if empirical_uncertainty.get('available'):
             tmid_model_text = (
-                f"{round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- "
-                f"{round_to_2(self.fit.errors['tmid'])} BJD_TDB"
+                f"{format_value_with_uncertainty(self.fit.parameters['tmid'], self.fit.errors['tmid'])} "
+                "BJD_TDB"
             )
             tmid_combined_text = core_params["Mid-Transit Time (Tmid)"]
             params_num["Mid-Transit Time (Tmid) model-fit uncertainty"] = tmid_model_text
             params_num["Mid-Transit Time (Tmid) model+red-noise uncertainty"] = tmid_combined_text
 
             inc_model_text = (
-                f"{round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- "
-                f"{round_to_2(self.fit.errors['inc'])} "
+                f"{format_value_with_uncertainty(self.fit.parameters['inc'], self.fit.errors['inc'])} "
             )
             params_num["Orbital Inclination (inc) model-fit uncertainty"] = inc_model_text
             params_num["Orbital Inclination (inc) model+red-noise uncertainty"] = core_params[
@@ -2676,13 +2747,43 @@ class OutputFiles:
                 'airmass_correction_note',
                 "Skipped; no airmass correction applied.",
             )
+        elif baseline_fixed_after_detrending(self.fit):
+            pre_detrending_report = pre_detrending_baseline_report(self.fit)
+            if pre_detrending_report is not None:
+                if pre_detrending_report.get('source'):
+                    params_num["Pre-detrending baseline source"] = str(
+                        pre_detrending_report['source']
+                    )
+                if pre_detrending_report.get('scale_text'):
+                    scale_parameter = pre_detrending_report['scale_parameter']
+                    scale_label = (
+                        "Pre-detrending baseline flux (a0)"
+                        if scale_parameter == 'a0'
+                        else "Pre-detrending airmass coefficient 1 (a1)"
+                    )
+                    params_num[scale_label] = pre_detrending_report['scale_text']
+                if pre_detrending_report.get('a2_text'):
+                    params_num["Pre-detrending airmass coefficient 2 (a2)"] = (
+                        pre_detrending_report['a2_text']
+                    )
+            if 'a0' in self.fit.parameters:
+                params_num["Baseline flux (a0)"] = fixed_detrended_baseline_text(
+                    self.fit.parameters['a0']
+                )
+            else:
+                params_num["Flux normalization (a1)"] = fixed_detrended_baseline_text(
+                    self.fit.parameters['a1']
+                )
+            if 'a2' in self.fit.parameters:
+                params_num["Airmass coefficient 2 (a2)"] = fixed_detrended_baseline_text(
+                    self.fit.parameters['a2']
+                )
         else:
             if 'a0' in self.fit.parameters:
                 a0_error = self.fit.errors.get('a0') if isinstance(self.fit.errors, dict) else None
                 if a0_error is not None and np.isfinite(a0_error):
-                    params_num["Baseline flux (a0)"] = (
-                        f"{round_to_2(self.fit.parameters['a0'], a0_error)} +/- "
-                        f"{round_to_2(a0_error)}"
+                    params_num["Baseline flux (a0)"] = format_value_with_uncertainty(
+                        self.fit.parameters['a0'], a0_error
                     )
                 else:
                     params_num["Baseline flux (a0)"] = (
@@ -2691,9 +2792,8 @@ class OutputFiles:
             else:
                 a1_error = self.fit.errors.get('a1') if isinstance(self.fit.errors, dict) else None
                 if a1_error is not None and np.isfinite(a1_error):
-                    params_num["Flux normalization (a1)"] = (
-                        f"{round_to_2(self.fit.parameters['a1'], a1_error)} +/- "
-                        f"{round_to_2(a1_error)}"
+                    params_num["Flux normalization (a1)"] = format_value_with_uncertainty(
+                        self.fit.parameters['a1'], a1_error
                     )
                 else:
                     params_num["Flux normalization (a1)"] = (
@@ -2702,9 +2802,8 @@ class OutputFiles:
             if 'a2' in self.fit.parameters:
                 a2_error = self.fit.errors.get('a2') if isinstance(self.fit.errors, dict) else None
                 if a2_error is not None and np.isfinite(a2_error):
-                    params_num["Airmass coefficient 2 (a2)"] = (
-                        f"{round_to_2(self.fit.parameters['a2'], a2_error)} +/- "
-                        f"{round_to_2(a2_error)}"
+                    params_num["Airmass coefficient 2 (a2)"] = format_value_with_uncertainty(
+                        self.fit.parameters['a2'], a2_error
                     )
                 else:
                     params_num["Airmass coefficient 2 (a2)"] = (
@@ -2753,23 +2852,23 @@ class OutputFiles:
                 params_num["Expected-value Rp/R* deviation"] = f"{qc_rprs_deviation_sigma:.2f} sigma"
             if np.isfinite(qc_rprs_deviation_fit_unc):
                 params_num["Expected-value Rp/R* fit uncertainty used"] = (
-                    f"+/- {round_to_2(qc_rprs_deviation_fit_unc)}"
+                    f"+/- {format_uncertainty(qc_rprs_deviation_fit_unc)}"
                 )
             if np.isfinite(qc_rprs_deviation_model_unc):
                 params_num["Expected-value Rp/R* model-fit uncertainty"] = (
-                    f"+/- {round_to_2(qc_rprs_deviation_model_unc)}"
+                    f"+/- {format_uncertainty(qc_rprs_deviation_model_unc)}"
                 )
             if np.isfinite(qc_rprs_deviation_data_unc):
                 params_num["Expected-value Rp/R* data-fit red-noise uncertainty"] = (
-                    f"+/- {round_to_2(qc_rprs_deviation_data_unc)}"
+                    f"+/- {format_uncertainty(qc_rprs_deviation_data_unc)}"
                 )
             if np.isfinite(qc_rprs_deviation_expected_unc):
                 params_num["Expected-value Rp/R* prior uncertainty"] = (
-                    f"+/- {round_to_2(qc_rprs_deviation_expected_unc)}"
+                    f"+/- {format_uncertainty(qc_rprs_deviation_expected_unc)}"
                 )
             if np.isfinite(qc_rprs_deviation_comparison_unc):
                 params_num["Expected-value Rp/R* total comparison uncertainty"] = (
-                    f"+/- {round_to_2(qc_rprs_deviation_comparison_unc)}"
+                    f"+/- {format_uncertainty(qc_rprs_deviation_comparison_unc)}"
                 )
             if np.isfinite(qc_ktmf):
                 params_num["KTMF"] = f"{qc_ktmf:.2f} / 5.00"
@@ -2832,8 +2931,9 @@ class OutputFiles:
                     phot_ext["Optimal Annulus"] = f"{min_annul}"
             params_num.update(phot_ext)
 
-        params_num["Transit Duration (day)"] = (f"{round_to_2(mean(self.durs), std(self.durs))} +/- "
-                                                f"{round_to_2(std(self.durs))}")
+        params_num["Transit Duration (day)"] = format_value_with_uncertainty(
+            mean(self.durs), std(self.durs)
+        )
         final_params = {'FINAL PLANETARY PARAMETERS': params_num}
 
         with params_file.open('w') as f:
@@ -2871,6 +2971,28 @@ class OutputFiles:
         gaia_dist_header = f"#GAIADIST={gaia_dist}\n" if gaia_dist else ""
         gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
         gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
+        prior_period_text = format_value_with_uncertainty(
+            self.p_dict['pPer'], self.p_dict['pPerUnc']
+        )
+        prior_rprs_text = format_value_with_uncertainty(
+            self.p_dict['rprs'], self.p_dict['rprsUnc']
+        )
+        prior_ars_text = format_value_with_uncertainty(
+            self.p_dict['aRs'], self.p_dict['aRsUnc']
+        )
+        prior_inc_text = format_value_with_uncertainty(
+            self.p_dict['inc'], self.p_dict['incUnc']
+        )
+        prior_ld_texts = [format_value_with_uncertainty(*ld) for ld in (ld0, ld1, ld2, ld3)]
+        result_tmid_text = format_value_with_uncertainty(
+            self.fit.parameters['tmid'], self.fit.errors['tmid']
+        )
+        result_rprs_text = format_value_with_uncertainty(
+            self.fit.parameters['rprs'], rprs_report_error
+        )
+        result_inc_text = format_value_with_uncertainty(
+            self.fit.parameters['inc'], self.fit.errors['inc']
+        )
 
         params_file = aavso_output_directory(self.dir) / safe_output_filename(
             "AAVSO",
@@ -2905,19 +3027,19 @@ class OutputFiles:
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
                     f"#FILTER={self.i_dict['filter']}\n"
                     f"#FILTER-XC={dumps(filter_dict)}\n"
-                    f"#PRIORS=Period={round_to_2(self.p_dict['pPer'], self.p_dict['pPerUnc'])} +/- {round_to_2(self.p_dict['pPerUnc'])}"
-                    f",Rp/R*={round_to_2(self.p_dict['rprs'], self.p_dict['rprsUnc'])} +/- {round_to_2(self.p_dict['rprsUnc'])}"
-                    f",a/R*={round_to_2(self.p_dict['aRs'], self.p_dict['aRsUnc'])} +/- {round_to_2(self.p_dict['aRsUnc'])}"
-                    f",inc={round_to_2(self.p_dict['inc'], self.p_dict['incUnc'])} +/- {round_to_2(self.p_dict['incUnc'])}"
+                    f"#PRIORS=Period={prior_period_text}"
+                    f",Rp/R*={prior_rprs_text}"
+                    f",a/R*={prior_ars_text}"
+                    f",inc={prior_inc_text}"
                     f",ecc={round_to_2(self.p_dict['ecc'])}"
-                    f",u0={round_to_2(ld0[0], ld0[1])} +/- {round_to_2(ld0[1])}"
-                    f",u1={round_to_2(ld1[0], ld1[1])} +/- {round_to_2(ld1[1])}"
-                    f",u2={round_to_2(ld2[0], ld2[1])} +/- {round_to_2(ld2[1])}"
-                    f",u3={round_to_2(ld3[0], ld3[1])} +/- {round_to_2(ld3[1])}\n"
+                    f",u0={prior_ld_texts[0]}"
+                    f",u1={prior_ld_texts[1]}"
+                    f",u2={prior_ld_texts[2]}"
+                    f",u3={prior_ld_texts[3]}\n"
                     f"#PRIORS-XC={dumps(priors_dict)}\n"  # code yields
-                    f"#RESULTS=Tc={round_to_2(self.fit.parameters['tmid'], self.fit.errors['tmid'])} +/- {round_to_2(self.fit.errors['tmid'])}"
-                    f",Rp/R*={round_to_2(self.fit.parameters['rprs'], rprs_report_error)} +/- {round_to_2(rprs_report_error)}"
-                    f",inc={round_to_2(self.fit.parameters['inc'], self.fit.errors['inc'])} +/- {round_to_2(self.fit.errors['inc'])}"
+                    f"#RESULTS=Tc={result_tmid_text}"
+                    f",Rp/R*={result_rprs_text}"
+                    f",inc={result_inc_text}"
                     f",{aavso_airmass_terms[0][0]}={aavso_airmass_terms[0][1]} +/- {aavso_airmass_terms[0][2]}"
                     f",{aavso_airmass_terms[1][0]}={aavso_airmass_terms[1][1]} +/- {aavso_airmass_terms[1][2]}\n"
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
@@ -3164,44 +3286,18 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     if not np.isfinite(rprs_report_error) or rprs_report_error < 0:
         rprs_report_error = finite_float(planet_dict.get('rprsUnc'))
     priors = {
-        'Period': {
-            'value': str(round_to_2(planet_dict['pPer'], planet_dict['pPerUnc'])),
-            'uncertainty': str(round_to_2(planet_dict['pPerUnc'])) if planet_dict['pPerUnc'] else planet_dict['pPerUnc'],
-            'units': "days"
-        },
-        'Rp/R*': {
-            'value': str(round_to_2(planet_dict['rprs'], planet_dict['rprsUnc'])),
-            'uncertainty': str(round_to_2(planet_dict['rprsUnc'])) if planet_dict['rprsUnc'] else planet_dict['rprsUnc'],
-        },
-        'a/R*': {
-            'value': str(round_to_2(planet_dict['aRs'], planet_dict['aRsUnc'])),
-            'uncertainty': str(round_to_2(planet_dict['aRsUnc'])) if planet_dict['aRsUnc'] else planet_dict['aRsUnc'],
-        },
-        'inc': {
-            'value': str(round_to_2(planet_dict['inc'], planet_dict['incUnc'])),
-            'uncertainty': str(round_to_2(planet_dict['incUnc'])) if planet_dict['incUnc'] else planet_dict['incUnc'],
-            'units': "degrees"
-        },
+        'Period': aavso_result_entry(planet_dict['pPer'], planet_dict['pPerUnc'], units="days"),
+        'Rp/R*': aavso_result_entry(planet_dict['rprs'], planet_dict['rprsUnc']),
+        'a/R*': aavso_result_entry(planet_dict['aRs'], planet_dict['aRsUnc']),
+        'inc': aavso_result_entry(planet_dict['inc'], planet_dict['incUnc'], units="degrees"),
         'ecc': {
             'value': str(round_to_2(planet_dict['ecc'])),
             'uncertainty': None,
         },
-        'u0': {
-            'value': str(round_to_2(ld0[0], ld0[1])),
-            'uncertainty': str(round_to_2(ld0[1]))
-        },
-        'u1': {
-            'value': str(round_to_2(ld1[0], ld1[1])),
-            'uncertainty': str(round_to_2(ld1[1]))
-        },
-        'u2': {
-            'value': str(round_to_2(ld2[0], ld2[1])),
-            'uncertainty': str(round_to_2(ld2[1]))
-        },
-        'u3': {
-            'value': str(round_to_2(ld3[0], ld3[1])),
-            'uncertainty': str(round_to_2(ld3[1]))
-        }
+        'u0': aavso_result_entry(*ld0),
+        'u1': aavso_result_entry(*ld1),
+        'u2': aavso_result_entry(*ld2),
+        'u3': aavso_result_entry(*ld3),
     }
 
     filter_type = {
@@ -3220,28 +3316,16 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     }
 
     results = {
-        'Tc': {
-            'value': str(round_to_2(fit.parameters['tmid'], fit.errors['tmid'])),
-            'uncertainty': str(round_to_2(fit.errors['tmid'])),
-            'units': "BJD_TDB"
-        },
-        'Rp/R*': {
-            'value': str(round_to_2(fit.parameters['rprs'], rprs_report_error)),
-            'uncertainty': str(round_to_2(rprs_report_error))
-        },
-        'inc': {
-            'value': str(round_to_2(fit.parameters['inc'], fit.errors['inc'])),
-            'uncertainty': str(round_to_2(fit.errors['inc'])),
-        },
+        'Tc': aavso_result_entry(
+            fit.parameters['tmid'], fit.errors['tmid'], units="BJD_TDB"
+        ),
+        'Rp/R*': aavso_result_entry(fit.parameters['rprs'], rprs_report_error),
+        'inc': aavso_result_entry(fit.parameters['inc'], fit.errors['inc']),
         'Am2': {
             'value': aavso_airmass_terms[1][1],
             'uncertainty': aavso_airmass_terms[1][2]
         },
-        'Duration': {
-            'value': str(round_to_2(mean(durs))),
-            'uncertainty': str(round_to_2(std(durs))),
-            'units': "days"
-        }
+        'Duration': aavso_result_entry(mean(durs), std(durs), units="days"),
     }
 
     results[aavso_airmass_terms[0][0]] = {

@@ -3841,6 +3841,24 @@ def test_fit_final_lightcurve_linear_detrend_does_not_reapply_fixed_airmass_base
     assert np.allclose(refit_flux, final_call["flux"])
     assert fit.oot_baseline_parameter_fit_applied is False
     assert "already flattened" in fit.oot_baseline_parameter_fit_note
+    assert np.isfinite(fit.oot_baseline_parameter_fit_a0)
+    assert fit.oot_baseline_parameter_fit_a0_error > 0
+    assert np.isfinite(fit.oot_baseline_parameter_fit_a2)
+    assert fit.oot_baseline_parameter_fit_a2_error > 0
+    assert fit.pre_detrending_baseline_source.startswith("out-of-transit airmass/baseline")
+    assert fit.pre_detrending_baseline_scale_parameter == "a0"
+    assert fit.pre_detrending_baseline_scale_value == pytest.approx(
+        fit.oot_baseline_parameter_fit_a0
+    )
+    assert fit.pre_detrending_baseline_scale_error == pytest.approx(
+        fit.oot_baseline_parameter_fit_a0_error
+    )
+    assert fit.pre_detrending_baseline_a2_value == pytest.approx(
+        fit.oot_baseline_parameter_fit_a2
+    )
+    assert fit.pre_detrending_baseline_a2_error == pytest.approx(
+        fit.oot_baseline_parameter_fit_a2_error
+    )
 
 
 def test_fit_final_lightcurve_uses_oot_baseline_parameter_refit_when_linear_detrend_skips(monkeypatch):

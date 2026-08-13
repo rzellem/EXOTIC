@@ -10,6 +10,7 @@ from pathlib import Path
 try:
     from utils import (
         filename_date_token,
+        format_value_with_uncertainty,
         is_usable_apparent_magnitude,
         magnitude_text,
         normalized_magnitude_error,
@@ -18,6 +19,7 @@ try:
 except ImportError:
     from .utils import (
         filename_date_token,
+        format_value_with_uncertainty,
         is_usable_apparent_magnitude,
         magnitude_text,
         normalized_magnitude_error,
@@ -1231,15 +1233,6 @@ def _plot_positive_error(value):
     return value
 
 
-def _decimal_places_for_two_sigfig_error(error):
-    error = _plot_positive_error(error)
-    if not np.isfinite(error) or error == 0:
-        return None
-
-    exponent = int(np.floor(np.log10(abs(error))))
-    return max(0, 1 - exponent)
-
-
 def _format_parameter_value(value, error=None, unit="", split_error=False):
     value = _plot_scalar(value)
     if not np.isfinite(value):
@@ -1251,14 +1244,10 @@ def _format_parameter_value(value, error=None, unit="", split_error=False):
 
     error = _plot_positive_error(error)
     if np.isfinite(error):
-        decimal_places = _decimal_places_for_two_sigfig_error(error)
-        if decimal_places is None:
-            decimal_places = 0
-        value_text = f"{value:.{decimal_places}f}"
-        error_text = f"{error:.{decimal_places}f}"
+        formatted = format_value_with_uncertainty(value, error)
         if split_error:
-            return f"{value_text}\n+/- {error_text}{suffix}"
-        return f"{value_text} +/- {error_text}{suffix}"
+            formatted = formatted.replace(" +/- ", "\n+/- ", 1)
+        return f"{formatted}{suffix}"
     return f"{value:.6f}".rstrip('0').rstrip('.') + suffix
 
 

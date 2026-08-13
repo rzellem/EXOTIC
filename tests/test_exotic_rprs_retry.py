@@ -1474,6 +1474,12 @@ def test_selected_fast_candidate_final_refit_resets_fixed_baseline_after_linear_
     assert np.allclose(fit_flux, captured["flux"])
     assert returned.oot_baseline_parameter_fit_applied is False
     assert "instead of reusing" in returned.oot_baseline_parameter_fit_note
+    assert returned.pre_detrending_baseline_source.startswith("selected fast UltraNest fit")
+    assert returned.pre_detrending_baseline_scale_parameter == "a1"
+    assert returned.pre_detrending_baseline_scale_value == pytest.approx(1.03)
+    assert returned.pre_detrending_baseline_scale_error == pytest.approx(0.02)
+    assert returned.pre_detrending_baseline_a2_value == pytest.approx(0.12)
+    assert returned.pre_detrending_baseline_a2_error == pytest.approx(0.03)
 
 
 def test_rprs_posterior_retry_walks_bounds_until_retry_cap(monkeypatch):

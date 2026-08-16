@@ -3506,7 +3506,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     csv_path = next(variable_dir.glob('StellarVariability_SyntheticVSX_2024-01-02.csv'))
     csv_text = csv_path.read_text(encoding='utf-8')
     assert 'Apparent Magnitude' in csv_text.splitlines()[0]
-    assert 'Differential Magnitude' in csv_text.splitlines()[0]
+    assert 'Raw Differential Magnitude' in csv_text.splitlines()[0]
     exported_errors = [
         float(row.split(',')[3])
         for row in csv_text.splitlines()[1:]

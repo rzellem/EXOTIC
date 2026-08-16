@@ -177,9 +177,76 @@ def aavso_airmass_results(fit):
 
 
 def aavso_detrend_model(fit):
+    oot_baseline_model = out_of_transit_baseline_model(fit)
+    if oot_baseline_model is not None:
+        return oot_baseline_model
     if getattr(fit, 'airmass_fit_skipped', False):
         return np.ones(len(fit.time), dtype=float)
     return np.asarray(fit.airmass_model, dtype=float)
+
+
+def out_of_transit_baseline_model(fit):
+    """Rebuild the linear baseline divided out before the final transit fit."""
+    if not baseline_fixed_after_detrending(fit):
+        return None
+
+    times = np.asarray(getattr(fit, 'time', []), dtype=float).reshape(-1)
+    slope = finite_float(getattr(fit, 'oot_baseline_slope', None))
+    intercept = finite_float(getattr(fit, 'oot_baseline_intercept', None))
+    reference_time = finite_float(
+        getattr(fit, 'oot_baseline_reference_time_bjd_tdb', None)
+    )
+    if (
+        times.size == 0
+        or not np.isfinite(slope)
+        or not np.isfinite(intercept)
+        or not np.isfinite(reference_time)
+    ):
+        return None
+
+    baseline = intercept + slope * (times - reference_time)
+    if baseline.shape != times.shape or not np.all(np.isfinite(baseline)) or np.any(baseline <= 0):
+        return None
+    return baseline
+
+
+def out_of_transit_baseline_detrending_metadata(fit):
+    """Return the complete reversible linear-baseline contract for AAVSO output."""
+    applied = baseline_fixed_after_detrending(fit)
+    metadata = {
+        'applied': applied,
+        'note': getattr(fit, 'oot_baseline_detrending_note', None),
+    }
+    if not applied:
+        return metadata
+
+    metadata.update({
+        'model': 'baseline(t) = intercept + slope_per_day * (BJD_TDB - reference_time_bjd_tdb)',
+        'forward_correction': 'detrended_flux = raw_flux / baseline(t)',
+        'inverse_correction': 'raw_flux = detrended_flux * baseline(t)',
+        'reference_time_bjd_tdb': finite_float(
+            getattr(fit, 'oot_baseline_reference_time_bjd_tdb', None)
+        ),
+        'intercept': finite_float(getattr(fit, 'oot_baseline_intercept', None)),
+        'slope_per_day': finite_float(getattr(fit, 'oot_baseline_slope', None)),
+        'pre_ingress_point_count': int(getattr(fit, 'oot_baseline_pre_points', 0) or 0),
+        'post_egress_point_count': int(getattr(fit, 'oot_baseline_post_points', 0) or 0),
+        'serialized_model_available': out_of_transit_baseline_model(fit) is not None,
+    })
+    return metadata
+
+
+def aavso_undetrended_flux_series(fit, detrend_model):
+    """Return pre-correction flux/error arrays matching the exported correction model."""
+    data = np.asarray(getattr(fit, 'data', []), dtype=float).reshape(-1)
+    data_error = np.asarray(getattr(fit, 'dataerr', []), dtype=float).reshape(-1)
+    detrend_model = np.asarray(detrend_model, dtype=float).reshape(-1)
+    if not (data.shape == data_error.shape == detrend_model.shape):
+        return data, data_error
+    oot_baseline_model = out_of_transit_baseline_model(fit)
+    if oot_baseline_model is not None and oot_baseline_model.shape == data.shape:
+        return data * oot_baseline_model, data_error * oot_baseline_model
+    return data, data_error
 
 
 def baseline_fixed_after_detrending(fit):
@@ -328,6 +395,54 @@ def differential_magnitude_from_vsp_param(vsp_param):
     return apparent_mag - comparison_mag, differential_err
 
 
+def differential_magnitude_correction_model(fit, shape):
+    """Return the relative correction applied to raw target/reference ratios."""
+    shape = tuple(shape)
+    correction_type = 'none'
+    correction_model = out_of_transit_baseline_model(fit)
+    if correction_model is not None:
+        correction_type = 'out_of_transit_linear_baseline'
+    elif baseline_fixed_after_detrending(fit):
+        correction_type = 'unavailable'
+    elif not getattr(fit, 'airmass_fit_skipped', False):
+        candidate = getattr(fit, 'airmass_model', None)
+        if candidate is not None:
+            candidate = np.asarray(candidate, dtype=float).reshape(-1)
+            if candidate.shape == shape:
+                correction_model = candidate
+                correction_type = 'airmass'
+
+    if correction_model is None or np.asarray(correction_model).shape != shape:
+        correction_model = np.ones(shape, dtype=float)
+        if correction_type != 'unavailable':
+            correction_type = 'none'
+    else:
+        correction_model = np.asarray(correction_model, dtype=float).reshape(-1)
+
+    valid = np.isfinite(correction_model) & (correction_model > 0)
+    reference = float(np.nanmedian(correction_model[valid])) if np.any(valid) else 1.0
+    if not np.isfinite(reference) or reference <= 0:
+        reference = 1.0
+    relative_model = np.divide(
+        correction_model,
+        reference,
+        out=np.full(shape, np.nan, dtype=float),
+        where=valid,
+    )
+    correction_applied = bool(
+        correction_type != 'none'
+        and np.any(valid)
+        and not np.allclose(relative_model[valid], 1.0, rtol=0.0, atol=1.0e-12)
+    )
+    return {
+        'model': correction_model,
+        'relative_model': relative_model,
+        'reference': reference,
+        'type': correction_type,
+        'applied': correction_applied,
+    }
+
+
 def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
                                            apply_airmass_correction=None):
     """Return target-minus-reference instrumental magnitudes.
@@ -348,6 +463,12 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
     ).reshape(-1)
     if fit_data.size == 0 or fit_times.shape != fit_data.shape:
         return None
+
+    if apply_airmass_correction is None:
+        apply_airmass_correction = not bool(
+            getattr(fit, 'stellar_variability_only', False)
+        )
+    apply_airmass_correction = bool(apply_airmass_correction)
 
     target_flux = np.asarray(
         getattr(
@@ -386,15 +507,19 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
         target_flux.shape == fit_data.shape
         and reference_flux.shape == fit_data.shape
     )
+    correction = differential_magnitude_correction_model(fit, fit_data.shape)
+    relative_correction_model = correction['relative_model']
     if not has_raw_photometry:
-        target_flux = np.asarray(getattr(fit, 'detrended', fit_data), dtype=float).reshape(-1)
-        if target_flux.shape != fit_data.shape:
-            target_flux = fit_data.copy()
+        # Ordinary fits retain their uncorrected relative flux in ``fit.data``.
+        # A linear out-of-transit pass instead leaves corrected data on the
+        # final fit, so restore its raw input with the retained baseline model.
+        target_flux = fit_data.copy()
+        target_error = np.asarray(getattr(fit, 'dataerr', []), dtype=float).reshape(-1)
+        if baseline_fixed_after_detrending(fit) and correction['type'] == 'out_of_transit_linear_baseline':
+            target_flux = target_flux * relative_correction_model
+            if target_error.shape == fit_data.shape:
+                target_error = target_error * relative_correction_model
         reference_flux = np.ones(fit_data.shape, dtype=float)
-        target_error = np.asarray(
-            getattr(fit, 'detrendederr', getattr(fit, 'dataerr', [])),
-            dtype=float,
-        ).reshape(-1)
         reference_error = np.zeros(fit_data.shape, dtype=float)
 
     if target_error.shape != fit_data.shape:
@@ -402,39 +527,13 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
     if reference_error.shape != fit_data.shape:
         reference_error = np.full(fit_data.shape, np.nan, dtype=float)
 
-    if apply_airmass_correction is None:
-        apply_airmass_correction = not bool(
-            getattr(fit, 'stellar_variability_only', False)
-        )
-    # ``fit.detrended`` is already corrected.  Only divide an explicitly
-    # retained raw target/reference ratio by the fitted airmass model.
-    apply_airmass_correction = bool(apply_airmass_correction and has_raw_photometry)
-    relative_airmass_model = np.ones(fit_data.shape, dtype=float)
-    if apply_airmass_correction:
-        airmass_model = np.asarray(
-            getattr(fit, 'airmass_model', np.ones(fit_data.shape)),
-            dtype=float,
-        ).reshape(-1)
-        if airmass_model.shape != fit_data.shape:
-            airmass_model = np.ones(fit_data.shape, dtype=float)
-        valid_airmass_model = np.isfinite(airmass_model) & (airmass_model > 0)
-        airmass_reference = (
-            float(np.nanmedian(airmass_model[valid_airmass_model]))
-            if np.any(valid_airmass_model)
-            else 1.0
-        )
-        if not np.isfinite(airmass_reference) or airmass_reference <= 0:
-            airmass_reference = 1.0
-        relative_airmass_model = np.divide(
-            airmass_model,
-            airmass_reference,
-            out=np.full(fit_data.shape, np.nan, dtype=float),
-            where=valid_airmass_model,
-        )
-
     with np.errstate(divide='ignore', invalid='ignore'):
         raw_ratio = np.divide(target_flux, reference_flux)
-        corrected_ratio = np.divide(raw_ratio, relative_airmass_model)
+        corrected_ratio = (
+            np.divide(raw_ratio, relative_correction_model)
+            if apply_airmass_correction
+            else raw_ratio
+        )
         differential_magnitude = -2.5 * np.log10(corrected_ratio)
         magnitude_factor = 2.5 / np.log(10.0)
         explicit_error = magnitude_factor * np.sqrt(
@@ -483,7 +582,30 @@ def differential_magnitude_series_from_fit(fit, out_of_transit_only=False,
         'magnitude': differential_magnitude[keep],
         'magnitude_error': differential_error[keep],
         'source_mask': keep,
-        'airmass_corrected': apply_airmass_correction,
+        'airmass_corrected': bool(
+            apply_airmass_correction
+            and correction['type'] == 'airmass'
+            and correction['applied']
+        ),
+        'correction_applied': bool(apply_airmass_correction and correction['applied']),
+        'correction_type': correction['type'] if apply_airmass_correction else 'none',
+        'correction_factor': (
+            relative_correction_model[keep]
+            if apply_airmass_correction
+            else np.ones(np.count_nonzero(keep), dtype=float)
+        ),
+        'raw_measurement_available': bool(
+            has_raw_photometry
+            or not (
+                correction['type'] == 'unavailable'
+                or (
+                    getattr(fit, 'airmass_fit_skipped', False)
+                    and 'input AAVSO file already reports' in str(
+                        getattr(fit, 'airmass_correction_note', '')
+                    )
+                )
+            )
+        ),
         'has_raw_photometry': has_raw_photometry,
     }
 
@@ -498,10 +620,18 @@ def magnitude_series_from_fit(fit, out_of_transit_only=False,
     result = {
         'differential_magnitude': np.full(fit_data.shape, np.nan, dtype=float),
         'differential_magnitude_error': np.full(fit_data.shape, np.nan, dtype=float),
+        'raw_differential_magnitude': np.full(fit_data.shape, np.nan, dtype=float),
+        'raw_differential_magnitude_error': np.full(fit_data.shape, np.nan, dtype=float),
+        'corrected_differential_magnitude': np.full(fit_data.shape, np.nan, dtype=float),
+        'corrected_differential_magnitude_error': np.full(fit_data.shape, np.nan, dtype=float),
+        'differential_magnitude_correction_factor': np.full(fit_data.shape, np.nan, dtype=float),
         'apparent_magnitude': np.full(fit_data.shape, np.nan, dtype=float),
         'apparent_magnitude_error': np.full(fit_data.shape, np.nan, dtype=float),
         'band': None,
         'airmass_corrected': False,
+        'correction_applied': False,
+        'correction_type': 'none',
+        'raw_measurement_available': False,
         'has_raw_photometry': False,
         'apparent_calibrated': False,
     }
@@ -519,7 +649,42 @@ def magnitude_series_from_fit(fit, out_of_transit_only=False,
     result['differential_magnitude'][source_mask] = series['magnitude']
     result['differential_magnitude_error'][source_mask] = series['magnitude_error']
     result['airmass_corrected'] = bool(series['airmass_corrected'])
+    result['correction_applied'] = bool(series['correction_applied'])
+    result['correction_type'] = series['correction_type']
+    result['raw_measurement_available'] = bool(series['raw_measurement_available'])
     result['has_raw_photometry'] = bool(series['has_raw_photometry'])
+
+    raw_series = differential_magnitude_series_from_fit(
+        fit,
+        out_of_transit_only=out_of_transit_only,
+        apply_airmass_correction=False,
+    )
+    if raw_series is not None and raw_series.get('raw_measurement_available', False):
+        raw_mask = np.asarray(raw_series['source_mask'], dtype=bool)
+        if raw_mask.shape == fit_data.shape:
+            result['raw_differential_magnitude'][raw_mask] = raw_series['magnitude']
+            result['raw_differential_magnitude_error'][raw_mask] = raw_series['magnitude_error']
+
+    correct_variability = (
+        not bool(getattr(fit, 'stellar_variability_only', False))
+        if apply_airmass_correction is None
+        else bool(apply_airmass_correction)
+    )
+    corrected_series = differential_magnitude_series_from_fit(
+        fit,
+        out_of_transit_only=out_of_transit_only,
+        apply_airmass_correction=correct_variability,
+    )
+    if corrected_series is not None:
+        corrected_mask = np.asarray(corrected_series['source_mask'], dtype=bool)
+        if corrected_mask.shape == fit_data.shape:
+            result['corrected_differential_magnitude'][corrected_mask] = corrected_series['magnitude']
+            result['corrected_differential_magnitude_error'][corrected_mask] = (
+                corrected_series['magnitude_error']
+            )
+            result['differential_magnitude_correction_factor'][corrected_mask] = (
+                corrected_series['correction_factor']
+            )
 
     calibration = apparent_magnitude_calibration_from_vsp_params(
         getattr(fit, 'stellar_variability_params', None)
@@ -626,12 +791,27 @@ def write_differential_magnitude_csv(fit, save, target_name, observation_date=No
                                      observed_filter=None, out_of_transit_only=False,
                                      apply_airmass_correction=None,
                                      filename_prefix='DifferentialMagnitude'):
-    series = differential_magnitude_series_from_fit(
+    series = magnitude_series_from_fit(
         fit,
         out_of_transit_only=out_of_transit_only,
         apply_airmass_correction=apply_airmass_correction,
     )
-    if series is None:
+    times = np.asarray(
+        getattr(fit, 'time', getattr(fit, 'jd_times', [])),
+        dtype=float,
+    ).reshape(-1)
+    airmass = np.asarray(
+        getattr(fit, 'airmass', np.full(times.shape, np.nan)),
+        dtype=float,
+    ).reshape(-1)
+    if airmass.shape != times.shape:
+        airmass = np.full(times.shape, np.nan, dtype=float)
+    raw_magnitude = np.asarray(series['raw_differential_magnitude'], dtype=float)
+    corrected_magnitude = np.asarray(series['corrected_differential_magnitude'], dtype=float)
+    if not (
+        raw_magnitude.shape == corrected_magnitude.shape == times.shape
+        and np.any(np.isfinite(raw_magnitude) | np.isfinite(corrected_magnitude))
+    ):
         return None
 
     output_dir = Path(save)
@@ -652,25 +832,45 @@ def write_differential_magnitude_csv(fit, save, target_name, observation_date=No
             '# AIRMASS_CORRECTION='
             f"{'YES' if series['airmass_corrected'] else 'NO'}\n"
         )
+        handle.write(f"# DIFFERENTIAL_MAGNITUDE_CORRECTION={series['correction_type']}\n")
         handle.write(
-            '# BJD_TDB,Airmass,Differential Magnitude,'
-            'Differential Magnitude Uncertainty,Filter,Comparison\n'
+            '# BJD_TDB,Airmass,Raw Differential Magnitude,'
+            'Raw Differential Magnitude Uncertainty,Corrected Differential Magnitude,'
+            'Corrected Differential Magnitude Uncertainty,Correction Factor,Filter,Comparison\n'
         )
-        for time_value, airmass, magnitude, magnitude_error in zip(
-            series['time'],
-            series['airmass'],
-            series['magnitude'],
-            series['magnitude_error'],
-        ):
-            airmass_text = f"{airmass}" if np.isfinite(airmass) else 'na'
-            error_text = (
-                f"{magnitude_error:.{MAGNITUDE_DECIMAL_PLACES}f}"
-                if np.isfinite(magnitude_error)
-                else 'na'
+        for index, time_value in enumerate(times):
+            if not (
+                np.isfinite(raw_magnitude[index])
+                or np.isfinite(corrected_magnitude[index])
+            ):
+                continue
+            airmass_text = f"{airmass[index]}" if np.isfinite(airmass[index]) else 'na'
+            raw_text = format_magnitude(
+                raw_magnitude[index], default='na', digits=MAGNITUDE_DECIMAL_PLACES
+            )
+            raw_error_text = format_magnitude_error(
+                series['raw_differential_magnitude_error'][index],
+                default='na',
+                digits=MAGNITUDE_DECIMAL_PLACES,
+            )
+            corrected_text = format_magnitude(
+                corrected_magnitude[index], default='na', digits=MAGNITUDE_DECIMAL_PLACES
+            )
+            corrected_error_text = format_magnitude_error(
+                series['corrected_differential_magnitude_error'][index],
+                default='na',
+                digits=MAGNITUDE_DECIMAL_PLACES,
+            )
+            correction_factor = finite_float(
+                series['differential_magnitude_correction_factor'][index]
+            )
+            correction_factor_text = (
+                f"{correction_factor:.7f}" if np.isfinite(correction_factor) else 'na'
             )
             handle.write(
                 f"{time_value}, {airmass_text}, "
-                f"{magnitude:.{MAGNITUDE_DECIMAL_PLACES}f}, {error_text}, "
+                f"{raw_text}, {raw_error_text}, {corrected_text}, {corrected_error_text}, "
+                f"{correction_factor_text}, "
                 f"{observed_filter or 'na'}, {comparison}\n"
             )
     return output_path
@@ -2351,7 +2551,7 @@ class OutputFiles:
                 f.write("# DIFFERENTIAL_MAGNITUDE_AIRMASS_CORRECTED=NO\n")
                 f.write(
                     "# BJD_TDB,Apparent Magnitude,Apparent Magnitude Uncertainty,"
-                    "Differential Magnitude,Differential Magnitude Uncertainty,Band,Airmass\n"
+                    "Raw Differential Magnitude,Raw Differential Magnitude Uncertainty,Band,Airmass\n"
                 )
                 for vsp_p in vsp_params:
                     time_value = finite_float(vsp_p.get('time'))
@@ -2383,6 +2583,31 @@ class OutputFiles:
 
         magnitude_series = magnitude_series_from_fit(self.fit)
         band = magnitude_series['band'] or self.i_dict.get('filter') or 'na'
+        fit_times = np.asarray(getattr(self.fit, 'time', []), dtype=float).reshape(-1)
+        detrend_model = np.asarray(aavso_detrend_model(self.fit), dtype=float).reshape(-1)
+        if detrend_model.shape != fit_times.shape:
+            detrend_model = np.ones(fit_times.shape, dtype=float)
+        airmass_values = np.asarray(
+            getattr(self.fit, 'airmass', np.full(fit_times.shape, np.nan)),
+            dtype=float,
+        ).reshape(-1)
+        if airmass_values.shape != fit_times.shape:
+            airmass_values = np.full(fit_times.shape, np.nan, dtype=float)
+        corrected_flux_error = np.asarray(
+            getattr(self.fit, 'detrendederr', []),
+            dtype=float,
+        ).reshape(-1)
+        if corrected_flux_error.shape != fit_times.shape:
+            fit_data_error = np.asarray(getattr(self.fit, 'dataerr', []), dtype=float).reshape(-1)
+            if fit_data_error.shape == fit_times.shape:
+                corrected_flux_error = np.divide(
+                    fit_data_error,
+                    detrend_model,
+                    out=np.full(fit_times.shape, np.nan, dtype=float),
+                    where=np.isfinite(detrend_model) & (detrend_model > 0),
+                )
+            else:
+                corrected_flux_error = np.full(fit_times.shape, np.nan, dtype=float)
 
         with params_file.open('w') as f:
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
@@ -2397,26 +2622,47 @@ class OutputFiles:
                 f"{'YES' if magnitude_series['airmass_corrected'] else 'NO'}\n"
             )
             f.write(
-                "# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass,"
-                "Differential Magnitude,Differential Magnitude Uncertainty,"
+                "# DIFFERENTIAL_MAGNITUDE_CORRECTION="
+                f"{magnitude_series['correction_type']}\n"
+            )
+            f.write(
+                "# BJD_TDB,Orbital Phase,Flux,Uncertainty,Model,Airmass,Detrend Correction Function,"
+                "Raw Differential Magnitude,Raw Differential Magnitude Uncertainty,"
+                "Corrected Differential Magnitude,Corrected Differential Magnitude Uncertainty,"
                 "Apparent Magnitude,Apparent Magnitude Uncertainty,Band\n"
             )
 
-            for row_index, (bjd, phase, flux, fluxerr, model, am) in enumerate(zip(
+            for row_index, (bjd, phase, flux, fluxerr, model, am, correction_value) in enumerate(zip(
                     self.fit.time,
                     phase,
                     self.fit.detrended,
-                    self.fit.dataerr / self.fit.airmass_model,
+                    corrected_flux_error,
                     self.fit.transit,
-                    self.fit.airmass_model)):
-                row = f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, {am}"
-                differential_mag_text = format_magnitude(
-                    magnitude_series['differential_magnitude'][row_index],
+                    airmass_values,
+                    detrend_model)):
+                airmass_text = str(am) if np.isfinite(am) else 'na'
+                correction_text = str(correction_value) if np.isfinite(correction_value) else 'na'
+                row = (
+                    f"{bjd}, {phase}, {flux}, {fluxerr}, {model}, "
+                    f"{airmass_text}, {correction_text}"
+                )
+                raw_differential_mag_text = format_magnitude(
+                    magnitude_series['raw_differential_magnitude'][row_index],
                     default="na",
                     digits=MAGNITUDE_DECIMAL_PLACES,
                 )
-                differential_error_text = format_magnitude_error(
-                    magnitude_series['differential_magnitude_error'][row_index],
+                raw_differential_error_text = format_magnitude_error(
+                    magnitude_series['raw_differential_magnitude_error'][row_index],
+                    default="na",
+                    digits=MAGNITUDE_DECIMAL_PLACES,
+                )
+                corrected_differential_mag_text = format_magnitude(
+                    magnitude_series['corrected_differential_magnitude'][row_index],
+                    default="na",
+                    digits=MAGNITUDE_DECIMAL_PLACES,
+                )
+                corrected_differential_error_text = format_magnitude_error(
+                    magnitude_series['corrected_differential_magnitude_error'][row_index],
                     default="na",
                     digits=MAGNITUDE_DECIMAL_PLACES,
                 )
@@ -2429,7 +2675,8 @@ class OutputFiles:
                     default="na",
                 )
                 row = (
-                    f"{row}, {differential_mag_text}, {differential_error_text}, "
+                    f"{row}, {raw_differential_mag_text}, {raw_differential_error_text}, "
+                    f"{corrected_differential_mag_text}, {corrected_differential_error_text}, "
                     f"{apparent_mag_text}, {apparent_error_text}, {band}"
                 )
                 f.write(f"{row}\n")
@@ -2724,6 +2971,19 @@ class OutputFiles:
         oot_baseline_note = getattr(self.fit, 'oot_baseline_detrending_note', None)
         if oot_baseline_note:
             params_num["Out-of-transit baseline detrending note"] = str(oot_baseline_note)
+        oot_baseline_metadata = out_of_transit_baseline_detrending_metadata(self.fit)
+        if oot_baseline_metadata.get('applied'):
+            params_num["Out-of-transit baseline detrending model"] = str(
+                oot_baseline_metadata['model']
+            )
+            for output_label, metadata_key in (
+                ("Out-of-transit baseline reference time (BJD_TDB)", 'reference_time_bjd_tdb'),
+                ("Out-of-transit baseline intercept", 'intercept'),
+                ("Out-of-transit baseline slope (per day)", 'slope_per_day'),
+            ):
+                value = finite_float(oot_baseline_metadata.get(metadata_key))
+                if np.isfinite(value):
+                    params_num[output_label] = str(value)
         sparse_posterior_note = getattr(self.fit, 'sparse_posterior_live_point_extension_note', None)
         if sparse_posterior_note:
             params_num["Sparse posterior live-point extension note"] = str(sparse_posterior_note)
@@ -2951,6 +3211,10 @@ class OutputFiles:
                                                              ld0, ld1, ld2, ld3)
         aavso_airmass_terms = aavso_airmass_results(self.fit)
         detrend_model = aavso_detrend_model(self.fit)
+        undetrended_flux, undetrended_flux_error = aavso_undetrended_flux_series(
+            self.fit,
+            detrend_model,
+        )
         qc_metadata = build_aavso_qc_metadata(self.fit)
         fit_quality_metadata = build_fit_quality_metadata(self.fit)
         rprs_report_error = fit_rprs_report_error(self.fit)
@@ -3051,17 +3315,49 @@ class OutputFiles:
             f.write(format_aavso_json_header("FRAME_FILTERING-XC", frame_filtering_metadata))
             f.write(format_aavso_json_header("ASTROMETRY-XC", astrometry_metadata))
             f.write(format_aavso_json_header("BAD_PIXEL-XC", bad_pixel_metadata))
+            f.write(format_aavso_json_header(
+                "OUT_OF_TRANSIT_BASELINE-XC",
+                out_of_transit_baseline_detrending_metadata(self.fit),
+            ))
+            f.write(format_aavso_json_header("DETREND_PARAMETERS-XC", {
+                'DETREND_1': 'airmass',
+                'DETREND_2': (
+                    'out_of_transit_linear_baseline_correction_function'
+                    if baseline_fixed_after_detrending(self.fit)
+                    else 'airmass_correction_function'
+                ),
+                'standard_header_preserved': True,
+            }))
             f.write(format_aavso_json_header("MAGNITUDE_FIELDS-XC", {
                 'apparent_magnitude': 'catalogue-calibrated target magnitude',
                 'apparent_magnitude_error': 'flux and catalogue calibration uncertainty',
-                'differential_magnitude': (
+                'raw_differential_magnitude': (
                     'target minus selected comparison reference; '
                     '-2.5 log10(target_flux/reference_flux)'
                 ),
-                'differential_magnitude_error': 'flux-only uncertainty',
+                'raw_differential_magnitude_error': 'raw target/reference flux-only uncertainty',
+                'corrected_differential_magnitude': (
+                    'raw differential magnitude after the declared correction factor is removed'
+                ),
+                'corrected_differential_magnitude_error': (
+                    'flux-only uncertainty after correction; correction-model uncertainty excluded'
+                ),
+                'differential_magnitude': (
+                    'target minus selected comparison reference after the declared correction; '
+                    'backward-compatible alias of corrected_differential_magnitude'
+                ),
+                'differential_magnitude_error': (
+                    'backward-compatible alias of corrected_differential_magnitude_error'
+                ),
+                'differential_magnitude_correction_factor': (
+                    'relative multiplicative flux correction; corrected_flux = raw_flux / factor'
+                ),
                 'per_point_header': 'MAGNITUDE-XC',
                 'band': magnitude_series['band'] or self.i_dict.get('filter'),
                 'airmass_corrected': magnitude_series['airmass_corrected'],
+                'correction_applied': magnitude_series['correction_applied'],
+                'correction_type': magnitude_series['correction_type'],
+                'raw_measurement_available': magnitude_series['raw_measurement_available'],
                 'apparent_calibrated': magnitude_series['apparent_calibrated'],
                 'comparison_reference': (
                     getattr(self.fit, 'differential_magnitude_reference_label', None)
@@ -3072,9 +3368,28 @@ class OutputFiles:
             for magnitude_index in range(0, len(self.fit.time)):
                 f.write(format_aavso_json_header("MAGNITUDE-XC", {
                     'date_bjd_tdb': finite_float(self.fit.time[magnitude_index]),
+                    'raw_differential_magnitude': rounded_magnitude_value(
+                        magnitude_series['raw_differential_magnitude'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
+                    ),
+                    'raw_differential_magnitude_error': rounded_magnitude_error(
+                        magnitude_series['raw_differential_magnitude_error'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
+                    ),
+                    'corrected_differential_magnitude': rounded_magnitude_value(
+                        magnitude_series['corrected_differential_magnitude'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
+                    ),
+                    'corrected_differential_magnitude_error': rounded_magnitude_error(
+                        magnitude_series['corrected_differential_magnitude_error'][magnitude_index],
+                        digits=MAGNITUDE_DECIMAL_PLACES,
+                    ),
                     'differential_magnitude': rounded_magnitude_value(
                         magnitude_series['differential_magnitude'][magnitude_index],
                         digits=MAGNITUDE_DECIMAL_PLACES,
+                    ),
+                    'differential_magnitude_correction_factor': finite_float(
+                        magnitude_series['differential_magnitude_correction_factor'][magnitude_index]
                     ),
                     'differential_magnitude_error': rounded_magnitude_error(
                         magnitude_series['differential_magnitude_error'][magnitude_index],
@@ -3107,8 +3422,8 @@ class OutputFiles:
                 # f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC] / self.fit.parameters['a1'], 7)},"
                 #         f"{round(self.fit.dataerr[aavsoC] / self.fit.parameters['a1'], 7)},{round(airmasses[aavsoC], 7)},"
                 #         f"{round(self.fit.airmass_model[aavsoC] / self.fit.parameters['a1'], 7)}\n")
-                f.write(f"{round(self.fit.time[aavsoC], 8)},{round(self.fit.data[aavsoC], 7)},"
-                        f"{round(self.fit.dataerr[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
+                f.write(f"{round(self.fit.time[aavsoC], 8)},{round(undetrended_flux[aavsoC], 7)},"
+                        f"{round(undetrended_flux_error[aavsoC], 7)},{round(airmasses[aavsoC], 7)},"
                         f"{round(detrend_model[aavsoC], 7)}\n")
         copy_aavso_supporting_artifacts(
             self.dir,

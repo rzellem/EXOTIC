@@ -538,6 +538,7 @@ def annotate_out_of_transit_baseline_detrending(
     note=None,
     slope=None,
     intercept=None,
+    reference_time_bjd_tdb=None,
     pre_points=0,
     post_points=0,
 ):
@@ -548,6 +549,7 @@ def annotate_out_of_transit_baseline_detrending(
     fit.oot_baseline_detrending_note = note
     fit.oot_baseline_slope = slope
     fit.oot_baseline_intercept = intercept
+    fit.oot_baseline_reference_time_bjd_tdb = reference_time_bjd_tdb
     fit.oot_baseline_pre_points = int(pre_points) if pre_points is not None else 0
     fit.oot_baseline_post_points = int(post_points) if post_points is not None else 0
 
@@ -5703,6 +5705,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         note=detrend_result.get('note'),
         slope=detrend_result.get('slope'),
         intercept=detrend_result.get('intercept'),
+        reference_time_bjd_tdb=detrend_result.get('reference_time_bjd_tdb'),
         pre_points=detrend_result.get('pre_points', 0),
         post_points=detrend_result.get('post_points', 0),
     )
@@ -11808,6 +11811,7 @@ def detrend_flux_on_out_of_transit_baseline(
         'baseline': baseline,
         'slope': float(slope),
         'intercept': float(intercept),
+        'reference_time_bjd_tdb': float(mid_transit),
         'pre_points': pre_points,
         'post_points': post_points,
         'ingress_time': ingress_time,
@@ -12555,6 +12559,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         note=detrend_result['note'],
         slope=detrend_result['slope'],
         intercept=detrend_result['intercept'],
+        reference_time_bjd_tdb=detrend_result['reference_time_bjd_tdb'],
         pre_points=detrend_result['pre_points'],
         post_points=detrend_result['post_points'],
     )
@@ -28982,8 +28987,8 @@ def save_stellar_variability_magnitude_csv(vsp_params, save, target_name, observ
             'Airmass',
             'Apparent Magnitude',
             'Apparent Magnitude Error',
-            'Differential Magnitude',
-            'Differential Magnitude Error',
+            'Raw Differential Magnitude',
+            'Raw Differential Magnitude Error',
             'Filter',
             'Comparison',
         ])

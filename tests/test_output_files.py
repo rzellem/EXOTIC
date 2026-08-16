@@ -11,8 +11,10 @@ from exotic.output_files import (
     PRIOR_OBSERVABLE_DEPTH_LABEL,
     AIDOutputFiles,
     OutputFiles,
+    aavso_detrend_model,
     aid_comparison_coordinate_headers,
     aavso_dicts,
+    aavso_undetrended_flux_series,
     build_aavso_qc_metadata,
     fit_empirical_transit_uncertainty,
     fit_impact_parameter_value_error,
@@ -79,8 +81,8 @@ def test_differential_csv_does_not_require_apparent_magnitude_calibration(tmp_pa
     assert '# AIRMASS_CORRECTION=NO' in output_text
     assert 'Differential Magnitude' in output_text
     assert 'Apparent' not in output_text
-    assert ', 0.7526, 0.0054, V, ' in output_text
-    assert ', 0.6491, 0.0051, V, ' in output_text
+    assert ', 0.7526, 0.0054, 0.7526, 0.0054, 1.0000000, V, ' in output_text
+    assert ', 0.6491, 0.0051, 0.6491, 0.0051, 1.0000000, V, ' in output_text
 
 
 class DummyFit:
@@ -300,7 +302,7 @@ def test_final_lightcurve_writes_stellar_variability_magnitudes(tmp_path):
 
     assert "# FINAL STELLAR VARIABILITY TIMESERIES OF WASP-194" in output_text
     assert "Apparent Magnitude,Apparent Magnitude Uncertainty" in output_text
-    assert "Differential Magnitude,Differential Magnitude Uncertainty" in output_text
+    assert "Raw Differential Magnitude,Raw Differential Magnitude Uncertainty" in output_text
     assert "2461229.89899, 13.7378, 0.0042, 1.2378, 0.0021, r, 1.193135" in output_text
     assert "Flux" not in output_text
 
@@ -325,9 +327,14 @@ def test_final_lightcurve_adds_transit_apparent_magnitude_columns_when_calibrate
 
     output_text = next((tmp_path / "working_artifacts").glob("FinalLightCurve_WASP-194b_2026-07-08.csv")).read_text()
 
-    assert "Differential Magnitude,Differential Magnitude Uncertainty" in output_text
+    assert "Raw Differential Magnitude,Raw Differential Magnitude Uncertainty" in output_text
+    assert "Corrected Differential Magnitude,Corrected Differential Magnitude Uncertainty" in output_text
     assert "Apparent Magnitude,Apparent Magnitude Uncertainty,Band" in output_text
-    assert "2461229.9, 0.1, 1.0, 0.001, 1.0, 1.0, -0.0000, 0.0011, 13.7400" in output_text
+    assert (
+        "2461229.9, 0.1, 1.0, 0.001, 1.0, na, 1.0, "
+        "-0.0000, 0.0011, -0.0000, 0.0011, 13.7400"
+        in output_text
+    )
     assert output_text.rstrip().endswith(", r")
 
 
@@ -398,6 +405,162 @@ def test_magnitude_series_preserves_raw_ratio_for_later_apparent_recalibration()
         series['apparent_magnitude_error'],
         np.hypot(0.02, differential_error),
     )
+
+
+def test_magnitude_series_keeps_raw_and_airmass_corrected_differential_values():
+    target_flux = np.array([800.0, 1000.0, 1200.0])
+    reference_flux = np.full(3, 1000.0)
+    target_error = np.full(3, 2.0)
+    reference_error = np.full(3, 3.0)
+    airmass_model = np.array([0.8, 1.0, 1.2])
+    relative_correction = airmass_model / np.median(airmass_model)
+    raw_ratio = target_flux / reference_flux
+    expected_raw = -2.5 * np.log10(raw_ratio)
+    expected_corrected = -2.5 * np.log10(raw_ratio / relative_correction)
+    fit = SimpleNamespace(
+        stellar_variability_only=False,
+        time=np.array([2461229.9, 2461229.91, 2461229.92]),
+        data=raw_ratio,
+        dataerr=np.full(3, 0.001),
+        detrended=raw_ratio / relative_correction,
+        detrendederr=np.full(3, 0.001) / relative_correction,
+        airmass=np.array([1.1, 1.2, 1.3]),
+        airmass_model=airmass_model,
+        transit=np.ones(3),
+        stellar_variability_target_flux=target_flux,
+        stellar_variability_comp_flux=reference_flux,
+        stellar_variability_target_flux_error=target_error,
+        stellar_variability_comp_flux_error=reference_error,
+    )
+
+    series = magnitude_series_from_fit(fit)
+
+    np.testing.assert_allclose(series['raw_differential_magnitude'], expected_raw)
+    np.testing.assert_allclose(series['corrected_differential_magnitude'], expected_corrected)
+    np.testing.assert_allclose(series['differential_magnitude'], expected_corrected)
+    np.testing.assert_allclose(
+        series['raw_differential_magnitude_error'],
+        series['corrected_differential_magnitude_error'],
+    )
+    np.testing.assert_allclose(
+        series['differential_magnitude_correction_factor'],
+        relative_correction,
+    )
+    assert series['correction_type'] == 'airmass'
+    assert series['correction_applied'] is True
+    assert series['airmass_corrected'] is True
+
+
+def test_differential_csv_writes_raw_and_corrected_differential_rows(tmp_path):
+    fit = SimpleNamespace(
+        stellar_variability_only=False,
+        time=np.array([2461229.9, 2461229.91]),
+        data=np.array([0.8, 1.2]),
+        dataerr=np.full(2, 0.008),
+        detrended=np.ones(2),
+        detrendederr=np.full(2, 0.01),
+        airmass=np.array([1.1, 1.4]),
+        airmass_model=np.array([0.8, 1.2]),
+        transit=np.ones(2),
+        stellar_variability_target_flux=np.array([800.0, 1200.0]),
+        stellar_variability_comp_flux=np.full(2, 1000.0),
+        stellar_variability_target_flux_error=np.full(2, 2.0),
+        stellar_variability_comp_flux_error=np.full(2, 3.0),
+    )
+
+    output_path = write_differential_magnitude_csv(
+        fit,
+        tmp_path,
+        'Transit Target',
+        observation_date='2026-08-17',
+        observed_filter='V',
+    )
+    output_lines = output_path.read_text(encoding='utf-8').splitlines()
+
+    assert '# AIRMASS_CORRECTION=YES' in output_lines
+    assert '# DIFFERENTIAL_MAGNITUDE_CORRECTION=airmass' in output_lines
+    assert 'Raw Differential Magnitude' in output_lines[2]
+    assert 'Corrected Differential Magnitude' in output_lines[2]
+    first_row = [value.strip() for value in output_lines[3].split(',')]
+    assert first_row[2] == f"{-2.5 * np.log10(0.8):.4f}"
+    assert first_row[4] == f"{-2.5 * np.log10(0.8 / 0.8):.4f}"
+    assert first_row[6] == '0.8000000'
+
+
+def test_final_lightcurve_csv_writes_raw_and_corrected_differential_rows(tmp_path):
+    (tmp_path / 'working_artifacts').mkdir()
+    fit = SimpleNamespace(
+        stellar_variability_only=False,
+        time=np.array([2461229.9, 2461229.91]),
+        data=np.array([0.8, 1.2]),
+        dataerr=np.full(2, 0.008),
+        detrended=np.ones(2),
+        detrendederr=np.full(2, 0.01),
+        airmass=np.array([1.1, 1.4]),
+        airmass_model=np.array([0.8, 1.2]),
+        transit=np.ones(2),
+        stellar_variability_target_flux=np.array([800.0, 1200.0]),
+        stellar_variability_comp_flux=np.full(2, 1000.0),
+        stellar_variability_target_flux_error=np.full(2, 2.0),
+        stellar_variability_comp_flux_error=np.full(2, 3.0),
+    )
+    p_dict = {'pName': 'Transit Target b', 'sName': 'Transit Target'}
+    i_dict = {'save': str(tmp_path), 'date': '2026-08-17', 'filter': 'V'}
+
+    OutputFiles(fit, p_dict, i_dict, []).final_lightcurve(np.array([0.1, 0.2]))
+    output_path = next(
+        (tmp_path / 'working_artifacts').glob('FinalLightCurve_TransitTargetb_2026-08-17.csv')
+    )
+    output_lines = output_path.read_text(encoding='utf-8').splitlines()
+
+    assert '# DIFFERENTIAL_MAGNITUDE_CORRECTION=airmass' in output_lines
+    assert 'Raw Differential Magnitude' in output_lines[4]
+    assert 'Corrected Differential Magnitude' in output_lines[4]
+    first_row = [value.strip() for value in output_lines[5].split(',')]
+    assert first_row[5] == '1.1'
+    assert first_row[6] == '0.8'
+    assert first_row[7] == f"{-2.5 * np.log10(0.8):.4f}"
+    assert first_row[9] == f"{-2.5 * np.log10(0.8 / 0.8):.4f}"
+
+
+def test_linear_baseline_metadata_reconstructs_raw_flux_and_differential_magnitude():
+    times = np.array([2461229.9, 2461229.91, 2461229.92])
+    corrected_flux = np.array([1.0, 0.99, 1.0])
+    corrected_error = np.full(3, 0.01)
+    fit = SimpleNamespace(
+        stellar_variability_only=False,
+        time=times,
+        data=corrected_flux,
+        dataerr=corrected_error,
+        detrended=corrected_flux,
+        detrendederr=corrected_error,
+        airmass=np.array([1.1, 1.2, 1.3]),
+        transit=np.ones(3),
+        oot_baseline_detrending_applied=True,
+        oot_baseline_reference_time_bjd_tdb=times[1],
+        oot_baseline_intercept=1.0,
+        oot_baseline_slope=2.0,
+    )
+    expected_model = 1.0 + 2.0 * (times - times[1])
+
+    detrend_model = aavso_detrend_model(fit)
+    raw_flux, raw_error = aavso_undetrended_flux_series(fit, detrend_model)
+    series = magnitude_series_from_fit(fit)
+
+    np.testing.assert_allclose(detrend_model, expected_model)
+    np.testing.assert_allclose(raw_flux, corrected_flux * expected_model)
+    np.testing.assert_allclose(raw_error, corrected_error * expected_model)
+    np.testing.assert_allclose(
+        series['raw_differential_magnitude'],
+        -2.5 * np.log10(corrected_flux * expected_model),
+    )
+    np.testing.assert_allclose(
+        series['corrected_differential_magnitude'],
+        -2.5 * np.log10(corrected_flux),
+    )
+    assert series['correction_type'] == 'out_of_transit_linear_baseline'
+    assert series['correction_applied'] is True
+    assert series['airmass_corrected'] is False
 
 
 def test_calibrated_ensemble_keeps_apparent_magnitudes_independent_of_raw_differential():
@@ -490,6 +653,13 @@ def test_observable_depth_is_separate_from_area_depth_for_grazing_geometry():
 
 def test_aavso_output_includes_observatory_location_headers(tmp_path):
     fit = DummyFit()
+    fit.oot_baseline_detrending_applied = True
+    fit.oot_baseline_detrending_note = "Applied weighted linear out-of-transit baseline detrending."
+    fit.oot_baseline_reference_time_bjd_tdb = fit.time[0]
+    fit.oot_baseline_intercept = 1.2
+    fit.oot_baseline_slope = 0.05
+    fit.oot_baseline_pre_points = 4
+    fit.oot_baseline_post_points = 5
     fit.stellar_variability_target_flux = np.array([500.0])
     fit.stellar_variability_comp_flux = np.array([1000.0])
     fit.stellar_variability_target_flux_error = np.array([2.0])
@@ -592,8 +762,43 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
     assert "#GAIAPMDEC=-9.5" in output_text
     magnitude_fields = aavso_json_header(output_text, "MAGNITUDE_FIELDS-XC")
     magnitude_row = aavso_json_header(output_text, "MAGNITUDE-XC")
+    baseline_metadata = aavso_json_header(output_text, "OUT_OF_TRANSIT_BASELINE-XC")
+    detrend_metadata = aavso_json_header(output_text, "DETREND_PARAMETERS-XC")
+    assert baseline_metadata == {
+        "applied": True,
+        "forward_correction": "detrended_flux = raw_flux / baseline(t)",
+        "intercept": 1.2,
+        "inverse_correction": "raw_flux = detrended_flux * baseline(t)",
+        "model": (
+            "baseline(t) = intercept + slope_per_day * "
+            "(BJD_TDB - reference_time_bjd_tdb)"
+        ),
+        "note": "Applied weighted linear out-of-transit baseline detrending.",
+        "post_egress_point_count": 5,
+        "pre_ingress_point_count": 4,
+        "reference_time_bjd_tdb": fit.time[0],
+        "serialized_model_available": True,
+        "slope_per_day": 0.05,
+    }
+    assert "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION" in output_text
+    assert detrend_metadata == {
+        "DETREND_1": "airmass",
+        "DETREND_2": "out_of_transit_linear_baseline_correction_function",
+        "standard_header_preserved": True,
+    }
     assert magnitude_fields["apparent_calibrated"] is True
     assert magnitude_fields["differential_magnitude"].startswith("target minus")
+    assert magnitude_fields["raw_differential_magnitude"].startswith("target minus")
+    assert magnitude_fields["differential_magnitude"].endswith(
+        "corrected_differential_magnitude"
+    )
+    assert magnitude_row["raw_differential_magnitude"] == round(differential_mag, 4)
+    assert magnitude_row["raw_differential_magnitude_error"] == round(differential_error, 4)
+    assert magnitude_row["corrected_differential_magnitude"] == round(differential_mag, 4)
+    assert magnitude_row["corrected_differential_magnitude_error"] == round(
+        differential_error,
+        4,
+    )
     assert magnitude_row["differential_magnitude"] == round(differential_mag, 4)
     assert magnitude_row["differential_magnitude_error"] == round(differential_error, 4)
     assert magnitude_row["apparent_magnitude"] == round(12.0 + differential_mag, 4)
@@ -601,6 +806,7 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         np.hypot(0.02, differential_error),
         4,
     )
+    assert "2450000.123456,1.2,0.012,1.0,1.2" in output_text
 
 
 def test_aavso_output_omits_obsname_header_when_blank(tmp_path):

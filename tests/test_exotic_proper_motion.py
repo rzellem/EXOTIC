@@ -3675,6 +3675,7 @@ def test_detrend_flux_on_out_of_transit_baseline_removes_linear_slope():
     assert np.allclose(result["flux"][[0, 1, 2, 4, 5, 6]], 1.0, atol=1e-8)
     assert result["flux"][3] == pytest.approx(0.99, abs=1e-8)
     assert result["slope"] == pytest.approx(0.02, abs=1e-8)
+    assert result["reference_time_bjd_tdb"] == pytest.approx(0.0)
 
 
 def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened_flux(monkeypatch):
@@ -3730,6 +3731,7 @@ def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened
     assert refit_flux[3] == pytest.approx(0.99, abs=1e-8)
     assert np.allclose(refit_unc[[0, 1, 2, 4, 5, 6]], 0.01 / (1.0 + 0.02 * times[[0, 1, 2, 4, 5, 6]]))
     assert fit.oot_baseline_detrending_applied is True
+    assert fit.oot_baseline_reference_time_bjd_tdb == pytest.approx(0.0)
     assert fit.oot_baseline_pre_points == 3
     assert fit.oot_baseline_post_points == 3
 

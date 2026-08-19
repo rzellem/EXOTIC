@@ -17881,8 +17881,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
             ra_pixel = float(np.asarray(ra_pix, dtype=float).reshape(-1)[0])
             dec_pixel = float(np.asarray(dec_pix, dtype=float).reshape(-1)[0])
             if not (
-                1 < ra_pixel < axis[0]
-                and 1 < dec_pixel < axis[1]
+                vsp_candidate_clear_of_edges(ra_pixel, dec_pixel, axis)
                 and obs_filter in [band['band'] for band in star['bands']]
             ):
                 continue
@@ -18079,6 +18078,32 @@ def merge_aavso_vsp_v_calibration_fallback(
             "comparison-star calibration pool."
         )
     return unified_calibrations, vsp_calibrations, chart_id, True
+
+
+# Fraction of each frame dimension that a VSP-added comparison star must sit
+# clear of every edge. Auto-added comps near an edge track out of the frame
+# under ordinary MicroObservatory pointing drift (tens of pixels per night is
+# routine; ~70-150 px has been measured on real EpW nights), and a comparison
+# that leaves the frame mid-series fails photometry after having already been
+# accepted. 5% of a 650x500 MObs frame keeps candidates >=32 px from the x
+# edges and >=25 px from the y edges.
+VSP_COMPARISON_EDGE_MARGIN_FRACTION = 0.05
+
+
+def vsp_candidate_clear_of_edges(ra_pixel, dec_pixel, axis,
+                                 margin_fraction=VSP_COMPARISON_EDGE_MARGIN_FRACTION):
+    """True when the candidate sits at least margin_fraction of each dimension
+    away from every frame edge."""
+    try:
+        x = float(ra_pixel)
+        y = float(dec_pixel)
+        x_size = float(axis[0])
+        y_size = float(axis[1])
+    except (TypeError, ValueError, IndexError):
+        return False
+    x_margin = x_size * margin_fraction
+    y_margin = y_size * margin_fraction
+    return (x_margin <= x <= x_size - x_margin) and (y_margin <= y <= y_size - y_margin)
 
 
 def add_vsp_star(vsp_star_count, user_comp_stars, vsp_star):

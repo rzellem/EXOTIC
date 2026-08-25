@@ -645,13 +645,13 @@ def time_bin(time, flux, dt=1. / (60 * 24)):
 def binner(arr, n, err=''):
     if len(err) == 0:
         ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant',
-                      constant_values=np.NaN).reshape(-1, n)
+                      constant_values=np.nan).reshape(-1, n)
         arr = bn.nanmean(ecks, axis=1)
         return arr
     else:
         ecks = np.pad(arr.astype(float), (0, ((n - arr.size % n) % n)), mode='constant',
-                      constant_values=np.NaN).reshape(-1, n)
-        why = np.pad(err.astype(float), (0, ((n - err.size % n) % n)), mode='constant', constant_values=np.NaN).reshape(
+                      constant_values=np.nan).reshape(-1, n)
+        why = np.pad(err.astype(float), (0, ((n - err.size % n) % n)), mode='constant', constant_values=np.nan).reshape(
             -1, n)
         weights = 1. / (why ** 2.)
         # Calculate the weighted average

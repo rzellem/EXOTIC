@@ -31,6 +31,11 @@ To install EXOTIC, use Python 3.12 or newer. Python 3.13 is tested and recommend
    ```
    pip install exotic
    ```
+4. MPI support is optional but recommended when your computer already has a compatible MPI runtime, or when you have permission to install one. It can support MPI-aware work in UltraNest and LDTk, but ordinary EXOTIC reductions run normally without it. EXOTIC detects working MPI support automatically; no EXOTIC setting is required. If an MPI runtime is available but `mpi4py` is not already installed, add the optional Python bindings with:
+   ```
+   pip install "exotic[mpi]"
+   ```
+   If you cannot install system software, skip this step; no core EXOTIC reduction capability is removed.
 5. (Optional) Run EXOTIC's graphical user interface (GUI):
    ```
    exotic-gui

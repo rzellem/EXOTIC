@@ -25,6 +25,10 @@ jobs:
           python -m pip install -e '.[test]'
       - name: Check dependency consistency
         run: python -m pip check
+      - name: Verify the default install works without MPI
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('mpi4py') is None"
+          python -c "import ldtk; import exotic.exotic"
       - name: Run tests
         env:
           MPLBACKEND: Agg

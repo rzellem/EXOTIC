@@ -27,6 +27,5 @@ scikit-image>=0.26.0
 tifffile>=2026.8.23
 statsmodels>=0.14.6
 tenacity>=9.1.4
-mpi4py>=4.1.2;platform_system=='Linux'
 ultranest>=4.5.0
 zstandard>=0.25.0

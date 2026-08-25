@@ -322,6 +322,10 @@ def observable_depth_fraction(parameters, model_flux=None, times=None):
         fallback_depth = _depth_fraction_from_model_flux(model_flux)
         return fallback_depth if np.isfinite(fallback_depth) else geometric_observable_depth_fraction(values)
 
+    geometric_depth = geometric_observable_depth_fraction(values)
+    if np.isfinite(geometric_depth) and geometric_depth == 0:
+        return 0.0
+
     transit_model = _load_transit_model()
     if transit_model is not None:
         try:

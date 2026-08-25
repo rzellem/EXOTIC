@@ -531,7 +531,7 @@ class rv_fitter(lc_fitter):
         omega = np.linspace(0, -np.pi/2- self.data[0]['priors']['omega']*np.pi/180,10000)
         dt = (self.data[0]['priors']['per']/(2*np.pi*np.sqrt(1-self.data[0]['priors']['ecc']**2)))
         fn = (1-self.data[0]['priors']['ecc']**2)/(1+self.data[0]['priors']['ecc']*np.cos(omega))**2
-        integral = np.trapz(fn,omega)*dt
+        integral = np.trapezoid(fn, omega) * dt
         tperi = newtime[mide]-integral
         midp = np.argmin(np.abs(newtime-tperi))
         tperi2 = newtime[np.argmin(distance)]

@@ -3367,7 +3367,21 @@ def estimate_transit_duration_samples_from_fit(fit, sample_count=1000, grid_size
     if transit_times.size < 2:
         return None, np.array([], dtype=float)
 
-    baseline_parameters = dict(parameters)
+    baseline_parameters = dict(getattr(fit, 'prior', {}) or {})
+    baseline_parameters.update(parameters)
+    required_transit_parameters = (
+        'u0', 'u1', 'u2', 'u3', 'rprs', 'per', 'ars', 'ecc', 'inc', 'omega', 'tmid',
+    )
+    try:
+        has_complete_transit_geometry = all(
+            np.isfinite(float(baseline_parameters[key]))
+            for key in required_transit_parameters
+        )
+    except (KeyError, TypeError, ValueError):
+        has_complete_transit_geometry = False
+    if not has_complete_transit_geometry:
+        return None, np.array([], dtype=float)
+
     fit_transit_model = getattr(fit, '_transit_model', None)
     if callable(fit_transit_model):
         baseline_model = fit_transit_model(transit_times, baseline_parameters)
@@ -17747,24 +17761,47 @@ def check_for_variable_stars(ra_wcs, dec_wcs, comp_stars, use_nextastro_variabil
         if query_variable_star_apis(ra, dec):
             comp_stars.remove(comp_star)
 
+def calibration_frame_available(calibration_frame):
+    return calibration_frame is not None and np.asarray(calibration_frame).size != 0
+
+
+def require_positive_calibration_exposure(exposure_time, frame_description):
+    try:
+        exposure_time = float(exposure_time)
+    except (TypeError, ValueError):
+        exposure_time = np.nan
+    if not np.isfinite(exposure_time) or exposure_time <= 0:
+        raise ValueError(
+            f"A positive exposure time is required for {frame_description} when using an "
+            "exposure-scaled dark."
+        )
+    return exposure_time
+
+
 # Apply calibrations if applicable
-def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i):
-    if gen_dark is not None and gen_dark.size != 0:
+def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i, exposure_time=None):
+    has_dark = calibration_frame_available(gen_dark)
+    has_bias = calibration_frame_available(gen_bias)
+
+    if has_dark and has_bias:
+        exposure_time = require_positive_calibration_exposure(exposure_time, "a science frame")
+        if i == 0:
+            log_info("Bias- and exposure-scaled dark-correcting images.")
+        image_data = image_data - gen_bias - gen_dark * exposure_time
+    elif has_dark:
         if i == 0:
             log_info("Dark subtracting images.")
         image_data = image_data - gen_dark
-    elif gen_bias is not None and gen_bias.size != 0:  # if a dark is not available, then at least subtract off the pedestal via the bias
+    elif has_bias:
         if i == 0:
             log_info("Bias-correcting images.")
         image_data = image_data - gen_bias
-    else:
-        pass
 
-    if gen_flat is not None and gen_flat.size != 0:
+    if calibration_frame_available(gen_flat):
         if i == 0:
             log_info("Flattening images.")
-        gen_flat[gen_flat == 0] = 1
-        image_data = image_data / gen_flat
+        safe_flat = np.where(gen_flat == 0, 1, gen_flat)
+        image_data = image_data / safe_flat
     return image_data
 
 def calculate_demosaic_mult(demosaic_out): 
@@ -18566,6 +18603,7 @@ def _load_bad_pixel_precheck_worker_frame(file_name):
         context.get('generalBias'),
         context.get('generalFlat'),
         1,
+        exposure_time=get_exp_time(image_header),
     )
     image_data = demosaic_img(
         image_data,
@@ -19037,6 +19075,7 @@ def _load_alignment_worker_frame(file_name):
             context.get('generalBias'),
             context.get('generalFlat'),
             1,
+            exposure_time=get_exp_time(image_header),
         )
         image_data = demosaic_img(
             image_data,
@@ -21868,32 +21907,44 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False, fast_m
     )
     return sky_median, sky_sigma, float(np.sum(annulus_pixel_weights))
 
-def process_dark_frames(dark_files):
-    """Process dark frames and return the master dark."""
+def process_dark_frames(dark_files, master_bias=None):
+    """Return a master biasdark, or a debiased dark-current image in counts/second."""
     if not dark_files:
         return None
-    # Dark files whose median is much higher than the overall dark files median will be filtered
-    # e.g. to discard saturated dark files that may negatively affect the master dark used to calibrate the science frames
-    # First pass: collect all dark frame medians
-    darks_medians = [(dark_file, np.nanmedian(fits.getdata(dark_file))) for dark_file in dark_files]
 
-    d_median = np.median([median for _, median in darks_medians])
+    scale_by_exposure = calibration_frame_available(master_bias)
+    dark_components = []
+    for dark_file in dark_files:
+        dark_data, dark_header = fits.getdata(dark_file, header=True)
+        dark_data = np.asarray(dark_data, dtype=float)
+        if scale_by_exposure:
+            dark_exposure = require_positive_calibration_exposure(
+                get_exp_time(dark_header),
+                f"dark frame {dark_file}",
+            )
+            dark_data = (dark_data - master_bias) / dark_exposure
+        dark_components.append((dark_file, dark_data, np.nanmedian(dark_data)))
+
+    # Dark components whose median is much higher than the overall median are
+    # filtered, e.g. to discard a saturated dark before building the master.
+    d_median = np.median([median for _, _, median in dark_components])
     threshold = 1.7  # 70% higher than overall median
-
-    # Second pass: collect valid dark frames
     darks_img_list = []
-    for dark_file, dark_median in darks_medians:
-        median_ratio = dark_median / d_median
-        if median_ratio > threshold:
+    for dark_file, dark_data, dark_median in dark_components:
+        median_ratio = (
+            dark_median / d_median
+            if np.isfinite(d_median) and d_median > 0
+            else np.nan
+        )
+        if np.isfinite(median_ratio) and median_ratio > threshold:
             log_info(
                 f"\nWarning: Skipping suspicious dark frame {dark_file}: "
                 f"median/overall_median = {median_ratio:.2f}\n",
                 warn=True
             )
             continue
-        dark_data = fits.getdata(dark_file)
         darks_img_list.append(dark_data)
-            
+
     return np.median(darks_img_list, axis=0) if darks_img_list else None
 
 def process_bias_frames(bias_files):
@@ -21904,19 +21955,38 @@ def process_bias_frames(bias_files):
     biases_img_list = [fits.getdata(bias_file) for bias_file in bias_files]  
     return np.median(biases_img_list, axis=0) if biases_img_list else None
 
-def process_flat_frames(flat_files, master_bias=None):
-    """Process flat frames and return the normalized master flat."""
+def process_flat_frames(flat_files, master_bias=None, master_dark=None):
+    """Calibrate and normalize each flat before median-combining the components."""
     if not flat_files:
         return None
-        
-    flats_img_list = [fits.getdata(flat_file) for flat_file in flat_files]      
-    master_flat = np.median(flats_img_list, axis=0)
-    # Bias subtract after creating master flat
-    if master_bias is not None:
-        master_flat = master_flat - master_bias
-    # Normalize
-    medi = np.median(master_flat)
-    return master_flat / medi
+
+    has_bias = calibration_frame_available(master_bias)
+    has_dark = calibration_frame_available(master_dark)
+    normalized_flats = []
+    for flat_file in flat_files:
+        flat_data, flat_header = fits.getdata(flat_file, header=True)
+        flat_data = np.asarray(flat_data, dtype=float)
+
+        if has_dark and has_bias:
+            flat_exposure = require_positive_calibration_exposure(
+                get_exp_time(flat_header),
+                f"flat frame {flat_file}",
+            )
+            flat_data = flat_data - master_bias - master_dark * flat_exposure
+        elif has_dark:
+            flat_data = flat_data - master_dark
+        elif has_bias:
+            flat_data = flat_data - master_bias
+
+        flat_median = np.median(flat_data)
+        if not np.isfinite(flat_median) or flat_median <= 0:
+            raise ValueError(
+                f"Flat frame {flat_file} has a non-finite or non-positive median after calibration and "
+                "cannot be normalized."
+            )
+        normalized_flats.append(flat_data / flat_median)
+
+    return np.median(normalized_flats, axis=0) if normalized_flats else None
 
 def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
     global _BJD_FALLBACK_WARNING_LOGGED
@@ -27571,7 +27641,14 @@ def load_calibrated_reduction_frame(file_name, generalDark, generalBias, general
     image_data = hdul[extension].data
     hdul.close()
 
-    image_data = apply_cals(image_data, generalDark, generalBias, generalFlat, 1)
+    image_data = apply_cals(
+        image_data,
+        generalDark,
+        generalBias,
+        generalFlat,
+        1,
+        exposure_time=get_exp_time(image_header),
+    )
     image_data = demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, 1)
     image_data = repair_bad_pixels_in_frame(image_data, bad_pixel_reference)
     return image_header, image_data
@@ -32596,10 +32673,10 @@ def _main_impl():
         np.random.seed(exotic_infoDict['random_seed'])
 
         if fitsortext == 1:
-            # Only do the dark correction if user selects this option
-            generalDark = process_dark_frames(exotic_infoDict['darks'])
+            # Calibration frames apply only to FITS-image reductions.
             generalBias = process_bias_frames(exotic_infoDict['biases'])
-            generalFlat = process_flat_frames(exotic_infoDict['flats'], generalBias)
+            generalDark = process_dark_frames(exotic_infoDict['darks'], generalBias)
+            generalFlat = process_flat_frames(exotic_infoDict['flats'], generalBias, generalDark)
 
             if exotic_infoDict['demosaic_fmt']:
                 demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
@@ -32875,19 +32952,16 @@ def _main_impl():
             if pixel_alignment_enabled and reference_fallback is None:
                 for ifile in inputfiles:
                     plateStatus.setCurrentFilename(ifile)
-                    if bad_pixel_reference is not None:
-                        first_image = load_calibrated_reduction_image(
-                            ifile,
-                            generalDark,
-                            generalBias,
-                            generalFlat,
-                            demosaic_fmt,
-                            demosaic_out,
-                            demosaic_mult,
-                            bad_pixel_reference=bad_pixel_reference,
-                        )
-                    else:
-                        first_image = fits.getdata(ifile)
+                    first_image = load_calibrated_reduction_image(
+                        ifile,
+                        generalDark,
+                        generalBias,
+                        generalFlat,
+                        demosaic_fmt,
+                        demosaic_out,
+                        demosaic_mult,
+                        bad_pixel_reference=bad_pixel_reference,
+                    )
                     try:
                         initial_centroid = fit_centroid(first_image, [exotic_UIprevTPX, exotic_UIprevTPY], 0)
                         if np.isnan(initial_centroid[0]):
@@ -32952,7 +33026,16 @@ def _main_impl():
             if wcs_file:
                 if should_log_plate_solution_path(wcs_file):
                     log_info(f"\n{format_plate_solution_reference(wcs_file)}")
-                reference_image = fits.getdata(inputfiles[0])
+                reference_image = load_calibrated_reduction_image(
+                    inputfiles[0],
+                    generalDark,
+                    generalBias,
+                    generalFlat,
+                    demosaic_fmt,
+                    demosaic_out,
+                    demosaic_mult,
+                    bad_pixel_reference=bad_pixel_reference,
+                )
                 wcs_header = get_first_image_header(wcs_file)
                 ra_wcs, dec_wcs = get_ra_dec(wcs_header, image_shape=reference_image.shape)
 
@@ -34185,7 +34268,14 @@ def _main_impl():
 
                 # CALS
                 if not frame_uses_memmap:
-                    imageData = apply_cals(imageData, generalDark, generalBias, generalFlat, i)
+                    imageData = apply_cals(
+                        imageData,
+                        generalDark,
+                        generalBias,
+                        generalFlat,
+                        i,
+                        exposure_time=frame_exposure_s,
+                    )
                     # Demosaic, if needed
                     imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
                     imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference)

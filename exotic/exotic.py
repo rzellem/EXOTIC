@@ -67,6 +67,7 @@ import json
 import hashlib
 from math import atan2, cos, radians, sin, sqrt
 import multiprocessing
+import ntpath
 import os
 import shutil
 import sys
@@ -9388,7 +9389,7 @@ def configure_windows_multiprocessing_main_spec():
         return configured
 
     main_file = getattr(main_module, "__file__", None)
-    if not main_file or os.path.basename(os.fspath(main_file)).lower() not in {"exotic.exe", "exotic-script.py"}:
+    if not main_file or ntpath.basename(os.fspath(main_file)).lower() not in {"exotic.exe", "exotic-script.py"}:
         return configured
 
     if getattr(main_module, "__spec__", None) is not None:
@@ -9423,14 +9424,14 @@ def _windows_python_spawn_executable():
     candidates = [
         getattr(sys, "_base_executable", None),
         sys.executable,
-        os.path.join(sys.exec_prefix, "python.exe"),
-        os.path.join(getattr(sys, "base_exec_prefix", sys.exec_prefix), "python.exe"),
+        ntpath.join(sys.exec_prefix, "python.exe"),
+        ntpath.join(getattr(sys, "base_exec_prefix", sys.exec_prefix), "python.exe"),
     ]
     for candidate in candidates:
         if not candidate:
             continue
         executable = os.fspath(candidate)
-        if os.path.basename(executable).lower() in {"python.exe", "pythonw.exe"}:
+        if ntpath.basename(executable).lower() in {"python.exe", "pythonw.exe"}:
             return executable
     return None
 

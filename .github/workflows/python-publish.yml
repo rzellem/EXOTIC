@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
       with:
         fetch-depth: 0
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.13'
     - name: Upgrade tooling
@@ -31,7 +31,7 @@ jobs:
       run: |
         twine check dist/*
     - name: Store package
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: python-package-distribution
         path: |
@@ -48,7 +48,7 @@ jobs:
       id-token: write  # mandatory for trusted publishing
     steps:
     - name: Retrieve package
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: python-package-distribution
         path: dist/

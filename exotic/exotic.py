@@ -12859,9 +12859,20 @@ def sigma_clip(ogdata, sigma=3, dt=21, po=2, times=None):
         segment_ranges = [(0, valid_indices.size)]
 
     clipped_mask = np.zeros(valid_indices.size, dtype=bool)
+    # The bootstrap must not depend on unrelated callers consuming NumPy's
+    # process-global random state. A local seeded generator keeps identical
+    # photometry inputs reproducible across runs.
+    bootstrap_rng = np.random.RandomState(0)
     for start, stop in segment_ranges:
         local_values = values[valid_indices[start:stop]]
         if not (po < dt <= local_values.size):
+            continue
+
+        # Savitzky-Golay filtering can turn an exactly constant series into
+        # residuals at machine precision. Estimating scatter from those
+        # round-off residuals can then reject most of a perfectly valid flat
+        # light curve as apparent multi-sigma outliers.
+        if np.ptp(local_values) == 0:
             continue
 
         mdata = savgol_filter(local_values, window_length=dt, polyorder=po)
@@ -12871,7 +12882,7 @@ def sigma_clip(ogdata, sigma=3, dt=21, po=2, times=None):
             continue
         # Vectorized bootstrap estimate avoids Python-loop overhead in tight runs.
         sample_size = min(25, res.size)
-        bootstrap_samples = np.random.choice(res, size=(100, sample_size), replace=True)
+        bootstrap_samples = bootstrap_rng.choice(res, size=(100, sample_size), replace=True)
         std = bn.nanmedian(bn.nanstd(bootstrap_samples, axis=1))
         # std = np.nanstd(res) # biased from large outliers
         if not np.isfinite(std) or std <= 0:
@@ -24084,8 +24095,12 @@ def prepare_lightcurve_fit_input_series(
         note="Dropped non-finite or non-positive flux, uncertainty, time, or airmass values.",
     ))
 
-    if np.sum(~nanmask) <= 1:
-        prepared['failure_reason'] = "too few valid points remained after removing non-finite or non-positive photometry."
+    usable_point_count = int(np.count_nonzero(~nanmask))
+    if usable_point_count < LIGHTCURVE_MIN_VALID_POINTS:
+        prepared['failure_reason'] = (
+            f"only {usable_point_count} usable point(s) remained after filtering; "
+            f"need at least {LIGHTCURVE_MIN_VALID_POINTS} for a lightcurve fit."
+        )
         prepared.update({
             'filter_diagnostics': filter_diagnostics,
             'debug_times': debug_times,

@@ -3955,6 +3955,28 @@ def test_phase_bin_sigma_clip_flags_local_phase_outlier():
     assert mask[27]
 
 
+def test_sigma_clip_preserves_an_exactly_constant_series():
+    values = np.full(6, 3.0)
+    times = np.linspace(0.0, 0.05, values.size)
+
+    mask = sigma_clip(values, sigma=3, dt=5, times=times)
+
+    assert not mask.any()
+
+
+def test_sigma_clip_does_not_consume_process_global_random_state():
+    values = 1.0 + 0.001 * np.sin(np.linspace(0.0, 4.0 * np.pi, 21))
+    values[10] += 0.2
+    state_before = np.random.get_state()
+
+    sigma_clip(values, sigma=3, dt=11)
+
+    state_after = np.random.get_state()
+    assert state_after[0] == state_before[0]
+    assert np.array_equal(state_after[1], state_before[1])
+    assert state_after[2:] == state_before[2:]
+
+
 def test_sigma_clip_respects_large_time_gaps_between_segments():
     times_pre = 2461151.80 + np.arange(50, dtype=float) * 0.00075
     times_post = 2461151.98 + np.arange(8, dtype=float) * 0.00075
@@ -3972,9 +3994,7 @@ def test_sigma_clip_respects_large_time_gaps_between_segments():
     values = np.concatenate([values_pre, values_post])
     values[54] += 0.8
 
-    np.random.seed(0)
     old_mask = sigma_clip(values, sigma=3, dt=37, times=None)
-    np.random.seed(0)
     gap_aware_mask = sigma_clip(values, sigma=3, dt=37, times=times)
 
     assert old_mask[54:58].all()
@@ -7643,6 +7663,30 @@ def test_prepare_lightcurve_fit_input_series_normalizes_ratio_around_unity():
     assert np.nanmedian(prepared["debug_raw_ratio"]) == pytest.approx(3.0)
     assert prepared["approximate_baseline_level"] == pytest.approx(3.0)
     assert np.nanmedian(prepared["flux"]) == pytest.approx(1.0)
+
+
+def test_prepare_lightcurve_fit_input_series_rejects_fewer_than_five_usable_points(monkeypatch):
+    monkeypatch.setattr(
+        "exotic.exotic.sigma_clip",
+        lambda data, sigma=3, dt=21, po=2, times=None: np.array(
+            [False, False, False, False, True, True],
+            dtype=bool,
+        ),
+    )
+
+    prepared = prepare_lightcurve_fit_input_series(
+        np.linspace(0.0, 0.05, 6),
+        np.full(6, 30.0),
+        np.full(6, 10.0),
+        np.linspace(1.0, 1.5, 6),
+    )
+
+    assert prepared["applied"] is False
+    assert prepared["failure_reason"] == (
+        "only 4 usable point(s) remained after filtering; "
+        "need at least 5 for a lightcurve fit."
+    )
+    assert np.isnan(prepared["approximate_baseline_level"])
 
 
 def test_prepare_lightcurve_fit_input_series_uses_per_star_flux_errors(monkeypatch):

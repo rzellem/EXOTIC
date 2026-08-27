@@ -411,7 +411,56 @@ def test_plot_bestfit_uses_full_plot_time_range_for_phase_xlim(monkeypatch, tmp_
 
     assert axes[0].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
     assert axes[1].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
+    assert len(axes[1].child_axes) == 1
+    assert axes[1].child_axes[0].get_xlabel() == "Time [hours]"
     plt.close(fig)
+
+
+def test_plot_bestfit_adds_half_hour_offsets_between_flux_and_residuals(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+    fit.plot_time_range = (-0.08, 0.08)
+    fit._update_plot_geometry()
+
+    fig, axes = fit.plot_bestfit()
+    fig.canvas.draw()
+
+    assert axes[1].get_xlabel() == "Phase"
+    assert len(axes[1].child_axes) == 1
+    time_axis = axes[1].child_axes[0]
+    assert time_axis.get_xlabel() == "Time [hours]"
+    assert time_axis.get_xlim() == pytest.approx((-1.92, 1.92), abs=1e-5)
+    visible_labels = {
+        tick.get_text()
+        for tick in time_axis.get_xticklabels()
+        if tick.get_visible()
+    }
+    assert {"-1.5", "-1.0", "-0.5", "0", "+0.5", "+1.0", "+1.5"} <= visible_labels
+    plt.close(fig)
+
+
+def test_differential_hours_axis_skips_invalid_period(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    _, axis = plt.subplots()
+
+    assert elca._add_differential_hours_axis(axis, np.nan) is None
+    assert axis.child_axes == []
+    plt.close(axis.figure)
 
 
 def test_plot_bestfit_can_hide_flux_baseline_label(monkeypatch, tmp_path):
@@ -802,6 +851,8 @@ def test_glc_plot_bestfit_median_limits_use_full_phase_span(monkeypatch, tmp_pat
 
     assert axes[0].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
     assert axes[1].get_xlim() == pytest.approx((-0.04, 0.06), abs=1e-6)
+    assert len(axes[1].child_axes) == 1
+    assert axes[1].child_axes[0].get_xlabel() == "Time [hours]"
     plt.close(fig)
 
 

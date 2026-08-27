@@ -50,6 +50,7 @@ import os
 import sys
 import bottleneck as bn
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np
 from scipy import spatial
 from scipy.optimize import least_squares
@@ -96,6 +97,41 @@ ULTRANEST_LOCAL_UNCERTAINTY_MAX_DELTA_CHI2 = 9.0
 ULTRANEST_EXPANDED_PRIOR_WARMSTART_FULL_PRIOR_FRACTION = 0.5
 ULTRANEST_EXPANDED_PRIOR_WARMSTART_MINIMUM_SAMPLE_COUNT = 32
 ULTRANEST_EXPANDED_PRIOR_WARMSTART_MAXIMUM_SAMPLE_COUNT = 20000
+
+
+def _format_differential_hour_tick(hours, _position=None):
+    """Format half-hour offsets around phase zero with an explicit sign."""
+    if not np.isfinite(hours):
+        return ""
+    if np.isclose(hours, 0.0, atol=1.0e-9):
+        return "0"
+    return f"{hours:+.1f}"
+
+
+def _add_differential_hours_axis(ax, period_days):
+    """Add a phase-aligned hours axis to the upper edge of a phase plot."""
+    try:
+        period_hours = float(period_days) * 24.0
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(period_hours) or period_hours <= 0:
+        return None
+
+    def phase_to_hours(phase):
+        return np.asarray(phase, dtype=float) * period_hours
+
+    def hours_to_phase(hours):
+        return np.asarray(hours, dtype=float) / period_hours
+
+    time_axis = ax.secondary_xaxis(
+        'top',
+        functions=(phase_to_hours, hours_to_phase),
+    )
+    time_axis.xaxis.set_major_locator(MultipleLocator(0.5))
+    time_axis.xaxis.set_major_formatter(FuncFormatter(_format_differential_hour_tick))
+    time_axis.set_xlabel("Time [hours]", fontsize=14)
+    return time_axis
+
 
 def _pylightcurve_import_watchdog_seconds():
     try:
@@ -4617,6 +4653,11 @@ class lc_fitter(object):
             axs[0].set_xlabel("Time [day]", fontsize=14)
 
         axs[0].get_xaxis().set_visible(False)
+        if (
+            phase
+            and _add_differential_hours_axis(axs[1], self.parameters.get('per')) is not None
+        ):
+            f.subplots_adjust(hspace=0.55)
         axs[1].legend(loc='best')
         axs[0].legend(loc='best')
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
@@ -5179,6 +5220,8 @@ class glc_fitter(lc_fitter):
             axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
 
         axs[0].get_xaxis().set_visible(False)
+        if _add_differential_hours_axis(axs[1], self.parameters.get('per')) is not None:
+            f.subplots_adjust(hspace=0.55)
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
         axs[1].grid(True,ls='--',axis='y')
     

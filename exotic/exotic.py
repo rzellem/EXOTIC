@@ -15209,7 +15209,7 @@ def query_variable_star_apis(ra, dec):
 @retry(stop=stop_after_delay(30))
 def vsx_auid(ra, dec, radius=0.01, maglimit=14):
     try:
-        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
+        url = f"https://vsx.aavso.org/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
         result = requests.get(url, timeout=30)
         result.raise_for_status()
         vsx_objects = extract_vsx_objects(result.json())
@@ -15444,7 +15444,7 @@ def nextastro_vsx_field_query(ra, dec, radius_degrees):
 
 @retry(stop=stop_after_delay(30))
 def vsx_field_query(ra, dec, radius_degrees, maglimit=FORTUITOUS_VARIABLE_VSX_MAGNITUDE_LIMIT):
-    url = "https://www.aavso.org/vsx/index.php"
+    url = "https://vsx.aavso.org/index.php"
     response = requests.get(
         url,
         params={
@@ -15882,7 +15882,7 @@ def submit_nextastro_variability_request(api_url, payload, content_encoding=None
 def vsx_variable(ra, dec, radius=0.01, maglimit=14):
     default_vsx_error = None
     try:
-        url = f"https://www.aavso.org/vsx/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
+        url = f"https://vsx.aavso.org/index.php?view=api.list&ra={ra}&dec={dec}&radius={radius}&tomag={maglimit}&format=json"
         result = requests.get(url, timeout=30)
         result.raise_for_status()
         vsx_objects = extract_vsx_objects(result.json())
@@ -17915,7 +17915,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
     if fov > 180 and maglimit > 12:
         maglimit = 12
 
-    url = f"https://www.aavso.org/apps/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
+    url = f"https://apps.aavso.org/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
     data = fetch_aavso_vsp_chart(url)
     chart_id = data['chartid']
 

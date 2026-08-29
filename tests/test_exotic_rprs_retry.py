@@ -111,6 +111,10 @@ from exotic.exotic import (  # noqa: E402
     configure_rprs_range_restriction,
     configured_prior_centered_bounds_for_key,
     is_toi_or_tic_target,
+    lm_boundary_scout_expanded_bounds,
+    lm_boundary_scout_geometry_safe_bounds,
+    prepare_ultranest_bounds_with_lm_boundary_scout,
+    run_pre_ultranest_lm_residual_rejection,
     should_use_legacy_psf_flux_mode,
     should_run_final_fit_phase_residual_clip,
     should_run_final_residual_rejection,
@@ -143,6 +147,211 @@ def test_build_initial_rprs_bounds_allows_zero_depth_search_box():
         INITIAL_RPRS_BOUND_UPPER_SCALE * 0.1,
     ])
     assert INITIAL_RPRS_BOUND_LOWER_SCALE == pytest.approx(0.0)
+
+
+def test_lm_boundary_scout_keeps_an_interior_covariance_envelope_unchanged():
+    bounds, adjusted = lm_boundary_scout_expanded_bounds(
+        0.13,
+        0.002,
+        [0.10, 0.16],
+        minimum_bound=0.0,
+        maximum_bound=0.5,
+    )
+
+    assert adjusted is False
+    assert bounds == pytest.approx([0.10, 0.16])
+
+
+def test_lm_boundary_scout_expands_without_discarding_the_original_range():
+    bounds, adjusted = lm_boundary_scout_expanded_bounds(
+        0.13,
+        0.01,
+        [0.12, 0.15],
+        minimum_bound=0.0,
+        maximum_bound=0.5,
+    )
+
+    assert adjusted is True
+    assert bounds[0] <= 0.12
+    assert bounds[1] >= 0.15
+    assert bounds == pytest.approx([0.09, 0.17])
+
+
+def test_prepare_ultranest_bounds_runs_lm_until_geometry_is_interior(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    calls = []
+
+    def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, mode=None, **kwargs):
+        calls.append({"mode": mode, "bounds": {key: list(value) for key, value in bounds.items()}})
+        return types.SimpleNamespace(
+            parameters={**dict(prior), "rprs": 0.11, "ars": 11.0, "tmid": 0.0},
+            errors={"rprs": 0.01, "ars": 1.0, "tmid": 0.001},
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+    prior, bounds, payload = prepare_ultranest_bounds_with_lm_boundary_scout(
+        np.linspace(-0.03, 0.03, 20),
+        np.ones(20),
+        np.full(20, 0.01),
+        np.ones(20),
+        {"rprs": 0.10, "ars": 11.0, "tmid": 0.0},
+        {"rprs": [0.09, 0.11], "ars": [10.0, 12.0], "tmid": [-0.01, 0.01]},
+        enabled=True,
+    )
+
+    assert len(calls) == 3
+    assert all(call["mode"] == "lm" for call in calls)
+    assert payload["applied"] is True
+    assert payload["adjusted"] is True
+    assert payload["expanded_keys"] == ["ars", "rprs"]
+    assert bounds["rprs"] == pytest.approx([0.05, 0.15])
+    assert bounds["ars"] == pytest.approx([7.0, 15.0])
+    assert bounds["tmid"] == pytest.approx([-0.01, 0.01])
+    assert prior["rprs"] == pytest.approx(0.11)
+    assert prior["ars"] == pytest.approx(11.0)
+
+
+def test_lm_boundary_scout_geometry_envelope_covers_central_duration_limit():
+    fit = types.SimpleNamespace(
+        parameters={
+            "per": 3.86813881,
+            "rprs": 0.1312,
+            "ars": 11.07,
+            "inc": 86.1,
+            "ecc": 0.0,
+            "omega": 90.0,
+        },
+        duration_expected=0.09,
+    )
+
+    bounds, adjustments = lm_boundary_scout_geometry_safe_bounds(
+        {"per": 3.86813881, "rprs": 0.1336, "ars": 12.17},
+        fit,
+        {"rprs": [0.1104, 0.1520], "ars": [7.52, 14.62]},
+        {"rprs", "ars"},
+    )
+
+    central_limit = (1.0 + 0.1312) / np.sin(np.pi * 0.09 / 3.86813881)
+    assert bounds["rprs"] == pytest.approx([0.0668, 0.2004])
+    assert bounds["ars"][0] == pytest.approx(1.1312)
+    assert bounds["ars"][1] == pytest.approx(2.0 * central_limit)
+    assert {item["reason"] for item in adjustments} == {
+        "prior_scale_envelope",
+        "central_transit_duration_envelope",
+    }
+
+
+def test_nested_fit_runs_boundary_scout_before_first_ultranest(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    calls = []
+
+    def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, mode=None, **kwargs):
+        calls.append({"mode": mode, "bounds": {key: list(value) for key, value in bounds.items()}})
+        if mode == "lm":
+            return types.SimpleNamespace(
+                parameters={**dict(prior), "rprs": 0.109, "ars": 11.0, "tmid": 0.0},
+                errors={"rprs": 0.006, "ars": 0.2, "tmid": 0.001},
+            )
+        fit = types.SimpleNamespace(
+            parameters={**dict(prior), "rprs": 0.109, "ars": 11.0, "tmid": 0.0},
+        )
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: {
+            "clipped": False,
+            "edge": None,
+            "mode": fit.parameters.get(key, np.nan),
+            "std": 0.001,
+            "bounds": bounds.get(key),
+            "reason": "posterior support is comfortably inside the sampled bounds.",
+        }
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+    fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 20),
+        np.ones(20),
+        np.full(20, 0.01),
+        np.ones(20),
+        {"rprs": 0.10, "ars": 11.0, "tmid": 0.0},
+        {"rprs": [0.09, 0.11], "ars": [10.0, 12.0], "tmid": [-0.01, 0.01]},
+        use_lm_boundary_scout=True,
+        use_prior_rprs_when_posterior_pinned=False,
+    )
+
+    assert calls[0]["mode"] == "lm"
+    assert calls[-1]["mode"] == "ns"
+    assert calls[-1]["bounds"]["rprs"][0] <= 0.09
+    assert calls[-1]["bounds"]["rprs"][1] >= 0.11
+    assert fit.lm_boundary_scout_applied is True
+    assert fit.lm_boundary_scout_adjusted is True
+
+
+def test_low_level_nested_fit_requires_explicit_boundary_scout_opt_in(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, "ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED", True)
+    modes = []
+
+    def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, mode=None, **kwargs):
+        modes.append(mode)
+        fit = types.SimpleNamespace(parameters=dict(prior))
+        fit.get_parameter_posterior_recenter_diagnostics = lambda key: None
+        return fit
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+    run_nested_lightcurve_fit_with_rprs_posterior_retry(
+        np.linspace(-0.03, 0.03, 20),
+        np.ones(20),
+        np.full(20, 0.01),
+        np.ones(20),
+        {"rprs": 0.10, "ars": 11.0, "tmid": 0.0},
+        {"rprs": [0.09, 0.11], "ars": [10.0, 12.0], "tmid": [-0.01, 0.01]},
+        use_prior_rprs_when_posterior_pinned=False,
+    )
+
+    assert modes == ["ns"]
+
+
+def test_pre_ultranest_lm_residual_rejection_removes_outlier_before_sampling(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    original_times = np.linspace(-0.03, 0.03, 20)
+    outlier_time = original_times[-1]
+    modes = []
+
+    def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, mode=None, **kwargs):
+        times = np.asarray(times, dtype=float)
+        residuals = np.zeros(times.shape, dtype=float)
+        residuals[np.isclose(times, outlier_time)] = 10.0
+        modes.append(mode)
+        return types.SimpleNamespace(
+            parameters={**dict(prior), "rprs": 0.10, "ars": 11.0, "tmid": 0.0},
+            errors={"rprs": 0.001, "ars": 0.1, "tmid": 0.001},
+            residuals=residuals,
+            data=np.ones(times.shape, dtype=float),
+            detrended=np.ones(times.shape, dtype=float),
+            time=times,
+            phase=np.zeros(times.shape, dtype=float),
+        )
+
+    monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr(exotic_module, "ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED", True)
+    result = run_pre_ultranest_lm_residual_rejection(
+        original_times,
+        np.ones(20),
+        np.full(20, 0.01),
+        np.ones(20),
+        {"rprs": 0.10, "ars": 11.0, "tmid": 0.0},
+        {"rprs": [0.08, 0.12], "ars": [8.0, 14.0], "tmid": [-0.01, 0.01]},
+        source_indices=np.arange(20),
+    )
+
+    assert result["applied"] is True
+    assert np.flatnonzero(~result["keep_mask"]).tolist() == [19]
+    assert result["cycles"][0]["rejected_source_indices"] == [19]
+    assert result["cycles"][-1]["rejected_point_count"] == 0
+    assert set(modes) == {"lm"}
 
 
 def test_build_initial_rprs_bounds_restricts_to_prior_centered_window(monkeypatch):
@@ -1363,6 +1572,143 @@ def test_selected_fast_candidate_final_refit_reruns_after_residual_rejection(mon
         "Final residual rejection refit 1",
         "Final residual rejection refit 2",
     ]
+
+
+def test_selected_final_lm_preflight_avoids_high_live_point_residual_rerun(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    times = np.linspace(0.0, 1.0, 80)
+    keep_mask = np.ones(80, dtype=bool)
+    keep_mask[-1] = False
+    cycle = {
+        "enabled": True,
+        "applied": True,
+        "sigma": 3.0,
+        "input_point_count": 80,
+        "kept_point_count": 79,
+        "rejected_point_count": 1,
+        "median_residual_percent": 0.0,
+        "stdev_residual_percent": 0.2,
+        "clip_iteration_count": 1,
+        "clip_iterations": [],
+        "rejected_time": [float(times[-1])],
+        "rejected_phase": [0.0],
+        "rejected_flux": [1.0],
+        "rejected_residual_percent": [1.0],
+        "rejected_source_indices": [79],
+        "note": "test preflight rejection",
+    }
+    monkeypatch.setattr(
+        exotic_module,
+        "run_pre_ultranest_lm_residual_rejection",
+        lambda *args, **kwargs: {
+            "enabled": True,
+            "applied": True,
+            "keep_mask": keep_mask,
+            "cycles": [cycle],
+            "fit": None,
+            "note": "Rejected one point before UltraNest.",
+        },
+    )
+    monkeypatch.setattr(
+        exotic_module,
+        "selected_final_live_point_target",
+        lambda *args, **kwargs: (200, 1200),
+    )
+    calls = []
+
+    def fake_run_nested(
+        fit_times,
+        flux_values,
+        flux_errors,
+        airmass,
+        prior,
+        bounds,
+        **kwargs,
+    ):
+        calls.append({"count": len(fit_times), "live_points": kwargs["ultranest_min_num_live_points"]})
+        return types.SimpleNamespace(
+            time=np.asarray(fit_times, dtype=float),
+            data=np.asarray(flux_values, dtype=float),
+            dataerr=np.asarray(flux_errors, dtype=float),
+            airmass=np.asarray(airmass, dtype=float),
+            parameters={**dict(prior), "rprs": 0.1, "tmid": 0.5, "ars": 10.0, "inc": 89.0},
+            errors={"rprs": 0.001, "tmid": 0.001, "ars": 0.1, "inc": 0.1},
+            residuals=np.zeros(len(fit_times), dtype=float),
+            phase=np.linspace(-0.05, 0.05, len(fit_times)),
+            detrended=np.asarray(flux_values, dtype=float),
+            transit=np.ones(len(fit_times), dtype=float),
+            duration_measured=0.04,
+            duration_expected=0.04,
+            transit_qc={"status": "pass", "summary": "ok"},
+            transit_qc_status="pass",
+        )
+
+    monkeypatch.setattr(
+        exotic_module,
+        "run_nested_lightcurve_fit_with_rprs_posterior_retry",
+        fake_run_nested,
+    )
+    previous_fit = types.SimpleNamespace(
+        fast_ultranest_binning_applied=True,
+        frame_filter_diagnostics=[],
+        parameters={
+            "rprs": 0.1,
+            "ars": 10.0,
+            "per": 1.0,
+            "tmid": 0.5,
+            "inc": 89.0,
+            "u0": 0.1,
+            "u1": 0.1,
+            "u2": 0.1,
+            "u3": 0.1,
+            "ecc": 0.0,
+            "omega": 0.0,
+            "a0": 1.0,
+            "a1": 1.0,
+            "a2": 0.0,
+        },
+        errors={"a0": 0.0, "a1": 0.0, "a2": 0.0},
+        bounds={
+            "rprs": [0.05, 0.15],
+            "tmid": [0.49, 0.51],
+            "ars": [9.0, 11.0],
+            "inc": [85.0, 90.0],
+        },
+    )
+    selected_result = {
+        "fit": previous_fit,
+        "good_times": times,
+        "good_flux": np.ones(80),
+        "good_unc": np.full(80, 0.01),
+        "good_airmass": np.linspace(1.0, 1.3, 80),
+        "good_jd_times": 2460000.0 + times,
+        "good_target_flux": np.linspace(1000.0, 1080.0, 80),
+        "good_comp_flux": np.linspace(500.0, 540.0, 80),
+        "source_indices": np.arange(80),
+    }
+
+    returned, _, _ = refit_selected_fast_comparison_on_full_lightcurve(
+        selected_result,
+        {
+            "midT": 0.5,
+            "midTUnc": 0.001,
+            "pPer": 1.0,
+            "rprs": 0.1,
+            "aRs": 10.0,
+            "inc": 89.0,
+            "ecc": 0.0,
+            "omega": 0.0,
+        },
+        detrend_on_outoftransit_baseline=False,
+    )
+
+    assert calls == [{"count": 79, "live_points": 1200}]
+    assert returned.final_residual_rejection_rejected_count == 1
+    assert returned.final_residual_rejection["pre_ultranest_rejected_count"] == 1
+    assert returned.final_residual_rejection["refit_iteration_count"] == 0
+    assert selected_result["source_indices"][-1] == 78
+    assert returned.frame_filter_diagnostics[-1]["stage"] == "Pre-UltraNest LM residual rejection"
 
 
 def test_selected_fast_candidate_final_refit_resets_fixed_baseline_after_linear_detrend(monkeypatch):

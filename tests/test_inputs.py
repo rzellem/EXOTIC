@@ -1028,6 +1028,44 @@ def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
     assert inputs.info_dict["ultranest_min_num_live_points"] == 275
 
 
+def test_comp_params_reads_lm_boundary_scout_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"Use LM Boundary Scout Before UltraNest? (y/n)": "n"},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["use_lm_boundary_scout_before_ultranest"] == "n"
+
+
+def test_comp_params_reads_opt_in_quick_look_mode_and_defaults_off(tmp_path):
+    enabled_file = tmp_path / "enabled.json"
+    enabled_file.write_text(json.dumps({
+        "user_info": {},
+        "optional_info": {"quick_look_mode": True},
+        "planetary_parameters": {},
+    }))
+    disabled_file = tmp_path / "disabled.json"
+    disabled_file.write_text(json.dumps({
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }))
+
+    enabled_inputs = Inputs(init_opt="y")
+    enabled_inputs.comp_params(enabled_file, {})
+    disabled_inputs = Inputs(init_opt="y")
+    disabled_inputs.comp_params(disabled_file, {})
+
+    assert enabled_inputs.info_dict["quick_look_mode"] is True
+    assert disabled_inputs.info_dict["quick_look_mode"] is False
+
+
 def test_comp_params_reads_rprs_search_bound_max_from_optional_info(tmp_path):
     init_data = {
         "user_info": {},

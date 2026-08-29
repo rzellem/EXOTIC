@@ -3890,6 +3890,15 @@ class lc_fitter(object):
     def fit_LM(self):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
+        initial_parameters = np.asarray([self.prior[k] for k in freekeys], dtype=float)
+        parameter_scales = np.asarray(boundarray[:, 1] - boundarray[:, 0], dtype=float)
+        invalid_scales = ~np.isfinite(parameter_scales) | (parameter_scales <= 0)
+        parameter_scales[invalid_scales] = np.maximum(
+            np.abs(initial_parameters[invalid_scales]),
+            1.0,
+        )
+        scaled_lower_bounds = (boundarray[:, 0] - initial_parameters) / parameter_scales
+        scaled_upper_bounds = (boundarray[:, 1] - initial_parameters) / parameter_scales
         self._validate_flux_baseline_keys()
 
         # trim data around predicted transit/eclipse time
@@ -3904,7 +3913,12 @@ class lc_fitter(object):
             detrended = self.data / lightcurve
             wf = weightedflux(detrended, self.gw, self.nearest)
             model = lightcurve * wf
-            return ((self.data - model) / self.dataerr) ** 2
+            # scipy.optimize.least_squares squares the returned residuals when
+            # constructing its objective.  Return normalized residuals here so
+            # LM minimizes chi-square, rather than the fourth power of each
+            # residual.  The latter over-emphasizes isolated points and can pull
+            # a transit timing solution away from its ingress/egress anchors.
+            return (self.data - model) / self.dataerr
 
         def lc2min_airmass(pars):
             for i in range(len(pars)):
@@ -3926,15 +3940,35 @@ class lc_fitter(object):
                     self.dataerr,
                     mask=self._get_baseline_fit_mask(),
                 )
-            return ((self.data - model) / self.dataerr) ** 2
+            return (self.data - model) / self.dataerr
+
+        def scaled_residual_function(residual_function):
+            def evaluate(scaled_parameters):
+                physical_parameters = initial_parameters + np.asarray(
+                    scaled_parameters,
+                    dtype=float,
+                ) * parameter_scales
+                return residual_function(physical_parameters)
+
+            return evaluate
 
         try:
             if np.ndim(self.airmass) == 2:
-                res = least_squares(lc2min_nneighbor, x0=[self.prior[k] for k in freekeys],
-                                    bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
+                res = least_squares(
+                    scaled_residual_function(lc2min_nneighbor),
+                    x0=np.zeros(len(freekeys), dtype=float),
+                    bounds=[scaled_lower_bounds, scaled_upper_bounds],
+                    jac='3-point',
+                    loss='linear',
+                )
             else:
-                res = least_squares(lc2min_airmass, x0=[self.prior[k] for k in freekeys],
-                                    bounds=[boundarray[:, 0], boundarray[:, 1]], jac='3-point', loss='linear')
+                res = least_squares(
+                    scaled_residual_function(lc2min_airmass),
+                    x0=np.zeros(len(freekeys), dtype=float),
+                    bounds=[scaled_lower_bounds, scaled_upper_bounds],
+                    jac='3-point',
+                    loss='linear',
+                )
         except Exception as e:
             print(f"{e} \nbounded light curve fitting failed...check priors "
                   "(e.g. estimated mid-transit time + orbital period)")
@@ -3946,20 +3980,49 @@ class lc_fitter(object):
             print("removing bounds and trying again...")
 
             if np.ndim(self.airmass) == 2:
-                res = least_squares(lc2min_nneighbor, x0=[self.prior[k] for k in freekeys],
-                                    method='lm', jac='3-point', loss='linear')
+                res = least_squares(
+                    scaled_residual_function(lc2min_nneighbor),
+                    x0=np.zeros(len(freekeys), dtype=float),
+                    method='lm',
+                    jac='3-point',
+                    loss='linear',
+                )
             else:
-                res = least_squares(lc2min_airmass, x0=[self.prior[k] for k in freekeys],
-                                    method='lm', jac='3-point', loss='linear')
+                res = least_squares(
+                    scaled_residual_function(lc2min_airmass),
+                    x0=np.zeros(len(freekeys), dtype=float),
+                    method='lm',
+                    jac='3-point',
+                    loss='linear',
+                )
+
+        optimized_parameters = initial_parameters + np.asarray(res.x, dtype=float) * parameter_scales
 
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}
         self.quantiles = {}
 
+        parameter_errors = np.full(len(freekeys), np.nan, dtype=float)
+        try:
+            jacobian = np.asarray(res.jac, dtype=float)
+            degrees_of_freedom = max(int(res.fun.size) - len(freekeys), 1)
+            residual_variance = float(np.sum(np.square(res.fun)) / degrees_of_freedom)
+            scaled_covariance = np.linalg.pinv(jacobian.T @ jacobian) * residual_variance
+            covariance = scaled_covariance * np.outer(parameter_scales, parameter_scales)
+            diagonal = np.diag(covariance)
+            valid = np.isfinite(diagonal) & (diagonal >= 0)
+            parameter_errors[valid] = np.sqrt(diagonal[valid])
+        except (AttributeError, TypeError, ValueError, np.linalg.LinAlgError):
+            # A converged bounded fit is still useful when its local covariance
+            # is singular.  Preserve that result and report unavailable errors
+            # instead of the scientifically misleading zero uncertainties used
+            # by the historical LM path.
+            pass
+
         for i, k in enumerate(freekeys):
-            self.parameters[k] = res.x[i]
-            self.errors[k] = 0
-            self.quantiles[k] = [0, 0]
+            self.parameters[k] = optimized_parameters[i]
+            self.errors[k] = parameter_errors[i]
+            self.quantiles[k] = [-parameter_errors[i], parameter_errors[i]]
 
         self.sampled_keys = list(freekeys)
         self.sample_bounds = copy.deepcopy(self.bounds)

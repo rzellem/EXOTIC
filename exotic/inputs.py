@@ -306,6 +306,7 @@ class Inputs:
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,
+            'use_lm_boundary_scout_before_ultranest': 'y',
             'rprs_search_bound_max': 0.5,
             'restrict_rprs_range': 'y',
             'restrict_rprs_range_percentage': 10.0,
@@ -313,6 +314,7 @@ class Inputs:
             'restrict_ars_range': 'y',
             'restrict_ars_range_percentage': 10.0,
             'use_sparse_posterior_live_point_retry': 'y',
+            'quick_look_mode': False,
         }
         self.params = {
             'images': imaging_files, 'save': save_directory, 'aavso_num': obs_code, 'second_obs': second_obs_code,
@@ -529,6 +531,11 @@ class Inputs:
             'pm_dec': 'Star Proper Motion DEC (mas/yr)'
         }
         opt_info = {
+            'quick_look_mode': (
+                'quick_look_mode',
+                'Quick Look Mode',
+                'Quick Look Reduction',
+            ),
             'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
             'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
             'phot_comp_star': (
@@ -776,6 +783,11 @@ class Inputs:
                 'run fast ultranest before final run',
                 'Run Fast UltraNest Before Final Run? (y/n)',
                 'run_fast_ultranest_before_final_run',
+            ),
+            'use_lm_boundary_scout_before_ultranest': (
+                'use_lm_boundary_scout_before_ultranest',
+                'Use LM Boundary Scout Before UltraNest? (y/n)',
+                'use lm boundary scout before ultranest',
             ),
             'rprs_search_bound_max': (
                 'rprs_search_bound_max',

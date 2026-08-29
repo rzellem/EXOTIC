@@ -828,6 +828,9 @@ def write_differential_magnitude_csv(fit, save, target_name, observation_date=No
         or 'selected comparison reference'
     )
     with output_path.open('w', encoding='utf-8') as handle:
+        if getattr(fit, 'quick_look_mode', False):
+            handle.write('# QUICK LOOK — PRELIMINARY\n')
+            handle.write('# SUBMISSION_READY=NO\n')
         handle.write(
             '# AIRMASS_CORRECTION='
             f"{'YES' if series['airmass_corrected'] else 'NO'}\n"
@@ -2539,7 +2542,7 @@ class OutputFiles:
 
         if getattr(self.fit, 'stellar_variability_only', False):
             vsp_params = getattr(self.fit, 'stellar_variability_params', None) or []
-            with params_file.open('w') as f:
+            with params_file.open('w', encoding='utf-8') as f:
                 target_name = self.p_dict.get('sName', self.p_dict['pName'])
                 f.write(f"# FINAL STELLAR VARIABILITY TIMESERIES OF {target_name}\n")
                 reference_label = (
@@ -2609,7 +2612,11 @@ class OutputFiles:
             else:
                 corrected_flux_error = np.full(fit_times.shape, np.nan, dtype=float)
 
-        with params_file.open('w') as f:
+        with params_file.open('w', encoding='utf-8') as f:
+            if getattr(self.fit, 'quick_look_mode', False):
+                f.write("# QUICK LOOK — PRELIMINARY\n")
+                f.write("# INFERENCE_METHOD=LEAST_SQUARES_LM\n")
+                f.write("# SUBMISSION_READY=NO\n")
             f.write(f"# FINAL TIMESERIES OF {self.p_dict['pName']}\n")
             reference_label = (
                 getattr(self.fit, 'differential_magnitude_reference_label', None)
@@ -2895,6 +2902,16 @@ class OutputFiles:
             **depth_params,
             "Orbital Inclination (inc)": core_params["Orbital Inclination (inc)"],
         }
+        if getattr(self.fit, 'quick_look_mode', False):
+            params_num = {
+                "Analysis Mode": "Quick Look",
+                "Inference Method": "Least-squares (LM)",
+                "Uncertainty Type": (
+                    "Local covariance with existing empirical red-noise scaling; not a posterior"
+                ),
+                "Submission Ready": False,
+                **params_num,
+            }
         ars_text = format_parameter_with_error(
             self.fit.parameters.get('ars'),
             ars_report_error,
@@ -2959,6 +2976,17 @@ class OutputFiles:
         prefit_refinement_note = getattr(self.fit, 'prefit_refinement_note', None)
         if prefit_refinement_note:
             params_num["Prefit refinement note"] = str(prefit_refinement_note)
+        lm_boundary_scout_note = getattr(self.fit, 'lm_boundary_scout_note', None)
+        if lm_boundary_scout_note:
+            params_num["Pre-UltraNest LM boundary scout note"] = str(lm_boundary_scout_note)
+        if getattr(self.fit, 'lm_boundary_scout_adjusted', False):
+            params_num["Pre-UltraNest LM boundary scout expanded parameters"] = ", ".join(
+                str(key) for key in (getattr(self.fit, 'lm_boundary_scout_expanded_keys', []) or [])
+            )
+            params_num["Pre-UltraNest LM boundary scout final bounds"] = dumps(
+                getattr(self.fit, 'lm_boundary_scout_final_bounds', {}) or {},
+                sort_keys=True,
+            )
         geometry_prior_note = getattr(self.fit, 'partial_transit_geometry_prior_assumption_note', None)
         if geometry_prior_note:
             params_num["Prior-assumed partial-transit geometry note"] = str(geometry_prior_note)

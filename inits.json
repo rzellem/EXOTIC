@@ -43,6 +43,7 @@
         "Multiprocess Bad-Pixel Precheck": "Set optional_info 'multiprocess_bad_pixel_precheck' to y or a positive process count to scan bad pixels in parallel. Default n.",
         "Out-of-Transit Baseline Detrending": "Set optional_info 'detrend_on_outoftransit_baseline' to true to run a second-pass final fit after dividing out a weighted linear trend fit only to the modeled out-of-transit baseline before ingress and after egress. Default true.",
         "Final Fit Baseline Duration Multiplier": "Set optional_info 'final_fit_baseline_duration_multiplier' to the number of fitted transit durations to keep as baseline before ingress and after egress during the automatic final-fit prefit/refit. Default 1.0.",
+        "Quick Look Mode": "Set optional_info 'quick_look_mode' to true to run preliminary least-squares Quick Look analysis. The default is false, and a missing entry leaves the normal full reduction unchanged. Quick Look supports both FITS and pre-reduced inputs.",
         "EEBLS Tmid Initializer": "Set optional_info 'use_eebls_to_initialize_tmid_and_bounds' to y to run a fixed-period box least squares search over the light curve, use the strongest bracketed transit-like signal to initialize Tmid, and narrow the Tmid search range before fitting. Default y.",
         "Pick Comparison by EEBLS SNR": "Set optional_info 'pick_comparison_by_eebls_snr' to y to use EEBLS depth SNR as an earlier tie-break when KTMF scores do not settle the comparison-star choice. Default y.",
         "Expected-Value Transit QC": "Set optional_info 'use_deviation_from_expected_transit_in_qc' to true to reject transit fits whose fitted Rp/R* strays too far from the published expected value using the fitted Rp/R* uncertainty only. Default true.",
@@ -122,6 +123,7 @@
         "Star Proper Motion DEC (mas/yr)": 3.48
     },
     "optional_info": {
+        "quick_look_mode": false,
         "Pre-reduced File:": "/sample-data/NormalizedFlux_HAT-P-32 b_December 17, 2017.txt",
         "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
         "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": "flux",

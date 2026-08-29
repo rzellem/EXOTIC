@@ -322,6 +322,16 @@ OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT = 12
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
+ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT = True
+ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED = False
+ULTRANEST_LM_BOUNDARY_SCOUT_MAX_ITERATIONS = 4
+ULTRANEST_LM_BOUNDARY_SCOUT_SIGMA_MARGIN = 4.0
+ULTRANEST_LM_BOUNDARY_SCOUT_EDGE_FRACTION = 0.15
+ULTRANEST_LM_BOUNDARY_SCOUT_MAX_EXPANSION_WIDTHS_PER_ITERATION = 1.0
+ULTRANEST_LM_BOUNDARY_SCOUT_KEYS = ('rprs', 'ars', 'tmid')
+ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_LOWER_SCALE = 0.5
+ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_UPPER_SCALE = 1.5
+ULTRANEST_LM_BOUNDARY_SCOUT_ARS_CENTRAL_DURATION_UPPER_SCALE = 2.0
 FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT = True
 FAST_ULTRANEST_MAX_BINNED_POINTS = 20
 FAST_ULTRANEST_MIN_POINTS_TO_BIN = 60
@@ -616,6 +626,23 @@ def annotate_partial_transit_geometry_prior_assumption(fit, payload):
     )
 
 
+def annotate_lm_boundary_scout(fit, payload):
+    if fit is None:
+        return
+
+    payload = payload if isinstance(payload, dict) else {}
+    fit.lm_boundary_scout_enabled = bool(payload.get('enabled', False))
+    fit.lm_boundary_scout_applied = bool(payload.get('applied', False))
+    fit.lm_boundary_scout_adjusted = bool(payload.get('adjusted', False))
+    fit.lm_boundary_scout_iteration_count = int(payload.get('iteration_count', 0) or 0)
+    fit.lm_boundary_scout_expanded_keys = list(payload.get('expanded_keys') or [])
+    fit.lm_boundary_scout_adjustments = list(payload.get('adjustments') or [])
+    fit.lm_boundary_scout_final_bounds = clone_lightcurve_bounds(payload.get('bounds') or {})
+    fit.lm_boundary_scout_parameters = dict(payload.get('parameters') or {})
+    fit.lm_boundary_scout_errors = dict(payload.get('errors') or {})
+    fit.lm_boundary_scout_note = payload.get('note')
+
+
 def annotate_final_fit_prefit_refinement(
     fit,
     applied,
@@ -901,6 +928,9 @@ def initialize_final_residual_rejection_payload(
         'clip_iterations': [],
         'refit_iteration_count': 0,
         'refit_iterations': [],
+        'pre_ultranest_iteration_count': 0,
+        'pre_ultranest_iterations': [],
+        'pre_ultranest_rejected_count': 0,
         'rejected_time': [],
         'rejected_phase': [],
         'rejected_flux': [],
@@ -976,6 +1006,30 @@ def record_final_residual_rejection_refit_cycle(payload, cycle_payload, refit_it
     return payload
 
 
+def record_final_residual_rejection_preflight_cycle(payload, cycle_payload, preflight_iteration):
+    """Record LM clipping before UltraNest without counting it as a posterior refit."""
+    payload = dict(payload or {})
+    existing_refits = list(payload.get('refit_iterations', []) or [])
+    updated = record_final_residual_rejection_refit_cycle(
+        payload,
+        cycle_payload,
+        preflight_iteration,
+    )
+    recorded_entry = dict(updated.get('refit_iterations', [])[-1])
+    recorded_entry['phase'] = 'pre_ultranest_lm'
+    recorded_entry['iteration'] = int(preflight_iteration)
+    preflight_iterations = list(updated.get('pre_ultranest_iterations', []) or [])
+    preflight_iterations.append(recorded_entry)
+    updated['pre_ultranest_iterations'] = preflight_iterations
+    updated['pre_ultranest_iteration_count'] = len(preflight_iterations)
+    updated['pre_ultranest_rejected_count'] = int(
+        updated.get('pre_ultranest_rejected_count', 0) or 0
+    ) + int(cycle_payload.get('rejected_point_count', 0) or 0)
+    updated['refit_iterations'] = existing_refits
+    updated['refit_iteration_count'] = len(existing_refits)
+    return updated
+
+
 def update_final_residual_rejection_final_pass(payload, final_summary):
     payload = dict(payload or {})
     final_summary = dict(final_summary or {})
@@ -1003,6 +1057,8 @@ def finalize_final_residual_rejection_payload(
     rejected_count = int(payload.get('rejected_point_count', 0) or 0)
     input_point_count = int(payload.get('input_point_count', payload.get('kept_point_count', 0)) or 0)
     refit_count = int(payload.get('refit_iteration_count', 0) or 0)
+    preflight_count = int(payload.get('pre_ultranest_iteration_count', 0) or 0)
+    preflight_rejected_count = int(payload.get('pre_ultranest_rejected_count', 0) or 0)
     payload['applied'] = bool(payload.get('enabled', True) and rejected_count > 0)
     if not payload.get('enabled', True):
         if not payload.get('note'):
@@ -1022,10 +1078,16 @@ def finalize_final_residual_rejection_payload(
     elif stopped_reason == 'shape_mismatch':
         stop_text = " Stopped because the next residual array did not align with the light-curve points."
 
+    preflight_text = ""
+    if preflight_rejected_count > 0:
+        preflight_text = (
+            f" {preflight_rejected_count} were removed over {preflight_count} LM preflight "
+            "cycle(s) before the high-live-point UltraNest launch."
+        )
     payload['note'] = (
-        f"Rejected {rejected_count}/{input_point_count} final-fit residual outlier(s) over "
-        f"{refit_count} iterative UltraNest refit cycle(s) using "
+        f"Rejected {rejected_count}/{input_point_count} final-fit residual outlier(s) using "
         f"{float(payload.get('sigma', FINAL_RESIDUAL_REJECTION_SIGMA)):.1f}-sigma median clipping."
+        f"{preflight_text} UltraNest residual refit cycles: {refit_count}."
         f"{stop_text}"
     )
     return payload
@@ -4324,7 +4386,7 @@ def partial_transit_geometry_prior_assumption_note(mode, assessment, sampled_par
             "Applied prior-assumed transit geometry for a no-out-of-transit partial light curve; "
             "Rp/R*, a/Rs, and inclination/impact parameter were fixed to the input priors because "
             f"the observation contains {pre_points} pre-ingress and {post_points} post-egress "
-            f"out-of-transit point(s) ({observed_segment}). The nested fit keeps baseline/airmass "
+            f"out-of-transit point(s) ({observed_segment}). The fit keeps baseline/airmass "
             f"terms simultaneous with Tmid; sampled parameter(s): {sampled_text}."
         )
     return (
@@ -4683,6 +4745,191 @@ def match_time_subset_indices(full_times, subset_times, rtol=1e-10, atol=1e-10):
     return np.asarray(matched_indices, dtype=int)
 
 
+def fit_quick_look_lightcurve_least_squares(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    prior,
+    bounds,
+    jd_times=None,
+    exposure_times_seconds=None,
+    skip_airmass_fit=False,
+    airmass_skip_note=None,
+    detrend_on_outoftransit_baseline=True,
+    use_impactparameter_rather_than_inclination_to_fit=True,
+    plot_time_range=None,
+    expected_planet_dict=None,
+    expected_tmid_search_summary=None,
+    eebls_search_summary=None,
+):
+    """Fit one Quick Look comparison candidate without entering posterior inference."""
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    jd_times_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    exposure_times_array = (
+        None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
+    )
+    if jd_times_array is not None and jd_times_array.shape != times.shape:
+        jd_times_array = None
+    if exposure_times_array is not None and exposure_times_array.shape != times.shape:
+        exposure_times_array = None
+
+    def run_lm(fit_flux, fit_unc, fit_prior, fit_bounds):
+        fit_kwargs = {
+            'jd_times': jd_times_array,
+            'mode': 'lm',
+            'use_impactparameter_rather_than_inclination_to_fit':
+            use_impactparameter_rather_than_inclination_to_fit,
+            'fixed_parameter_errors': quick_look_fixed_parameter_errors,
+        }
+        add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, exposure_times_array)
+        return lc_fitter(
+            times,
+            fit_flux,
+            fit_unc,
+            airmass,
+            fit_prior,
+            fit_bounds,
+            **fit_kwargs,
+        )
+
+    duration_prior = (
+        build_single_transit_duration_prior(expected_planet_dict)
+        if isinstance(expected_planet_dict, dict)
+        else None
+    )
+    coverage_assessment = build_expected_transit_coverage_assessment(
+        times,
+        prior,
+        flux_values=flux_values,
+        flux_errors=flux_errors,
+        tmid_search_summary=expected_tmid_search_summary,
+        duration_prior=duration_prior,
+    )
+    (
+        quick_look_prior,
+        quick_look_bounds,
+        quick_look_fixed_parameter_errors,
+        partial_geometry_assumption,
+    ) = apply_partial_transit_geometry_prior_assumption(
+        prior,
+        bounds,
+        coverage_assessment,
+        flux_values=flux_values,
+        flux_errors=flux_errors,
+        airmass=airmass,
+        search_restriction_prior=build_search_restriction_prior_from_planet_dict(
+            expected_planet_dict or {}
+        ),
+    )
+
+    fit = run_lm(
+        flux_values,
+        flux_errors,
+        quick_look_prior,
+        quick_look_bounds,
+    )
+    if fit is None:
+        return None, flux_values, flux_errors
+    initial_parameters = dict(getattr(fit, 'parameters', {}) or {})
+    initial_errors = dict(getattr(fit, 'errors', {}) or {})
+
+    detrend_result = {
+        'applied': False,
+        'note': 'Disabled; using the direct least-squares fit.',
+        'pre_points': 0,
+        'post_points': 0,
+    }
+    fitted_flux = flux_values
+    fitted_unc = flux_errors
+    if detrend_on_outoftransit_baseline:
+        detrend_result = detrend_flux_on_out_of_transit_baseline(
+            times,
+            flux_values,
+            flux_errors,
+            fit,
+            prior=prior,
+        )
+        if detrend_result.get('applied'):
+            refit_prior = dict(quick_look_prior)
+            for key in ('rprs', 'ars', 'tmid', 'inc'):
+                if key in refit_prior and key in getattr(fit, 'parameters', {}):
+                    refit_prior[key] = fit.parameters[key]
+            refit_prior.update({'a0': 1.0, 'a1': 1.0, 'a2': 0.0})
+            refit_bounds = clone_lightcurve_bounds(quick_look_bounds)
+            for key in ('a0', 'a1', 'a2'):
+                refit_bounds.pop(key, None)
+            refit = run_lm(
+                np.asarray(detrend_result['flux'], dtype=float),
+                np.asarray(detrend_result['unc'], dtype=float),
+                refit_prior,
+                refit_bounds,
+            )
+            if refit is not None:
+                fit = refit
+                fitted_flux = np.asarray(detrend_result['flux'], dtype=float)
+                fitted_unc = np.asarray(detrend_result['unc'], dtype=float)
+                annotate_pre_detrending_baseline_coefficients(
+                    fit,
+                    source='initial Quick Look least-squares fit before linear baseline detrending',
+                    scale_parameter='a0' if 'a0' in initial_parameters else 'a1',
+                    scale_value=initial_parameters.get('a0', initial_parameters.get('a1')),
+                    scale_error=initial_errors.get('a0', initial_errors.get('a1')),
+                    a2_value=initial_parameters.get('a2'),
+                    a2_error=initial_errors.get('a2'),
+                )
+            else:
+                detrend_result = {
+                    'applied': False,
+                    'note': (
+                        'Out-of-transit detrending was computed, but its least-squares refit did not '
+                        'converge; retained the direct least-squares fit.'
+                    ),
+                    'pre_points': detrend_result.get('pre_points', 0),
+                    'post_points': detrend_result.get('post_points', 0),
+                }
+
+    fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
+    annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
+    annotate_transit_qc_fit_context(
+        fit,
+        planet_dict=expected_planet_dict,
+        tmid_search_summary=expected_tmid_search_summary,
+        eebls_search_summary=eebls_search_summary,
+    )
+    annotate_pre_ultranest_transit_coverage(fit, coverage_assessment)
+    annotate_partial_transit_geometry_prior_assumption(fit, partial_geometry_assumption)
+    annotate_out_of_transit_baseline_detrending(
+        fit,
+        detrend_result.get('applied', False),
+        note=detrend_result.get('note'),
+        slope=detrend_result.get('slope'),
+        intercept=detrend_result.get('intercept'),
+        reference_time_bjd_tdb=detrend_result.get('reference_time_bjd_tdb'),
+        pre_points=detrend_result.get('pre_points', 0),
+        post_points=detrend_result.get('post_points', 0),
+    )
+    annotate_out_of_transit_baseline_parameter_fit(
+        fit,
+        False,
+        note='Quick Look uses the configured linear out-of-transit detrending with an LM refit.',
+        pre_points=detrend_result.get('pre_points', 0),
+        post_points=detrend_result.get('post_points', 0),
+    )
+    fit.quick_look_mode = True
+    fit.analysis_mode = 'Quick Look'
+    fit.inference_method = 'Least-squares (LM)'
+    fit.uncertainty_type = (
+        'Local covariance with existing empirical red-noise scaling; not a posterior'
+    )
+    fit.submission_ready = False
+    annotate_transit_detection_qc(fit)
+    return fit, fitted_flux, fitted_unc
+
+
 def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, airmass, ld, p_dict,
                                                  jd_times=None,
                                                  target_flux_error=None,
@@ -4699,7 +4946,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
                                                  run_fast_ultranest_before_final_run=FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT,
                                                  run_final_fit_phase_residual_clip=FINAL_FIT_PHASE_RESIDUAL_CLIP_DEFAULT,
                                                  run_final_residual_rejection=FINAL_RESIDUAL_REJECTION_DEFAULT,
-                                                 precomputed_candidate_series=None):
+                                                 precomputed_candidate_series=None,
+                                                 inference_method='ultranest'):
     result = {
         'applied': False,
         'fit': None,
@@ -4849,7 +5097,10 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
                 "Final-fit phase residual clip",
                 good_times,
                 ~phase_clip_mask,
-                note="Dropped phase-binned residual outliers before the comparison-candidate ultranest fit.",
+                note=(
+                    "Dropped phase-binned residual outliers before the comparison-candidate "
+                    + ("least-squares fit." if inference_method == 'lm' else "UltraNest fit.")
+                ),
             ))
             good_times = good_times[~phase_clip_mask]
             good_flux = good_flux[~phase_clip_mask]
@@ -4877,6 +5128,82 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     full_good_target_flux_error = np.asarray(good_target_flux_error, dtype=float)
     full_good_comp_flux_error = np.asarray(good_comp_flux_error, dtype=float)
     full_source_indices = np.asarray(source_indices, dtype=int)
+
+    if inference_method == 'lm':
+        final_fit, fitted_flux, fitted_unc = fit_quick_look_lightcurve_least_squares(
+            good_times,
+            good_flux,
+            good_unc,
+            good_airmass,
+            prior,
+            bounds,
+            jd_times=good_jd_times,
+            exposure_times_seconds=good_exposure_times,
+            skip_airmass_fit=skip_final_airmass_fit,
+            airmass_skip_note=airmass_skip_note,
+            detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+            plot_time_range=plot_time_range,
+            expected_planet_dict=p_dict,
+            expected_tmid_search_summary=tmid_search_summary,
+            eebls_search_summary=eebls_search_summary,
+        )
+        if final_fit is None:
+            result['failure_reason'] = "the Quick Look least-squares candidate fit did not converge."
+            return result
+        annotate_final_residual_rejection(
+            final_fit,
+            {
+                'enabled': False,
+                'applied': False,
+                'note': 'Not run in Quick Look mode; posterior residual reruns are disabled.',
+                'input_point_count': int(good_times.size),
+                'kept_point_count': int(good_times.size),
+                'rejected_point_count': 0,
+                'sigma': FINAL_RESIDUAL_REJECTION_SIGMA,
+            },
+        )
+        annotate_lightcurve_filter_diagnostics(final_fit, result['filter_diagnostics'])
+        annotate_selected_photometry_debug(
+            final_fit,
+            prepared['debug_times'],
+            prepared['debug_target_flux'],
+            prepared['debug_comp_flux'],
+            prepared['debug_raw_ratio'],
+            prepared['initial_sigma_keep_mask'],
+            target_flux_error=prepared.get('debug_target_flux_error'),
+            comp_flux_error=prepared.get('debug_comp_flux_error'),
+            relative_flux_error=prepared.get('debug_relative_flux_error'),
+            prefit_raw_ratio_keep_mask=prepared.get('prefit_raw_ratio_keep_mask'),
+            phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
+        )
+        data_highres, duration_samples = estimate_transit_duration_samples_from_fit(final_fit)
+        result.update({
+            'applied': True,
+            'fit': final_fit,
+            'good_times': np.asarray(good_times, dtype=float),
+            'good_flux': np.asarray(fitted_flux, dtype=float),
+            'good_unc': np.asarray(fitted_unc, dtype=float),
+            'good_airmass': np.asarray(good_airmass, dtype=float),
+            'good_jd_times': np.asarray(good_jd_times, dtype=float),
+            'good_exposure_times_seconds': (
+                None if good_exposure_times is None else np.asarray(good_exposure_times, dtype=float)
+            ),
+            'good_target_flux': np.asarray(good_target_flux, dtype=float),
+            'good_comp_flux': np.asarray(good_comp_flux, dtype=float),
+            'good_target_flux_error': np.asarray(good_target_flux_error, dtype=float),
+            'good_comp_flux_error': np.asarray(good_comp_flux_error, dtype=float),
+            'source_indices': np.asarray(source_indices, dtype=int),
+            'fast_ultranest_binning': {'applied': False, 'note': 'Disabled in Quick Look mode.'},
+            'skip_airmass_fit': skip_final_airmass_fit,
+            'airmass_skip_note': airmass_skip_note,
+            'data_highres': data_highres,
+            'duration_samples': duration_samples,
+            'failure_reason': None,
+            'note': 'completed the Quick Look comparison-candidate least-squares reduction.',
+        })
+        return result
 
     fast_binning = {'applied': False, 'note': None}
     fit_times = full_good_times
@@ -5437,6 +5764,102 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             'a1': fixed_errors.get('a1', fixed_errors.get('a0', 0.0)),
             'a2': fixed_errors.get('a2', 0.0),
         }
+
+    if run_final_residual_rejection:
+        residual_rejection_payload = initialize_final_residual_rejection_payload(
+            enabled=True,
+            input_point_count=int(times.shape[0]),
+        )
+        preflight_times = times.copy()
+        lm_residual_preflight = run_pre_ultranest_lm_residual_rejection(
+            times,
+            fit_flux,
+            fit_unc,
+            airmass,
+            prior,
+            bounds,
+            jd_times=jd_times,
+            exposure_times_seconds=exposure_times,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+            fixed_parameter_errors=fixed_errors,
+            fixed_flux_baseline=True,
+            source_indices=source_indices,
+        )
+        for preflight_iteration, cycle_payload in enumerate(
+            lm_residual_preflight.get('cycles', []),
+            start=1,
+        ):
+            if not cycle_payload.get('applied'):
+                continue
+            residual_rejection_payload = record_final_residual_rejection_preflight_cycle(
+                residual_rejection_payload,
+                cycle_payload,
+                preflight_iteration,
+            )
+
+        preflight_keep_mask = np.asarray(
+            lm_residual_preflight.get('keep_mask', np.ones(times.shape, dtype=bool)),
+            dtype=bool,
+        )
+        if (
+            lm_residual_preflight.get('applied')
+            and preflight_keep_mask.shape == times.shape
+            and np.count_nonzero(preflight_keep_mask) >= LIGHTCURVE_MIN_VALID_POINTS
+        ):
+            residual_rejection_diagnostic = build_time_rejection_diagnostic(
+                "Pre-UltraNest LM residual rejection",
+                preflight_times,
+                preflight_keep_mask,
+                note=lm_residual_preflight.get('note'),
+            )
+            if residual_rejection_diagnostic is not None:
+                residual_rejection_diagnostics.append(residual_rejection_diagnostic)
+            times = times[preflight_keep_mask]
+            fit_flux = fit_flux[preflight_keep_mask]
+            fit_unc = fit_unc[preflight_keep_mask]
+            airmass = airmass[preflight_keep_mask]
+            jd_times = None if jd_times is None else jd_times[preflight_keep_mask]
+            exposure_times = (
+                None if exposure_times is None else exposure_times[preflight_keep_mask]
+            )
+            target_flux_values = (
+                None if target_flux_values is None else target_flux_values[preflight_keep_mask]
+            )
+            comp_flux_values = (
+                None if comp_flux_values is None else comp_flux_values[preflight_keep_mask]
+            )
+            target_flux_error_values = (
+                None
+                if target_flux_error_values is None
+                else target_flux_error_values[preflight_keep_mask]
+            )
+            comp_flux_error_values = (
+                None
+                if comp_flux_error_values is None
+                else comp_flux_error_values[preflight_keep_mask]
+            )
+            source_indices = (
+                None if source_indices is None else source_indices[preflight_keep_mask]
+            )
+            search_restriction_prior = enrich_search_restriction_prior_with_rprs_data_uncertainty(
+                search_restriction_prior,
+                times,
+                fit_flux,
+                fit_unc,
+                prior,
+                context_label="LM-cleaned selected full-resolution final light curve",
+            )
+            bounds = widen_rprs_bounds_to_data_uncertainty_window(
+                bounds,
+                search_restriction_prior,
+            )
+            log_info(
+                f"Applied pre-UltraNest LM residual rejection: "
+                f"{preflight_times.size - times.size} point(s) removed before the "
+                f"{int(times.size)}-point high-live-point posterior."
+            )
+
     base_live_points, target_live_points = selected_final_live_point_target(
         sparse_live_point_extension_enabled,
     )
@@ -5489,15 +5912,17 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         ultranest_min_num_live_points=min_live_points,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
         search_restriction_prior=search_restriction_prior,
+        use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
     )
     if fit is None:
         return None
 
     if run_final_residual_rejection:
-        residual_rejection_payload = initialize_final_residual_rejection_payload(
-            enabled=True,
-            input_point_count=int(times.shape[0]),
-        )
+        if residual_rejection_payload is None:
+            residual_rejection_payload = initialize_final_residual_rejection_payload(
+                enabled=True,
+                input_point_count=int(times.shape[0]),
+            )
         residual_stop_reason = None
         for residual_refit_iteration in range(1, FINAL_RESIDUAL_REJECTION_MAX_REFITS + 1):
             min_required_points = max(len(bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
@@ -5614,6 +6039,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
                 ultranest_min_num_live_points=min_live_points,
                 pre_ultranest_coverage_assessment=residual_coverage_assessment,
                 search_restriction_prior=residual_search_restriction_prior,
+                use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
             )
             if refit is None:
                 residual_stop_reason = 'refit_failed'
@@ -6705,10 +7131,17 @@ def intersect_parameter_bounds(bounds, restriction):
     return [float(lower_bound), float(upper_bound)]
 
 
-def apply_configured_prior_search_restrictions(bounds, prior, allow_ars_expansion=False):
+def apply_configured_prior_search_restrictions(
+    bounds,
+    prior,
+    allow_rprs_expansion=False,
+    allow_ars_expansion=False,
+):
     restricted = widen_rprs_bounds_to_data_uncertainty_window(bounds, prior)
     for key in ('rprs', 'ars'):
         if key not in restricted:
+            continue
+        if key == 'rprs' and allow_rprs_expansion:
             continue
         if key == 'ars' and allow_ars_expansion:
             continue
@@ -7111,6 +7544,559 @@ def clamp_retry_priors_to_bounds(prior, bounds):
     )
 
 
+def lm_boundary_scout_expanded_bounds(
+    parameter_value,
+    parameter_error,
+    bounds,
+    *,
+    sigma_margin=ULTRANEST_LM_BOUNDARY_SCOUT_SIGMA_MARGIN,
+    edge_fraction=ULTRANEST_LM_BOUNDARY_SCOUT_EDGE_FRACTION,
+    maximum_expansion_widths=ULTRANEST_LM_BOUNDARY_SCOUT_MAX_EXPANSION_WIDTHS_PER_ITERATION,
+    minimum_bound=None,
+    maximum_bound=None,
+):
+    """Expand one search interval until an LM solution has posterior-sized edge room."""
+    try:
+        value = float(parameter_value)
+        error = float(parameter_error)
+        lower_bound, upper_bound = [
+            float(item) for item in np.asarray(bounds, dtype=float).reshape(-1)[:2]
+        ]
+    except (TypeError, ValueError, IndexError):
+        return list(bounds), False
+
+    if (
+        not np.isfinite(value)
+        or not np.isfinite(lower_bound)
+        or not np.isfinite(upper_bound)
+        or lower_bound >= upper_bound
+    ):
+        return [lower_bound, upper_bound], False
+
+    width = upper_bound - lower_bound
+    covariance_margin = (
+        float(max(0.0, sigma_margin)) * error
+        if np.isfinite(error) and error > 0
+        else 0.0
+    )
+    desired_margin = max(
+        float(max(0.0, edge_fraction)) * width,
+        covariance_margin,
+    )
+    if not np.isfinite(desired_margin) or desired_margin <= 0:
+        return [lower_bound, upper_bound], False
+
+    expand_lower = value - lower_bound < desired_margin
+    expand_upper = upper_bound - value < desired_margin
+    if not expand_lower and not expand_upper:
+        return [lower_bound, upper_bound], False
+
+    maximum_growth = max(float(maximum_expansion_widths), 0.0) * width
+    proposed_lower = min(lower_bound, value - desired_margin) if expand_lower else lower_bound
+    proposed_upper = max(upper_bound, value + desired_margin) if expand_upper else upper_bound
+    proposed_lower = max(proposed_lower, lower_bound - maximum_growth)
+    proposed_upper = min(proposed_upper, upper_bound + maximum_growth)
+
+    if minimum_bound is not None:
+        proposed_lower = max(float(minimum_bound), proposed_lower)
+    if maximum_bound is not None:
+        proposed_upper = min(float(maximum_bound), proposed_upper)
+    if not np.isfinite(proposed_lower) or not np.isfinite(proposed_upper) or proposed_lower >= proposed_upper:
+        return [lower_bound, upper_bound], False
+
+    meaningful_change = max(1e-12, 1e-4 * width)
+    adjusted = (
+        proposed_lower < lower_bound - meaningful_change
+        or proposed_upper > upper_bound + meaningful_change
+    )
+    if not adjusted:
+        return [lower_bound, upper_bound], False
+    return [float(proposed_lower), float(proposed_upper)], True
+
+
+def lm_boundary_scout_geometry_safe_bounds(configured_prior, fit, bounds, expanded_keys):
+    """Add a broad physical envelope when local LM edge contact exposes shape degeneracy."""
+    safe_bounds = clone_lightcurve_bounds(bounds)
+    expanded_keys = set(expanded_keys or [])
+    parameters = dict(getattr(fit, 'parameters', {}) or {}) if fit is not None else {}
+    adjustments = []
+
+    if 'rprs' in expanded_keys and 'rprs' in safe_bounds:
+        try:
+            configured_rprs = float((configured_prior or {}).get('rprs', np.nan))
+            old_lower, old_upper = [float(value) for value in safe_bounds['rprs']]
+        except (TypeError, ValueError):
+            configured_rprs = np.nan
+        if np.isfinite(configured_rprs) and configured_rprs > 0:
+            new_bounds = [
+                min(
+                    old_lower,
+                    max(
+                        RPRS_SEARCH_BOUND_MIN,
+                        ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_LOWER_SCALE * configured_rprs,
+                    ),
+                ),
+                max(
+                    old_upper,
+                    min(
+                        RPRS_SEARCH_BOUND_MAX,
+                        ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_UPPER_SCALE * configured_rprs,
+                    ),
+                ),
+            ]
+            if new_bounds[0] < old_lower - 1e-12 or new_bounds[1] > old_upper + 1e-12:
+                safe_bounds['rprs'] = new_bounds
+                adjustments.append({
+                    'key': 'rprs',
+                    'reason': 'prior_scale_envelope',
+                    'original_bounds': [old_lower, old_upper],
+                    'new_bounds': list(new_bounds),
+                })
+
+    if 'ars' in expanded_keys and 'ars' in safe_bounds and fit is not None:
+        try:
+            period = float(parameters.get('per', (configured_prior or {}).get('per', np.nan)))
+            rprs = float(parameters.get('rprs', (configured_prior or {}).get('rprs', np.nan)))
+            eccentricity = float(parameters.get('ecc', (configured_prior or {}).get('ecc', 0.0)))
+            omega_radians = np.deg2rad(
+                float(parameters.get('omega', (configured_prior or {}).get('omega', 0.0)))
+            )
+            duration = float(estimate_transit_duration_from_fit(fit))
+            old_lower, old_upper = [float(value) for value in safe_bounds['ars']]
+        except (TypeError, ValueError):
+            period = np.nan
+            rprs = np.nan
+            eccentricity = np.nan
+            omega_radians = np.nan
+            duration = np.nan
+
+        eccentric_denominator = (
+            1.0 + eccentricity * np.sin(omega_radians)
+            if np.isfinite(eccentricity)
+            else np.nan
+        )
+        eccentric_speed_factor = (
+            np.sqrt(max(0.0, 1.0 - eccentricity ** 2)) / eccentric_denominator
+            if np.isfinite(eccentric_denominator) and eccentric_denominator > 0
+            else np.nan
+        )
+        central_angle = (
+            np.pi * duration / (period * eccentric_speed_factor)
+            if (
+                np.isfinite(period) and period > 0
+                and np.isfinite(duration) and duration > 0
+                and np.isfinite(eccentric_speed_factor) and eccentric_speed_factor > 0
+            )
+            else np.nan
+        )
+        central_ars_limit = (
+            (1.0 + rprs) / np.sin(central_angle)
+            if (
+                np.isfinite(rprs) and rprs >= 0
+                and np.isfinite(central_angle) and 0 < central_angle < (0.5 * np.pi)
+                and np.sin(central_angle) > 0
+            )
+            else np.nan
+        )
+        transit_separation_scale = (
+            (1.0 - eccentricity ** 2) / eccentric_denominator
+            if (
+                np.isfinite(eccentricity)
+                and abs(eccentricity) < 1
+                and np.isfinite(eccentric_denominator) and eccentric_denominator > 0
+            )
+            else np.nan
+        )
+        physical_lower = (
+            (1.0 + rprs) / transit_separation_scale
+            if (
+                np.isfinite(rprs) and rprs >= 0
+                and np.isfinite(transit_separation_scale) and transit_separation_scale > 0
+            )
+            else ARS_SEARCH_BOUND_MIN
+        )
+        if np.isfinite(central_ars_limit) and central_ars_limit > 0:
+            new_bounds = [
+                min(old_lower, max(ARS_SEARCH_BOUND_MIN, physical_lower)),
+                max(
+                    old_upper,
+                    ULTRANEST_LM_BOUNDARY_SCOUT_ARS_CENTRAL_DURATION_UPPER_SCALE
+                    * central_ars_limit,
+                ),
+            ]
+            if new_bounds[0] < old_lower - 1e-12 or new_bounds[1] > old_upper + 1e-12:
+                safe_bounds['ars'] = new_bounds
+                adjustments.append({
+                    'key': 'ars',
+                    'reason': 'central_transit_duration_envelope',
+                    'central_ars_limit': float(central_ars_limit),
+                    'original_bounds': [old_lower, old_upper],
+                    'new_bounds': list(new_bounds),
+                })
+
+    return sanitize_retry_search_bounds(safe_bounds), adjustments
+
+
+def prepare_ultranest_bounds_with_lm_boundary_scout(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    prior,
+    bounds,
+    *,
+    jd_times=None,
+    exposure_times_seconds=None,
+    use_impactparameter_rather_than_inclination_to_fit=True,
+    baseline_fit_mask=None,
+    fixed_parameter_errors=None,
+    fixed_flux_baseline=False,
+    enabled=None,
+    max_iterations=ULTRANEST_LM_BOUNDARY_SCOUT_MAX_ITERATIONS,
+    log_ultranest_launch=True,
+):
+    """Use cheap LM fits to place UltraNest bounds before posterior sampling starts."""
+    if enabled is None:
+        enabled = ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
+
+    working_prior = dict(prior) if isinstance(prior, dict) else {}
+    configured_prior = dict(working_prior)
+    working_bounds = clone_lightcurve_bounds(bounds)
+    payload = {
+        'enabled': bool(enabled),
+        'applied': False,
+        'adjusted': False,
+        'iteration_count': 0,
+        'expanded_keys': [],
+        'adjustments': [],
+        'bounds': clone_lightcurve_bounds(working_bounds),
+        'parameters': {},
+        'errors': {},
+        'note': 'Disabled; UltraNest started from the configured search bounds.',
+    }
+    if not enabled or not working_bounds:
+        return working_prior, working_bounds, payload
+
+    max_iterations = max(int(max_iterations or 0), 1)
+    expanded_keys = set()
+    last_fit = None
+    stop_reason = None
+
+    log_info(
+        "LM boundary scout starting before UltraNest; search bounds will only expand, "
+        "and posterior retries remain enabled as a safety net."
+    )
+    for iteration in range(1, max_iterations + 1):
+        fit_kwargs = {
+            'jd_times': jd_times,
+            'mode': 'lm',
+            'use_impactparameter_rather_than_inclination_to_fit':
+            use_impactparameter_rather_than_inclination_to_fit,
+        }
+        add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, exposure_times_seconds)
+        if baseline_fit_mask is not None and callable_accepts_keyword(lc_fitter, 'baseline_fit_mask'):
+            fit_kwargs['baseline_fit_mask'] = baseline_fit_mask
+        if fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
+            fit_kwargs['fixed_parameter_errors'] = dict(fixed_parameter_errors)
+        if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
+            fit_kwargs['fixed_flux_baseline'] = True
+
+        try:
+            last_fit = lc_fitter(
+                times,
+                flux_values,
+                flux_errors,
+                airmass,
+                dict(working_prior),
+                clone_lightcurve_bounds(working_bounds),
+                **fit_kwargs,
+            )
+        except Exception as exc:
+            stop_reason = f"LM boundary scout failed ({type(exc).__name__}: {exc}); using the last valid bounds."
+            log_info(f"Warning: {stop_reason}", warn=True)
+            break
+        if last_fit is None:
+            stop_reason = "LM boundary scout did not return a fit; using the configured search bounds."
+            log_info(f"Warning: {stop_reason}", warn=True)
+            break
+
+        payload['applied'] = True
+        payload['iteration_count'] = iteration
+        parameters = dict(getattr(last_fit, 'parameters', {}) or {})
+        errors = dict(getattr(last_fit, 'errors', {}) or {})
+        payload['parameters'] = parameters
+        payload['errors'] = errors
+
+        for key in working_bounds:
+            try:
+                value = float(parameters.get(key, np.nan))
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value):
+                working_prior[key] = value
+
+        iteration_adjustments = []
+        for key in ULTRANEST_LM_BOUNDARY_SCOUT_KEYS:
+            if key not in working_bounds or key not in parameters:
+                continue
+            physical_minimum = None
+            physical_maximum = None
+            if key == 'rprs':
+                physical_minimum = RPRS_SEARCH_BOUND_MIN
+                physical_maximum = RPRS_SEARCH_BOUND_MAX
+            elif key == 'ars':
+                physical_minimum = ARS_SEARCH_BOUND_MIN
+
+            previous_bounds = list(working_bounds[key])
+            expanded_bounds, adjusted = lm_boundary_scout_expanded_bounds(
+                parameters.get(key),
+                errors.get(key, np.nan),
+                previous_bounds,
+                minimum_bound=physical_minimum,
+                maximum_bound=physical_maximum,
+            )
+            if not adjusted:
+                continue
+            working_bounds[key] = expanded_bounds
+            expanded_keys.add(key)
+            adjustment = {
+                'iteration': iteration,
+                'key': key,
+                'value': float(parameters[key]),
+                'error': float(errors.get(key, np.nan)),
+                'original_bounds': previous_bounds,
+                'new_bounds': list(expanded_bounds),
+            }
+            payload['adjustments'].append(adjustment)
+            iteration_adjustments.append(adjustment)
+
+        working_bounds = sanitize_retry_search_bounds(working_bounds)
+        working_prior = clamp_retry_priors_to_bounds(working_prior, working_bounds)
+        if not iteration_adjustments:
+            stop_reason = (
+                f"LM solution and covariance envelope were interior after {iteration} iteration(s)."
+            )
+            break
+
+        adjustment_text = "; ".join(
+            f"{item['key']} {item['original_bounds']} -> {item['new_bounds']}"
+            for item in iteration_adjustments
+        )
+        log_info(f"LM boundary scout iteration {iteration} expanded {adjustment_text}.")
+    else:
+        stop_reason = (
+            f"LM boundary scout reached its {max_iterations}-iteration limit; "
+            "UltraNest posterior diagnostics will handle any remaining edge contact."
+        )
+
+    geometry_bounds, geometry_adjustments = lm_boundary_scout_geometry_safe_bounds(
+        configured_prior,
+        last_fit,
+        working_bounds,
+        expanded_keys,
+    )
+    if geometry_adjustments:
+        working_bounds = geometry_bounds
+        working_prior = clamp_retry_priors_to_bounds(working_prior, working_bounds)
+        for adjustment in geometry_adjustments:
+            adjustment['iteration'] = 'geometry_envelope'
+        payload['adjustments'].extend(geometry_adjustments)
+        adjustment_text = '; '.join(
+            f"{item['key']} {item['original_bounds']} -> {item['new_bounds']}"
+            for item in geometry_adjustments
+        )
+        log_info(f"LM boundary scout added geometry-safe envelopes: {adjustment_text}.")
+
+    payload['adjusted'] = bool(expanded_keys)
+    payload['expanded_keys'] = sorted(expanded_keys)
+    payload['bounds'] = clone_lightcurve_bounds(working_bounds)
+    payload['note'] = stop_reason or "LM boundary scout completed."
+    if payload['applied']:
+        suffix = " Launching UltraNest." if log_ultranest_launch else ""
+        log_info(f"{payload['note']}{suffix}")
+    return working_prior, working_bounds, payload
+
+
+def run_pre_ultranest_lm_residual_rejection(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    prior,
+    bounds,
+    *,
+    jd_times=None,
+    exposure_times_seconds=None,
+    use_impactparameter_rather_than_inclination_to_fit=True,
+    fixed_parameter_errors=None,
+    fixed_flux_baseline=False,
+    source_indices=None,
+    max_cycles=FINAL_RESIDUAL_REJECTION_MAX_REFITS,
+):
+    """Detect final-series residual outliers with LM before a costly UltraNest launch."""
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    jd_array = None if jd_times is None else np.asarray(jd_times, dtype=float)
+    exposure_array = (
+        None
+        if exposure_times_seconds is None
+        else np.asarray(exposure_times_seconds, dtype=float)
+    )
+    source_array = None if source_indices is None else np.asarray(source_indices, dtype=int)
+    point_count = int(times.size)
+    base_result = {
+        'enabled': True,
+        'applied': False,
+        'keep_mask': np.ones(point_count, dtype=bool),
+        'cycles': [],
+        'fit': None,
+        'note': 'No pre-UltraNest LM residual outliers were rejected.',
+    }
+    if not (times.shape == flux_values.shape == flux_errors.shape == airmass.shape):
+        base_result['note'] = 'Skipped; pre-UltraNest LM residual arrays were not aligned.'
+        return base_result
+    if jd_array is not None and jd_array.shape != times.shape:
+        jd_array = None
+    if exposure_array is not None and exposure_array.shape != times.shape:
+        exposure_array = None
+    if source_array is not None and source_array.shape != times.shape:
+        source_array = None
+
+    active_indices = np.arange(point_count, dtype=int)
+    max_cycles = max(int(max_cycles or 0), 1)
+    for preflight_iteration in range(1, max_cycles + 1):
+        active_times = times[active_indices]
+        active_flux = flux_values[active_indices]
+        active_unc = flux_errors[active_indices]
+        active_airmass = airmass[active_indices]
+        active_jd = None if jd_array is None else jd_array[active_indices]
+        active_exposure = None if exposure_array is None else exposure_array[active_indices]
+        active_sources = None if source_array is None else source_array[active_indices]
+
+        scout_prior, scout_bounds, _ = prepare_ultranest_bounds_with_lm_boundary_scout(
+            active_times,
+            active_flux,
+            active_unc,
+            active_airmass,
+            prior,
+            bounds,
+            jd_times=active_jd,
+            exposure_times_seconds=active_exposure,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+            fixed_parameter_errors=fixed_parameter_errors,
+            fixed_flux_baseline=fixed_flux_baseline,
+            enabled=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
+            log_ultranest_launch=False,
+        )
+        fit_kwargs = {
+            'jd_times': active_jd,
+            'mode': 'lm',
+            'use_impactparameter_rather_than_inclination_to_fit':
+            use_impactparameter_rather_than_inclination_to_fit,
+        }
+        add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, active_exposure)
+        if fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
+            fit_kwargs['fixed_parameter_errors'] = dict(fixed_parameter_errors)
+        if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
+            fit_kwargs['fixed_flux_baseline'] = True
+        try:
+            lm_fit = lc_fitter(
+                active_times,
+                active_flux,
+                active_unc,
+                active_airmass,
+                scout_prior,
+                scout_bounds,
+                **fit_kwargs,
+            )
+        except Exception as exc:
+            base_result['note'] = (
+                "Skipped; pre-UltraNest LM residual fit failed "
+                f"({type(exc).__name__}: {exc})."
+            )
+            log_info(f"Warning: {base_result['note']}", warn=True)
+            return base_result
+        if lm_fit is None:
+            base_result['note'] = 'Skipped; pre-UltraNest LM residual fit did not converge.'
+            return base_result
+
+        base_result['fit'] = lm_fit
+        keep_mask, summary = final_residual_rejection_keep_mask(
+            lm_fit,
+            min_required_points=max(len(scout_bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS),
+        )
+        residual_scatter_percent = float(summary.get('stdev_residual_percent', np.nan))
+        median_flux = float(np.nanmedian(np.abs(active_flux)))
+        median_uncertainty_percent = (
+            100.0 * float(np.nanmedian(active_unc)) / median_flux
+            if np.isfinite(median_flux) and median_flux > 0
+            else np.nan
+        )
+        numerical_scatter_floor = max(
+            1e-10,
+            1e-6 * median_uncertainty_percent
+            if np.isfinite(median_uncertainty_percent) and median_uncertainty_percent > 0
+            else 0.0,
+        )
+        if (
+            summary.get('applied')
+            and np.isfinite(residual_scatter_percent)
+            and residual_scatter_percent <= numerical_scatter_floor
+        ):
+            keep_mask = np.ones(active_times.shape, dtype=bool)
+            summary = dict(summary)
+            summary.update({
+                'applied': False,
+                'kept_point_count': int(active_times.size),
+                'rejected_point_count': 0,
+                'note': (
+                    'Skipped; the LM residual scatter was at numerical precision relative '
+                    'to the supplied photometric uncertainties.'
+                ),
+            })
+        cycle_payload = build_final_residual_rejection_payload(
+            lm_fit,
+            keep_mask,
+            summary,
+            source_indices=active_sources,
+        )
+        cycle_payload['preflight_iteration'] = int(preflight_iteration)
+        base_result['cycles'].append(cycle_payload)
+        if keep_mask.shape != active_indices.shape:
+            base_result['note'] = (
+                'Stopped; the pre-UltraNest LM residual mask did not align with the final series.'
+            )
+            break
+        if not summary.get('applied'):
+            base_result['note'] = summary.get('note') or base_result['note']
+            break
+
+        active_indices = active_indices[keep_mask]
+        base_result['applied'] = True
+        log_info(
+            f"Pre-UltraNest LM residual rejection iteration {preflight_iteration}: "
+            f"{summary.get('note')} The high-live-point posterior will use "
+            f"{active_indices.size} cleaned point(s)."
+        )
+    else:
+        base_result['note'] = (
+            f"Stopped after {max_cycles} pre-UltraNest LM residual-rejection cycle(s)."
+        )
+
+    cumulative_keep_mask = np.zeros(point_count, dtype=bool)
+    cumulative_keep_mask[active_indices] = True
+    base_result['keep_mask'] = cumulative_keep_mask
+    if base_result['applied']:
+        base_result['note'] = (
+            f"Rejected {point_count - active_indices.size}/{point_count} residual outlier(s) with "
+            "LM before the high-live-point UltraNest launch."
+        )
+    return base_result
+
+
 def enforce_minimum_parameter_retry_half_width(
     mode,
     bounds,
@@ -7193,7 +8179,14 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     pre_ultranest_coverage_assessment=None,
     search_restriction_prior=None,
     use_prior_rprs_when_posterior_pinned=None,
+    use_lm_boundary_scout=None,
 ):
+    if use_lm_boundary_scout is None:
+        # Keep the low-level API backward compatible. CLI reduction paths pass
+        # the configured process-wide choice explicitly at their call sites.
+        use_lm_boundary_scout = False
+    else:
+        use_lm_boundary_scout = bool(use_lm_boundary_scout)
     if use_prior_rprs_when_posterior_pinned is None:
         use_prior_rprs_when_posterior_pinned = RPRS_PRIOR_FALLBACK_ON_PINNED_POSTERIOR
     else:
@@ -7324,6 +8317,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         local_prior,
         local_bounds,
         fixed_parameter_errors_override=None,
+        allow_rprs_expansion=False,
         allow_ars_expansion=False,
         ultranest_warmstart_source=None,
     ):
@@ -7331,6 +8325,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             apply_configured_prior_search_restrictions(
                 local_bounds,
                 restriction_reference_prior,
+                allow_rprs_expansion=allow_rprs_expansion,
                 allow_ars_expansion=allow_ars_expansion,
             )
         )
@@ -7418,12 +8413,44 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         )
     )
     current_prior = clamp_retry_priors_to_bounds(current_prior, current_bounds)
+    scout_fixed_flux_baseline = (
+        fixed_flux_baseline
+        and initial_prior_assumption.get('mode') != 'tmid_baseline_airmass'
+    )
+    if scout_fixed_flux_baseline:
+        current_bounds = clone_lightcurve_bounds(current_bounds)
+        for baseline_key in ('a0', 'a1', 'a2'):
+            current_bounds.pop(baseline_key, None)
+    current_prior, current_bounds, lm_boundary_scout = (
+        prepare_ultranest_bounds_with_lm_boundary_scout(
+            times,
+            flux_values,
+            flux_errors,
+            airmass,
+            current_prior,
+            current_bounds,
+            jd_times=jd_times,
+            exposure_times_seconds=exposure_times_seconds,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+            baseline_fit_mask=baseline_fit_mask,
+            fixed_parameter_errors=base_fixed_parameter_errors,
+            fixed_flux_baseline=scout_fixed_flux_baseline,
+            enabled=use_lm_boundary_scout,
+        )
+    )
     retry_histories = {config['key']: [] for config in retry_configs}
     retry_notes = {config['key']: None for config in retry_configs}
     latest_diagnostics = {config['key']: None for config in retry_configs}
     blocked_retry_keys = set()
-    ars_range_expansion_active = False
-    fit = build_fit(current_prior, current_bounds)
+    rprs_range_expansion_active = 'rprs' in lm_boundary_scout.get('expanded_keys', [])
+    ars_range_expansion_active = 'ars' in lm_boundary_scout.get('expanded_keys', [])
+    fit = build_fit(
+        current_prior,
+        current_bounds,
+        allow_rprs_expansion=rprs_range_expansion_active,
+        allow_ars_expansion=ars_range_expansion_active,
+    )
 
     while True:
         diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
@@ -7509,6 +8536,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         clamped_bounds = apply_configured_prior_search_restrictions(
             {bounds_key: clamped_bounds},
             restriction_reference_prior,
+            allow_rprs_expansion=rprs_range_expansion_active,
             allow_ars_expansion=allow_ars_expansion,
         ).get(bounds_key, clamped_bounds)
         clamped_bounds = retry_config['sanitize_bounds']({bounds_key: clamped_bounds}).get(bounds_key, clamped_bounds)
@@ -7527,6 +8555,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             clamped_bounds = apply_configured_prior_search_restrictions(
                 {bounds_key: clamped_bounds},
                 restriction_reference_prior,
+                allow_rprs_expansion=rprs_range_expansion_active,
                 allow_ars_expansion=allow_ars_expansion,
             ).get(bounds_key, clamped_bounds)
             clamped_bounds = retry_config['sanitize_bounds'](
@@ -7608,6 +8637,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             apply_configured_prior_search_restrictions(
                 updated_bounds,
                 restriction_reference_prior,
+                allow_rprs_expansion=rprs_range_expansion_active,
                 allow_ars_expansion=allow_ars_expansion,
             )
         )
@@ -7630,6 +8660,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         fit = build_fit(
             current_prior,
             current_bounds,
+            allow_rprs_expansion=rprs_range_expansion_active,
             allow_ars_expansion=ars_range_expansion_active,
             ultranest_warmstart_source=previous_fit,
         )
@@ -7706,6 +8737,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 fixed_prior,
                 fixed_bounds,
                 fixed_parameter_errors_override=fixed_error_override,
+                allow_rprs_expansion=rprs_range_expansion_active,
                 allow_ars_expansion=ars_range_expansion_active,
             )
             fallback_parameters = getattr(fallback_fit, 'parameters', None)
@@ -7853,6 +8885,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 fixed_prior,
                 fixed_bounds,
                 fixed_parameter_errors_override=fixed_error_override,
+                allow_rprs_expansion=rprs_range_expansion_active,
+                allow_ars_expansion=ars_range_expansion_active,
             )
             fallback_parameters = getattr(fallback_fit, 'parameters', None)
             if isinstance(fallback_parameters, dict):
@@ -7898,6 +8932,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
 
     annotate_posterior_refit_final_bounds(fit, current_bounds)
+    annotate_lm_boundary_scout(fit, lm_boundary_scout)
     for config in retry_configs:
         key = config['key']
         diagnostic_key = config.get('diagnostic_key', key)
@@ -8039,22 +9074,100 @@ def cancel_runtime_traceback_watchdog():
     _RUNTIME_TRACEBACK_WATCHDOG_ACTIVE = False
 
 
+QUICK_LOOK_INIT_KEYS = (
+    'quick_look_mode',
+    'Quick Look Mode',
+    'Quick Look Reduction',
+)
+
+
+def _quick_look_config_value_is_enabled(value):
+    """Return True only for explicit, recognizable opt-in values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {'y', 'yes', 'true', '1', 'on'}
+    return False
+
+
+def quick_look_mode_from_init_data(init_data):
+    """Read the opt-in Quick Look switch from an initialization dictionary."""
+    if not isinstance(init_data, dict):
+        return False
+    optional_info = init_data.get('optional_info')
+    if not isinstance(optional_info, dict):
+        return False
+    for key in QUICK_LOOK_INIT_KEYS:
+        if key in optional_info:
+            return _quick_look_config_value_is_enabled(optional_info.get(key))
+    return False
+
+
+def _load_init_data_for_mode_detection(init_path):
+    if not init_path:
+        return None
+    try:
+        with open(Path(init_path).expanduser(), encoding='utf-8') as init_file:
+            return json.load(init_file)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def quick_look_mode_from_init_file(init_path):
+    """Return whether an initialization file explicitly opts into Quick Look."""
+    return quick_look_mode_from_init_data(_load_init_data_for_mode_detection(init_path))
+
+
+def quick_look_input_kind_from_init_file(init_path):
+    """Infer FITS (1) or pre-reduced (2) input for the explicit Quick Look command.
+
+    Existing combined/template initialization files can contain both inputs; FITS
+    remains the backward-compatible default in that ambiguous case.
+    """
+    init_data = _load_init_data_for_mode_detection(init_path)
+    if not isinstance(init_data, dict):
+        return 1
+    user_info = init_data.get('user_info')
+    optional_info = init_data.get('optional_info')
+    user_info = user_info if isinstance(user_info, dict) else {}
+    optional_info = optional_info if isinstance(optional_info, dict) else {}
+    fits_path = user_info.get('Directory with FITS files')
+    prereduced_path = optional_info.get('Pre-reduced File:')
+    has_fits = fits_path is not None and str(fits_path).strip().lower() not in {'', 'none', 'null'}
+    has_prereduced = (
+        prereduced_path is not None
+        and str(prereduced_path).strip().lower() not in {'', 'none', 'null'}
+    )
+    if has_prereduced and not has_fits:
+        return 2
+    return 1
+
+
 def _runtime_output_directory_from_command_line(argv=None):
     """Return the configured output directory when an init file is on the command line."""
     command_line = list(sys.argv[1:] if argv is None else argv)
     init_options = {
         '-red', '--reduce', '-pre', '--prereduced', '-phot', '--photometry', '-rt', '--realtime',
+        '-ql', '--quick-look',
     }
     init_path = None
+    quick_look_requested = False
+    selected_option = None
 
     for index, argument in enumerate(command_line):
         if argument in init_options:
+            selected_option = argument
+            quick_look_requested = argument in {'-ql', '--quick-look'}
             if index + 1 < len(command_line) and command_line[index + 1]:
                 init_path = command_line[index + 1]
             break
         for option in init_options:
             option_prefix = f"{option}="
             if argument.startswith(option_prefix):
+                selected_option = option
+                quick_look_requested = option in {'-ql', '--quick-look'}
                 init_path = argument[len(option_prefix):]
                 break
         if init_path is not None:
@@ -8070,7 +9183,60 @@ def _runtime_output_directory_from_command_line(argv=None):
     except (OSError, TypeError, ValueError):
         return None
 
-    return output_directory or None
+    if not output_directory:
+        return None
+    if selected_option in {'-red', '--reduce', '-pre', '--prereduced', '-ql', '--quick-look'}:
+        quick_look_requested = quick_look_requested or quick_look_mode_from_init_data(init_data)
+    if quick_look_requested:
+        return str(Path(output_directory).expanduser() / "QuickLook")
+    return output_directory
+
+
+def apply_quick_look_runtime_preset(info_dict):
+    """Apply the scientific Quick Look preset without changing the init file."""
+    quick_info = dict(info_dict)
+    quick_info['save'] = str(Path(quick_info['save']).expanduser() / "QuickLook")
+    quick_info.update({
+        'quick_look_mode': True,
+        'use_psf_photometry': 'n',
+        'use_aperture_photometry': 'y',
+        'use_adaptive_apertures': False,
+        'use_aperture_corrections_and_full_image_fwhm': False,
+        'fast_aperture_mask': False,
+        'photometer_fortuitous_variables': False,
+        'stellar_variability_only': False,
+        'use_ensemble_photometry_for_stellar_variability': False,
+        'fit_lightcurve_to_every_comparison_candidate': False,
+        'run_fast_ultranest_before_final_run': False,
+        'run_final_residual_rejection': False,
+        'use_lm_boundary_scout_before_ultranest': False,
+    })
+    return quick_info
+
+
+def should_expand_full_field_v_calibration_pool(*, quick_look_mode, preferred_band,
+                                                usable_science_nextastro_v,
+                                                fortuitous_auto_scan_performed,
+                                                use_exactly_the_comps_provided):
+    """Keep Quick Look measurements limited to the vetted science comparisons."""
+    return (
+        not quick_look_mode
+        and str(preferred_band or '').upper() == 'V'
+        and not usable_science_nextastro_v
+        and not fortuitous_auto_scan_performed
+        and not use_exactly_the_comps_provided
+    )
+
+
+def should_reuse_selected_comparison_fit(quick_look_mode, selected_attempt):
+    """Quick Look's selected LM candidate is already its final scientific fit."""
+    return bool(
+        selected_attempt.get('fit') is not None
+        and (
+            quick_look_mode
+            or selected_attempt.get('full_reduction_applied', False)
+        )
+    )
 
 
 def _new_runtime_log_basename():
@@ -8974,6 +10140,14 @@ def should_use_sparse_posterior_live_point_retry(config_value):
     return SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT
 
 
+def should_use_lm_boundary_scout_before_ultranest(config_value):
+    return parse_bool_config_value(
+        config_value,
+        ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT,
+        'use_lm_boundary_scout_before_ultranest',
+    )
+
+
 def should_run_fast_ultranest_before_final_run(config_value):
     if config_value is None:
         return FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT
@@ -9081,6 +10255,12 @@ def configure_sparse_posterior_live_point_retry(config_value):
     enabled = should_use_sparse_posterior_live_point_retry(config_value)
     os.environ[SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV] = "1" if enabled else "0"
     return enabled
+
+
+def configure_lm_boundary_scout_before_ultranest(config_value):
+    global ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
+    ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED = should_use_lm_boundary_scout_before_ultranest(config_value)
+    return ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
 
 
 def should_pick_comparison_by_eebls_snr(config_value):
@@ -12245,6 +13425,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
         search_restriction_prior=search_restriction_prior,
+        use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
     )
     fit = apply_plot_time_range(fit, times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(fit, airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -12301,6 +13482,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
             pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
             search_restriction_prior=search_restriction_prior,
+            use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
         )
         fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -12410,6 +13592,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
             fixed_flux_baseline=True,
             pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
             search_restriction_prior=search_restriction_prior,
+            use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
         )
         refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
         annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -12545,6 +13728,7 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         fixed_flux_baseline=True,
         pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
         search_restriction_prior=refit_search_restriction_prior,
+        use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
     )
     refit = apply_plot_time_range(refit, working_times if plot_time_range is None else plot_time_range)
     annotate_airmass_fit(refit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
@@ -19829,6 +21013,7 @@ APERTURE_AUTOTUNE_APER_HALF_WIDTH_SIGMA = 0.9
 APERTURE_AUTOTUNE_ANNULUS_HALF_WIDTH_SIGMA = 2.0
 APERTURE_AUTOTUNE_MIN_FRAMES = 8
 APERTURE_AUTOTUNE_MAX_FRAMES = 24
+QUICK_LOOK_APERTURE_AUTOTUNE_MAX_FRAMES = 12
 
 # Refit full PSF moments periodically; use a faster moment estimator for most frames.
 CENTROID_FULL_FIT_CADENCE = 6
@@ -23657,6 +24842,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
             use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
             duration_prior=duration_prior,
             search_restriction_prior=search_restriction_prior,
+            use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
         )
         annotate_pre_ultranest_transit_coverage(myfit, pre_ultranest_coverage_assessment)
         myfit = apply_plot_time_range(myfit, plot_time_range)
@@ -25437,6 +26623,18 @@ def summarize_lightcurve_fit_assessment(fit):
             'pre_ultranest_transit_coverage_note',
             None,
         ),
+        'lm_boundary_scout_applied': bool(getattr(fit, 'lm_boundary_scout_applied', False)),
+        'lm_boundary_scout_adjusted': bool(getattr(fit, 'lm_boundary_scout_adjusted', False)),
+        'lm_boundary_scout_iteration_count': int(
+            getattr(fit, 'lm_boundary_scout_iteration_count', 0) or 0
+        ),
+        'lm_boundary_scout_expanded_keys': list(
+            getattr(fit, 'lm_boundary_scout_expanded_keys', []) or []
+        ),
+        'lm_boundary_scout_final_bounds': clone_lightcurve_bounds(
+            getattr(fit, 'lm_boundary_scout_final_bounds', {}) or {}
+        ),
+        'lm_boundary_scout_note': getattr(fit, 'lm_boundary_scout_note', None),
         'rprs_posterior_refit_applied': bool(getattr(fit, 'rprs_posterior_refit_applied', False)),
         'rprs_posterior_refit_count': rprs_retry_count,
         'rprs_posterior_refit_note': getattr(fit, 'rprs_posterior_refit_note', None),
@@ -25518,10 +26716,18 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         if assessment['sparse_posterior_live_point_extension_applied']
         else "not applied"
     )
+    lm_scout_status = "not applied"
+    if assessment['lm_boundary_scout_applied']:
+        lm_scout_status = (
+            "expanded bounds"
+            if assessment['lm_boundary_scout_adjusted']
+            else "confirmed interior"
+        )
 
     log_info(
         f"{indent}fit assessment: fit_method={assessment['fit_method']}, "
         f"duration_prior={duration_prior_status}, "
+        f"LM boundary scout={lm_scout_status}, "
         f"Rp/R* posterior retry={rprs_retry_status}, "
         f"a/Rs posterior retry={ars_retry_status}, "
         f"impact parameter posterior retry={b_retry_status}, "
@@ -25541,6 +26747,13 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
         log_info(
             f"{indent}Pre-UltraNest coverage note: status={str(status).upper()}{chance_text}; "
             f"{assessment['pre_ultranest_transit_coverage_note']}"
+        )
+    if assessment.get('lm_boundary_scout_note'):
+        expanded_keys = assessment.get('lm_boundary_scout_expanded_keys') or []
+        expanded_text = f" Expanded: {', '.join(expanded_keys)}." if expanded_keys else ""
+        log_info(
+            f"{indent}LM boundary scout note: {assessment['lm_boundary_scout_note']}"
+            f"{expanded_text}"
         )
     if assessment.get('rprs_posterior_refit_note'):
         log_info(f"{indent}Rp/R* posterior retry note: {assessment['rprs_posterior_refit_note']}")
@@ -31084,7 +32297,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  TRANSIT_ENSEMBLE_MAX_COMPARISONS_DEFAULT,
                                                  exposure_times_seconds=None,
                                                  gain_e_per_adu=None,
-                                                 use_exactly_the_comps_provided=False):
+                                                 use_exactly_the_comps_provided=False,
+                                                 inference_method='ultranest'):
     ranked_summaries = ranked_comparison_calibration_summaries(
         comparison_calibration,
         include_unvetted=use_exactly_the_comps_provided,
@@ -31542,10 +32756,17 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             method_label,
             fit_diagnostics,
         )
-        log_info(
-            "  Full reduction starting. Optional out-of-transit baseline detrending is "
-            f"{'enabled' if detrend_on_outoftransit_baseline else 'disabled'}."
-        )
+        if inference_method == 'lm':
+            log_info(
+                "  Quick Look least-squares candidate reduction starting. Optional "
+                "out-of-transit baseline detrending is "
+                f"{'enabled' if detrend_on_outoftransit_baseline else 'disabled'}."
+            )
+        else:
+            log_info(
+                "  Full reduction starting. Optional out-of-transit baseline detrending is "
+                f"{'enabled' if detrend_on_outoftransit_baseline else 'disabled'}."
+            )
         final_reduction = finalize_comparison_candidate_full_reduction(
             times[fit_mask],
             candidate_target_flux[fit_mask],
@@ -31572,6 +32793,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             run_final_fit_phase_residual_clip=run_final_fit_phase_residual_clip,
             run_final_residual_rejection=run_final_residual_rejection,
             precomputed_candidate_series=preflight.get('prepared_series'),
+            inference_method=inference_method,
         )
         fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
         tflux_fit = final_reduction.get('good_target_flux')
@@ -31611,12 +32833,16 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         else:
             selection_scatter = residual_scatter
             selection_scatter_basis = (
-                "full-resolution UltraNest model residual scatter"
+                "full-resolution least-squares model residual scatter"
+                if inference_method == 'lm'
+                else "full-resolution UltraNest model residual scatter"
                 if not fast_binned_ultranest
                 else "fast-binned UltraNest model residual scatter"
             )
         target_model_scatter_basis = (
-            "fast-binned UltraNest model residual scatter"
+            "full-resolution least-squares model residual scatter"
+            if inference_method == 'lm'
+            else "fast-binned UltraNest model residual scatter"
             if fast_binned_ultranest
             else "full-resolution UltraNest model residual scatter"
         )
@@ -31700,6 +32926,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'final_output_dir': None,
             'full_reduction_applied': final_reduction.get('applied', False),
             'full_reduction_note': final_reduction.get('note'),
+            'inference_method': (
+                'Least-squares (LM)' if inference_method == 'lm' else 'UltraNest'
+            ),
             'fast_ultranest_binning': fast_binning,
             'skip_airmass_fit': final_reduction.get('skip_airmass_fit', False),
             'airmass_skip_note': final_reduction.get('airmass_skip_note'),
@@ -31962,26 +33191,30 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         selected_fit = selected_result.get('fit')
         if selected_fit is not None:
             full_resolution_refit_applied = False
-            full_resolution_refit = refit_selected_fast_comparison_on_full_lightcurve(
-                selected_result,
-                p_dict,
-                skip_airmass_fit=bool(selected_result.get('skip_airmass_fit', False)),
-                airmass_skip_note=selected_result.get('airmass_skip_note'),
-                detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
-                use_impactparameter_rather_than_inclination_to_fit=
-                use_impactparameter_rather_than_inclination_to_fit,
-                plot_time_range=plot_time_range,
-                duration_prior=build_single_transit_duration_prior(p_dict),
-                run_final_residual_rejection=run_final_residual_rejection,
-            )
+            full_resolution_refit = None
+            if inference_method != 'lm':
+                full_resolution_refit = refit_selected_fast_comparison_on_full_lightcurve(
+                    selected_result,
+                    p_dict,
+                    skip_airmass_fit=bool(selected_result.get('skip_airmass_fit', False)),
+                    airmass_skip_note=selected_result.get('airmass_skip_note'),
+                    detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+                    use_impactparameter_rather_than_inclination_to_fit=
+                    use_impactparameter_rather_than_inclination_to_fit,
+                    plot_time_range=plot_time_range,
+                    duration_prior=build_single_transit_duration_prior(p_dict),
+                    run_final_residual_rejection=run_final_residual_rejection,
+                )
             if full_resolution_refit is not None:
                 full_resolution_refit_applied = True
                 selected_result['fit'], selected_result['good_flux'], selected_result['good_unc'] = full_resolution_refit
                 selected_result['full_reduction_note'] = (
                     "selected candidate rerun on the full-resolution light curve after fast UltraNest search."
                 )
-            else:
+            elif inference_method != 'lm':
                 selected_result['fit'] = extend_selected_comparison_live_points_if_needed(selected_fit)
+            else:
+                selected_result['fit'] = selected_fit
             selected_result['full_reduction_fit'] = selected_result['fit']
             if (
                 full_resolution_refit_applied
@@ -32081,18 +33314,24 @@ def parse_args():
                         nargs='?', default=None, type=str, const='',
                         help="Performs only aperture photometry on FITS files. "
                              "An initialization file (e.g., inits.json) is optional to use with this command.")
+    parser.add_argument('-ql', '--quick-look',
+                        nargs='?', default=None, type=str, const='',
+                        help="Runs a post-observation FITS or pre-reduced Quick Look analysis with "
+                             "least-squares transit inference. FITS inputs use aperture-only photometry. "
+                             "Results are preliminary. "
+                             "An initialization file (e.g., inits.json) is optional to use with this command.")
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
                              "Can be used as an additional argument with -rt (--realtime), -red (--reduce), "
-                             "-pre (--prereduced), and -phot (--photometry)."
+                             "-pre (--prereduced), -phot (--photometry), and -ql (--quick-look)."
                              "Do not combine with the -nea, --nasaexoarch argument.")
     parser.add_argument('-nea', '--nasaexoarch',
                         action='store_true',
                         help="Adopts all the NASA Exoplanet Archive planetary parameters from "
                              "https://exoplanetarchive.ipac.caltech.edu. "
                              "Can be used as an additional argument with -rt (--realtime), -red (--reduce), "
-                             "-pre (--prereduced), and -phot (--photometry)."
+                             "-pre (--prereduced), -phot (--photometry), and -ql (--quick-look)."
                              "Do not combine with the -ov, --override argument.")
     parser.add_argument('--use-nextastro-astrometry',
                         action='store_true',
@@ -32129,7 +33368,20 @@ def _main_impl():
     if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits < 1:
         raise ValueError("--multiprocess-lightcurve-fits requires an integer greater than 0.")
     configure_windows_multiprocessing_main_spec()
-    validate_ultranest_mpi_runtime()
+    quick_look_argument = getattr(args, 'quick_look', None)
+    explicit_quick_look_mode = isinstance(quick_look_argument, str)
+    configured_quick_look_init = next(
+        (
+            option
+            for option in (getattr(args, 'reduce', None), getattr(args, 'prereduced', None))
+            if isinstance(option, str) and option
+        ),
+        None,
+    )
+    configured_quick_look_mode = quick_look_mode_from_init_file(configured_quick_look_init)
+    quick_look_mode = explicit_quick_look_mode or configured_quick_look_mode
+    if not quick_look_mode:
+        validate_ultranest_mpi_runtime()
 
     log.debug("*************************")
     log.debug("EXOTIC reduction log file")
@@ -32156,7 +33408,8 @@ def _main_impl():
     # ---USER INPUTS--------------------------------------------------------------------------
     if isinstance(args.realtime, str):
         reduction_opt = 1
-    elif isinstance(args.reduce, str) or isinstance(args.prereduced, str) or isinstance(args.photometry, str):
+    elif (isinstance(args.reduce, str) or isinstance(args.prereduced, str)
+          or isinstance(args.photometry, str) or quick_look_mode):
         reduction_opt = 2
     else:
         reduction_opt = user_input("\nPlease select Reduction method:"
@@ -32164,7 +33417,9 @@ def _main_impl():
                                    "\n\t2: Complete Reduction (for analyzing your data after an observing run)"
                                    "\nEnter 1 or 2: ", type_=int, values=[1, 2])
 
-    if not (args.reduce or args.prereduced or args.realtime or args.photometry):
+    if not any(isinstance(option, str) for option in (
+        args.reduce, args.prereduced, args.realtime, args.photometry, quick_look_argument,
+    )):
         file_cmd_opt = user_input("\nPlease select how to input your initial parameters:"
                                   "\n\t1: Command Line"
                                   "\n\t2: Input File (inits.json)"
@@ -32245,6 +33500,9 @@ def _main_impl():
         elif isinstance(args.photometry, str):
             fitsortext = 1
             init_path = args.photometry
+        elif explicit_quick_look_mode:
+            fitsortext = quick_look_input_kind_from_init_file(quick_look_argument)
+            init_path = quick_look_argument
         else:
             fitsortext = user_input("\nPlease select method:"
                                     "\n\t1: Perform Aperture Photometry on FITS files"
@@ -32261,6 +33519,12 @@ def _main_impl():
         if init_opt == 'y':
             init_path, userpDict = inputs_obj.search_init(init_path, userpDict)
 
+        if init_path:
+            if explicit_quick_look_mode and not quick_look_argument:
+                fitsortext = quick_look_input_kind_from_init_file(init_path)
+            if not quick_look_mode and quick_look_mode_from_init_file(init_path):
+                quick_look_mode = True
+
         if fitsortext == 1:
             exotic_infoDict, userpDict['pName'] = inputs_obj.complete_red(userpDict['pName'])
         else:
@@ -32271,7 +33535,17 @@ def _main_impl():
                     header_motion_value = exotic_infoDict.get(motion_key)
                     if header_motion_value is not None:
                         userpDict[motion_key] = header_motion_value
+        if quick_look_mode:
+            exotic_infoDict = apply_quick_look_runtime_preset(exotic_infoDict)
         configure_runtime_logging(output_dir=exotic_infoDict.get('save'))
+        if quick_look_mode:
+            log_info("\n**************************************************************")
+            log_info("QUICK LOOK — PRELIMINARY")
+            if fitsortext == 1:
+                log_info("Scientific aperture-only FITS reduction with least-squares (LM) inference")
+            else:
+                log_info("Scientific pre-reduced light-curve analysis with least-squares (LM) inference")
+            log_info("**************************************************************\n")
         disable_vertical_flux_normalization = is_vertical_flux_normalization_disabled(
             exotic_infoDict.get('disable_vertical_flux_normalization', False)
         )
@@ -32435,6 +33709,12 @@ def _main_impl():
                 ),
             )
         )
+        use_lm_boundary_scout_before_ultranest = configure_lm_boundary_scout_before_ultranest(
+            exotic_infoDict.get(
+                'use_lm_boundary_scout_before_ultranest',
+                ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT,
+            )
+        )
         ultranest_min_num_live_points = configure_ultranest_min_num_live_points(
             exotic_infoDict.get(
                 'ultranest_min_num_live_points',
@@ -32477,6 +33757,13 @@ def _main_impl():
             ),
         )
         log_info(f"UltraNest minimum live points: {ultranest_min_num_live_points}.")
+        if use_lm_boundary_scout_before_ultranest:
+            log_info(
+                "LM boundary scout enabled: EXOTIC will expand edge-limited deterministic-fit "
+                "bounds before starting each UltraNest posterior fit."
+            )
+        else:
+            log_info("LM boundary scout disabled per optional_info setting.")
         log_info(f"Rp/R* maximum search bound: {rprs_search_bound_max:.3f}.")
         if restrict_rprs_range:
             log_info(
@@ -33483,13 +34770,14 @@ def _main_impl():
                     for star in vsp_comp_stars.values()
                     if isinstance(star, dict)
                 )
-                if (
-                    str(
-                        preferred_catalog_magnitude_band_for_filter(exotic_infoDict['filter']) or ''
-                    ).upper() == 'V'
-                    and not usable_science_nextastro_v
-                    and not fortuitous_auto_scan_performed
-                    and not use_exactly_the_comps_provided
+                if should_expand_full_field_v_calibration_pool(
+                    quick_look_mode=quick_look_mode,
+                    preferred_band=preferred_catalog_magnitude_band_for_filter(
+                        exotic_infoDict['filter']
+                    ),
+                    usable_science_nextastro_v=usable_science_nextastro_v,
+                    fortuitous_auto_scan_performed=fortuitous_auto_scan_performed,
+                    use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                 ):
                     fortuitous_auto_scan_performed = True
                     fortuitous_comp_count = parse_automatic_calibration_selector_count(
@@ -33929,7 +35217,12 @@ def _main_impl():
             coarse_apertures_sigma = None
             coarse_annuli_sigma = None
             if use_aperture_photometry:
-                coarse_tune_frames = min(len(inputfiles), APERTURE_AUTOTUNE_MAX_FRAMES)
+                aperture_tuning_frame_limit = (
+                    QUICK_LOOK_APERTURE_AUTOTUNE_MAX_FRAMES
+                    if quick_look_mode
+                    else APERTURE_AUTOTUNE_MAX_FRAMES
+                )
+                coarse_tune_frames = min(len(inputfiles), aperture_tuning_frame_limit)
                 if len(inputfiles) >= APERTURE_AUTOTUNE_MIN_FRAMES:
                     coarse_tune_frames = max(APERTURE_AUTOTUNE_MIN_FRAMES, coarse_tune_frames)
                 coarse_tune_frame_indices = evenly_spaced_aperture_tuning_indices(
@@ -34028,6 +35321,15 @@ def _main_impl():
             use_multiprocess_alignment = (
                 args.multiprocess_transformations is not None and args.multiprocess_transformations > 0
             )
+            alignment_worker_count = args.multiprocess_transformations
+            if quick_look_mode and not use_multiprocess_alignment:
+                use_multiprocess_alignment = True
+                alignment_worker_count = min(os.cpu_count() or 1, MAX_MULTIPROCESS_TRANSFORM_WORKERS)
+                log_info(
+                    "Quick Look is precomputing calibrated-frame alignment so its aperture search "
+                    "can use an evenly distributed sample and every retained frame can then use "
+                    f"one fixed aperture ({alignment_worker_count} worker(s))."
+                )
             comp_alignment_keys = [f"comp{j + 1}" for j in range(comp_star_count)]
             psf_flux_seed_tracks = load_psf_flux_seed_tracks(
                 psf_seed_track_directory,
@@ -34037,7 +35339,7 @@ def _main_impl():
             if use_multiprocess_alignment:
                 multiprocess_alignment_results = build_multiprocess_alignment_results(
                     inputfiles,
-                    args.multiprocess_transformations,
+                    alignment_worker_count,
                     target_and_comp_pixels,
                     target_and_comp_radec=target_and_comp_radec,
                     ignore_header_wcs=ignore_header_wcs,
@@ -34062,6 +35364,14 @@ def _main_impl():
                         comp_alignment_keys,
                     )
                 multiprocess_alignment_results_applied = True
+
+            if quick_look_mode and aperture_estimation_comp_count == 0:
+                log_info(
+                    "Error: Quick Look requires at least one vetted science comparison star to tune "
+                    "a fixed aperture and produce differential transit photometry.",
+                    error=True,
+                )
+                return
 
             if (
                 use_aperture_photometry
@@ -34210,6 +35520,13 @@ def _main_impl():
                         f"sample_field_score={aperture_tuning_sample_score * 100.0:.4f}%. "
                         "The selected 1x1 aperture will now be measured for every tracked star on every frame."
                     )
+                elif quick_look_mode:
+                    log_info(
+                        "Error: Quick Look could not select a scientifically valid aperture/annulus "
+                        "from its evenly distributed tuning frames.",
+                        error=True,
+                    )
+                    return
                 del tuning_cutouts
                 log_info(
                     "Distributed aperture tuning completed in "
@@ -34750,9 +36067,10 @@ def _main_impl():
                 f"{perf_counter() - initial_photometry_start:.2f}s."
             )
             plateStatus.logAggregatedWarningSummary()
-            log_transform_timing_stats('Transformation timing summary (full reduction)')
-            log_photometry_timing_stats('Photometry timing summary (full reduction)')
-            log_reduction_timing_overview('Reduction timing overview (full reduction)')
+            timing_mode_label = 'Quick Look' if quick_look_mode else 'full reduction'
+            log_transform_timing_stats(f'Transformation timing summary ({timing_mode_label})')
+            log_photometry_timing_stats(f'Photometry timing summary ({timing_mode_label})')
+            log_reduction_timing_overview(f'Reduction timing overview ({timing_mode_label})')
             reduction_stage_timer.checkpoint("WCS alignment, centroiding, and initial frame photometry")
 
             frozen_aperture_data = None
@@ -35451,7 +36769,7 @@ def _main_impl():
                         run_fast_ultranest_before_final_run=run_fast_ultranest_before_final_run,
                         run_final_fit_phase_residual_clip=run_final_fit_phase_residual_clip,
                         run_final_residual_rejection=run_final_residual_rejection,
-                        save_dir=exotic_infoDict['save'],
+                        save_dir=None if quick_look_mode else exotic_infoDict['save'],
                         planet_name=pDict['pName'],
                         observation_date=exotic_infoDict['date'],
                         use_ensemble_photometry_rather_than_single_comp=
@@ -35461,8 +36779,10 @@ def _main_impl():
                         exposure_times_seconds=exposure_times_seconds,
                         gain_e_per_adu=fallback_gain_e_per_adu,
                         use_exactly_the_comps_provided=use_exactly_the_comps_provided,
+                        inference_method='lm' if quick_look_mode else 'ultranest',
                     )
-                    if use_ensemble_photometry_for_stellar_variability and vsp_comp_stars:
+                    if (not quick_look_mode
+                            and use_ensemble_photometry_for_stellar_variability and vsp_comp_stars):
                         log_info(
                             "Stellar-variability products only: selecting an independent calibrated "
                             "comparison-star ensemble of up to "
@@ -35615,7 +36935,7 @@ def _main_impl():
                         log_info(
                             "Comparison-star calibration target-fit selection chose "
                             f"{selected_attempt_label} with {comparison_calibration['method_label']} "
-                            "because pre-UltraNest preflight and the candidate fit indicated a promising "
+                            "because candidate preflight and the fit indicated a promising "
                             "partial-coverage MARGINAL solution."
                         )
                     elif selection_basis == 'comparison_field_qc_fallback':
@@ -35682,9 +37002,10 @@ def _main_impl():
                                            min_annulus=selected_min_annulus,
                                            aperture_index=selected_a,
                                            annulus_index=selected_an,
-                                           reuse_selected_full_reduction_fit=bool(
-                                               selected_attempt.get('full_reduction_applied', False)
-                                               and selected_attempt.get('fit') is not None
+                                           reuse_selected_full_reduction_fit=
+                                           should_reuse_selected_comparison_fit(
+                                               quick_look_mode,
+                                               selected_attempt,
                                            ),
                                            selected_source_indices=selected_source_indices,
                                            selected_fit_good_times=selected_attempt.get('good_times'),
@@ -36064,7 +37385,12 @@ def _main_impl():
                     "stellar-variability-only mode does not fit transit models."
                 )
 
-            if fit_every_comparison_candidate and not stellar_variability_only and science_comp_stars:
+            if (
+                fit_every_comparison_candidate
+                and not quick_look_mode
+                and not stellar_variability_only
+                and science_comp_stars
+            ):
                 candidate_fit_summaries = fit_lightcurve_to_every_comparison_candidate(
                     times,
                     jd_times,
@@ -36128,8 +37454,11 @@ def _main_impl():
             # sigma clip
             if reuse_selected_full_reduction_fit:
                 log_info(
-                    "Reusing the selected comparison-star full-reduction ultranest fit; "
+                    "Reusing the selected comparison-star Quick Look least-squares fit; "
                     "skipping duplicate selected-only final-fit clipping."
+                    if quick_look_mode
+                    else "Reusing the selected comparison-star full-reduction UltraNest fit; "
+                         "skipping duplicate selected-only final-fit clipping."
                 )
                 si = np.arange(len(best_fit_lc.time), dtype=int)
                 time_clip_mask = np.zeros(len(best_fit_lc.time), dtype=bool)
@@ -36559,6 +37888,13 @@ def _main_impl():
             and photometry_info.get('reuse_selected_full_reduction_fit', False)
             and photometry_info.get('best_fit_lc') is not None
         )
+        if quick_look_mode and fitsortext == 1 and not reuse_selected_final_model:
+            log_info(
+                "Error: Quick Look could not obtain a usable least-squares fit from any vetted "
+                "comparison candidate; no posterior fallback is permitted in Quick Look mode.",
+                error=True,
+            )
+            return
 
         if stellar_variability_only:
             if reuse_selected_final_model:
@@ -36845,8 +38181,42 @@ def _main_impl():
             else:
                 goodNormUnc = np.asarray(getattr(myfit, 'detrendederr', goodNormUnc), dtype=float)
             log_info(
-                "Using the selected comparison-star full-reduction ultranest fit for final outputs; "
-                "no additional final nested-sampling fit is being run."
+                "Using the selected comparison-star Quick Look least-squares fit for final outputs; "
+                "no nested-sampling fit is being run."
+                if quick_look_mode
+                else "Using the selected comparison-star full-reduction UltraNest fit for final outputs; "
+                     "no additional final nested-sampling fit is being run."
+            )
+        elif quick_look_mode:
+            myfit, goodFluxes, goodNormUnc = fit_quick_look_lightcurve_least_squares(
+                goodTimes,
+                goodFluxes,
+                goodNormUnc,
+                goodAirmasses,
+                prior,
+                mybounds,
+                jd_times=None,
+                exposure_times_seconds=goodExposureTimes,
+                skip_airmass_fit=skip_final_airmass_fit,
+                airmass_skip_note=airmass_skip_note,
+                detrend_on_outoftransit_baseline=detrend_on_outoftransit_baseline,
+                use_impactparameter_rather_than_inclination_to_fit=
+                use_impactparameter_rather_than_inclination_to_fit,
+                plot_time_range=full_plot_time_range,
+                expected_planet_dict=pDict,
+                expected_tmid_search_summary=ephemeris_tmid_search_summary,
+                eebls_search_summary=eebls_tmid_search_summary,
+            )
+            if myfit is None:
+                log_info(
+                    "Error: Quick Look least-squares fitting did not converge for the supplied "
+                    "pre-reduced light curve; no posterior fallback is permitted in Quick Look mode.",
+                    error=True,
+                )
+                return
+            log_info(
+                "Using the pre-reduced Quick Look least-squares fit for final outputs; "
+                "no nested-sampling fit is being run."
             )
         else:
             # final light curve fit
@@ -36873,6 +38243,7 @@ def _main_impl():
             )
         if (
             reuse_selected_final_model
+            and not quick_look_mode
             and getattr(myfit, 'sparse_posterior_live_point_extension_note', None) is None
         ):
             myfit = extend_selected_comparison_live_points_if_needed(myfit)
@@ -36948,7 +38319,10 @@ def _main_impl():
             observed_filter=exotic_infoDict.get('observed_filter', exotic_infoDict.get('filter')),
         )
         diagnostics_dir = Path(exotic_infoDict['save']) / "Diagnostics"
-        plot_prior_posterior_comparison(myfit, pDict, pDict['pName'], diagnostics_dir, exotic_infoDict['date'])
+        if not quick_look_mode:
+            plot_prior_posterior_comparison(
+                myfit, pDict, pDict['pName'], diagnostics_dir, exotic_infoDict['date']
+            )
         plot_ktmf_qc_metrics(myfit, pDict['pName'], diagnostics_dir, exotic_infoDict['date'])
 
         if fitsortext == 1:
@@ -36978,7 +38352,11 @@ def _main_impl():
             qc_ktmf_metric = _finite_float(transit_qc.get('ktmf_metric'), default=np.nan)
 
         log_info("\n*********************************************************")
-        log_info("FINAL PLANETARY PARAMETERS\n")
+        if quick_look_mode:
+            log_info("QUICK LOOK — PRELIMINARY")
+            log_info("PRELIMINARY PLANETARY PARAMETERS\n")
+        else:
+            log_info("FINAL PLANETARY PARAMETERS\n")
         if qc_status:
             if qc_summary:
                 log_info(f"                Transit detection QC: {qc_status} - {qc_summary}")
@@ -37183,15 +38561,16 @@ def _main_impl():
             if reuse_selected_final_model
             else None
         )
-        save_final_triangle_plot(
-            myfit,
-            exotic_infoDict['save'],
-            pDict['pName'],
-            exotic_infoDict['date'],
-            source_dir=selected_triangle_source_dir,
-        )
+        if not quick_look_mode:
+            save_final_triangle_plot(
+                myfit,
+                exotic_infoDict['save'],
+                pDict['pName'],
+                exotic_infoDict['date'],
+                source_dir=selected_triangle_source_dir,
+            )
 
-        if vsp_params:
+        if vsp_params and not quick_look_mode:
             AIDoutput_files = AIDOutputFiles(myfit, pDict, exotic_infoDict, auid, chart_id, vsp_params)
         output_files = OutputFiles(myfit, pDict, exotic_infoDict, durs)
         error_txt = "\n\tPlease report this issue on the Exoplanet Watch Slack Channel in #data-reductions."
@@ -37199,7 +38578,8 @@ def _main_impl():
         try:
             phase = get_phase(myfit.time, pDict['pPer'], myfit.parameters['tmid'])
             output_files.differential_magnitude()
-            output_files.stellar_variability_differential_magnitude()
+            if not quick_look_mode:
+                output_files.stellar_variability_differential_magnitude()
             output_files.final_lightcurve(phase)
         except Exception as e:
             log_info(f"\nError: Could not create FinalLightCurve.csv. {error_txt}\n\t{e}", error=True)
@@ -37274,23 +38654,26 @@ def _main_impl():
                         'counts_path': bad_pixel_reference.get('counts_path'),
                         'mask_path': bad_pixel_reference.get('mask_path'),
                     })
-            output_files.aavso(
-                exotic_infoDict['phot_comp_star'],
-                goodAirmasses,
-                ld0,
-                ld1,
-                ld2,
-                ld3,
-                epw_md5,
-                photometry_info=aavso_photometry_info,
-                astrometry_info=aavso_astrometry_info,
-                frame_filtering_info=aavso_frame_filtering_info,
-                bad_pixel_info=aavso_bad_pixel_info,
-            )
+            if quick_look_mode:
+                log_info("Quick Look: AAVSO submission output intentionally suppressed.")
+            else:
+                output_files.aavso(
+                    exotic_infoDict['phot_comp_star'],
+                    goodAirmasses,
+                    ld0,
+                    ld1,
+                    ld2,
+                    ld3,
+                    epw_md5,
+                    photometry_info=aavso_photometry_info,
+                    astrometry_info=aavso_astrometry_info,
+                    frame_filtering_info=aavso_frame_filtering_info,
+                    bad_pixel_info=aavso_bad_pixel_info,
+                )
         except Exception as e:
             log_info(f"\nError: Could not create AAVSO.txt. {error_txt}\n\t{e}", error=True)
         try:
-            if vsp_params:
+            if vsp_params and not quick_look_mode:
                 AIDoutput_files.aavso()
         except Exception as e:
             log_info(f"\nError: Could not create AID_AAVSO.txt. {error_txt}\n\t{e}", error=True)
@@ -37299,7 +38682,7 @@ def _main_impl():
         except Exception as e:
             log_info(f"\nError: Could not create plate_status.csv. {error_txt}\n\t{e}", error=True)
 
-        log_info("Output Files Saved")
+        log_info("QUICK LOOK — PRELIMINARY outputs saved" if quick_look_mode else "Output Files Saved")
         reduction_stage_timer.checkpoint("Final transit analysis and output file generation")
 
         log_info("\n************************")
@@ -37307,7 +38690,11 @@ def _main_impl():
         log_info("************************")
 
         log_info("\n\n************************")
-        log_info("EXOTIC has successfully run!!!")
+        log_info(
+            "QUICK LOOK — PRELIMINARY completed successfully"
+            if quick_look_mode
+            else "EXOTIC has successfully run!!!"
+        )
         log_info("It is now safe to close this window.")
         log_info("************************")
 

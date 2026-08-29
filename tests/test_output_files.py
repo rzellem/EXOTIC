@@ -1456,6 +1456,78 @@ def test_final_planetary_params_matches_values_to_two_sigfig_uncertainties(tmp_p
     assert final_params["Transit Duration (day)"] == "0.073 +/- 0.010"
 
 
+def test_quick_look_outputs_are_preliminary_and_not_submission_ready(tmp_path):
+    fit = DummyFit()
+    fit.quick_look_mode = True
+    fit.detrended = np.array([1.0])
+    fit.detrendederr = np.array([0.01])
+    fit.airmass = np.array([1.2])
+    fit.phase = np.array([0.0])
+    (tmp_path / "working_artifacts").mkdir()
+    p_dict = {"pName": "Quick b"}
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2020-01-01",
+        "filter": "V",
+        "filter_desc": "Johnson V",
+        "wl_min": None,
+        "wl_max": None,
+    }
+    outputs = OutputFiles(fit, p_dict, i_dict, [0.083])
+
+    outputs.final_lightcurve(fit.phase)
+    outputs.final_planetary_params(phot_opt=False, vsp_params=[])
+    differential_path = write_differential_magnitude_csv(
+        fit,
+        tmp_path,
+        "Quick",
+        observation_date="2020-01-01",
+        observed_filter="V",
+    )
+
+    lightcurve_path = next((tmp_path / "working_artifacts").glob("FinalLightCurve_*.csv"))
+    params_path = next((tmp_path / "working_artifacts").glob("FinalParams_*.json"))
+    assert "# QUICK LOOK — PRELIMINARY" in lightcurve_path.read_text(encoding="utf-8")
+    assert "# QUICK LOOK — PRELIMINARY" in differential_path.read_text(encoding="utf-8")
+    params = json.loads(params_path.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+    assert params["Analysis Mode"] == "Quick Look"
+    assert params["Inference Method"] == "Least-squares (LM)"
+    assert params["Uncertainty Type"] == (
+        "Local covariance with existing empirical red-noise scaling; not a posterior"
+    )
+    assert params["Submission Ready"] is False
+
+
+def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path):
+    fit = DummyFit()
+    fit.lm_boundary_scout_adjusted = True
+    fit.lm_boundary_scout_expanded_keys = ["ars", "rprs"]
+    fit.lm_boundary_scout_final_bounds = {
+        "ars": [7.5, 14.6],
+        "rprs": [0.1104, 0.1520],
+    }
+    fit.lm_boundary_scout_note = (
+        "Expanded the UltraNest search bounds from the deterministic fit."
+    )
+    (tmp_path / "working_artifacts").mkdir()
+
+    OutputFiles(
+        fit,
+        {"pName": "HAT-P-32 b"},
+        {"save": str(tmp_path), "date": "2020-01-01"},
+        [0.083],
+    ).final_planetary_params(phot_opt=False, vsp_params=[])
+
+    params_path = next((tmp_path / "working_artifacts").glob("FinalParams_*.json"))
+    params = json.loads(params_path.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
+    assert params["Pre-UltraNest LM boundary scout note"] == fit.lm_boundary_scout_note
+    assert params["Pre-UltraNest LM boundary scout expanded parameters"] == "ars, rprs"
+    assert json.loads(params["Pre-UltraNest LM boundary scout final bounds"]) == {
+        "ars": [7.5, 14.6],
+        "rprs": [0.1104, 0.152],
+    }
+
+
 def test_detrended_fixed_baseline_does_not_report_inherited_errors_as_fitted(tmp_path):
     fit = DummyFit()
     fit.errors["a1"] = 0.00023

@@ -171,6 +171,12 @@ def preselected_filter_option(prefill, choices):
     return choices[0]
 
 
+def gui_reduction_command(reduction_choice, input_kind=1):
+    if reduction_choice == 3:
+        return '--quick-look'
+    return '--reduce' if input_kind == 1 else '--prereduced'
+
+
 def main():
     try:
         python_version.check(min=(3, 8, 0), max=(4, 0, 0))
@@ -240,6 +246,15 @@ def main():
                    padx=20,
                    variable=reduction_opt,
                    value=2).pack(anchor=tk.W)
+    tk.Radiobutton(
+        root,
+        text=("Quick Look Reduction — preliminary scientific results using fast least-squares "
+              "analysis (aperture-only for FITS data)."),
+        justify=tk.LEFT,
+        padx=20,
+        variable=reduction_opt,
+        value=3,
+    ).pack(anchor=tk.W)
     reduction_opt.set(2)
 
     # Button for closing
@@ -429,6 +444,7 @@ def main():
                 "Multiprocess Bad-Pixel Precheck": "Set optional_info 'multiprocess_bad_pixel_precheck' to y or a positive process count to scan bad pixels in parallel. Default n.",
                 "Out-of-Transit Baseline Detrending": "Set optional_info 'detrend_on_outoftransit_baseline' to true to run a second-pass final fit after dividing out a weighted linear trend fit only to the modeled out-of-transit baseline before ingress and after egress. Default true.",
                 "Final Fit Baseline Duration Multiplier": "Set optional_info 'final_fit_baseline_duration_multiplier' to the number of fitted transit durations to keep as baseline before ingress and after egress during the automatic final-fit prefit/refit. Default 1.0.",
+                "Quick Look Mode": "Set optional_info 'quick_look_mode' to true to request preliminary least-squares Quick Look analysis from this initialization file. Default false; a missing entry runs the normal full route. Supports FITS and pre-reduced inputs.",
                 "EEBLS Tmid Initializer": "Set optional_info 'use_eebls_to_initialize_tmid_and_bounds' to y to run a fixed-period box least squares search over the light curve, use the strongest bracketed transit-like signal to initialize Tmid, and narrow the Tmid search range before fitting. Default y.",
                 "Pick Comparison by EEBLS SNR": "Set optional_info 'pick_comparison_by_eebls_snr' to y to prefer the comparison star whose target light curve yields the highest finite EEBLS SNR, falling back to residual scatter if no usable EEBLS SNR is available. Default y.",
                 "Impact Parameter Fit": "Set optional_info 'use_impactparameter_rather_than_inclination_to_fit' to y to sample impact parameter instead of inclination in nested fitting and triangle plots. Default y.",
@@ -437,6 +453,7 @@ def main():
                 "Prior Rp/Rs Fallback For Pinned Posterior": "Set optional_info 'use_prior_Rp/Rs_when_posterior_pinned' to y to rerun a fit with Rp/Rs fixed to the input prior and quote a data-only Rp/Rs uncertainty when the Rp/Rs posterior remains edge-pinned after retry handling. Default y.",
                 "Restrict a/Rs Search Range": "Set optional_info 'restrict_a/Rs_range' to y to restrict a/Rs to a prior-centered percentage window. Set 'restrict_a/Rs_range_percentage' to control the half-width. Defaults y and 10.",
                 "Sparse Posterior Live-Point Retry": "Set optional_info 'use_sparse_posterior_live_point_retry' to y to rank comparison-star candidates at the configured UltraNest live-point count, then continue the chosen final comparison-star fit with 5x additional minimum live points using its retained final-pass bounds. Standalone final fits still only continue when Rp/Rs, Tmid, or a/Rs posteriors are too sparse. Set to n to disable. Default y.",
+                "LM Boundary Scout Before UltraNest": "Set optional_info 'use_lm_boundary_scout_before_ultranest' to y to run fast deterministic fits first and expand any edge-limited Rp/Rs, a/Rs, or Tmid bounds before launching UltraNest. The original search range is preserved and posterior retries remain available. Default y.",
                 "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
                 "Reject Overexposed Stars": "Set optional_info 'reject_overexposed_stars' to true to reject overexposed target frames and overexposed comparison-star measurements. Default true.",
                 "Saturation Value": "Set optional_info 'saturation_value' to the detector saturation value in the same units as the image pixels. If omitted/default, EXOTIC uses FITS SATURATE when available, maps TELESCOP Cecilia to 4096, otherwise uses 65535.",
@@ -485,6 +502,7 @@ def main():
                 "restrict_a/Rs_range": "y",
                 "restrict_a/Rs_range_percentage": 10.0,
                 "use_sparse_posterior_live_point_retry": "y",
+                "use_lm_boundary_scout_before_ultranest": "y",
                 "use_adaptive_apertures": False,
                 "reject_overexposed_stars": True,
                 "saturation_value": 65535,
@@ -546,11 +564,11 @@ def main():
             print("################################################\n\n")
             pass
     else:
-        root=tk.Tk() 
+        fitsortext = tk.IntVar()
+        input_data = {}  # for saving entries
+        root=tk.Tk()
         root.protocol("WM_DELETE_WINDOW", exit)
         root.title(f"EXOTIC v{__version__}")
-
-        fitsortext = tk.IntVar()
 
         tk.Label(root,
                  text="""How do you want to run EXOTIC?""",
@@ -574,8 +592,6 @@ def main():
         # Button for closing
         exit_button = tk.Button(root, text="Next", command=root.destroy)
         exit_button.pack(pady=20, anchor=tk.E)
-        input_data = {}  # for saving entries
-
         root.mainloop()
 
         if fitsortext.get() == 2:
@@ -1546,6 +1562,7 @@ def main():
                 "Multiprocess Bad-Pixel Precheck": "Set optional_info 'multiprocess_bad_pixel_precheck' to y or a positive process count to scan bad pixels in parallel. Default n.",
                 "Out-of-Transit Baseline Detrending": "Set optional_info 'detrend_on_outoftransit_baseline' to true to run a second-pass final fit after dividing out a weighted linear trend fit only to the modeled out-of-transit baseline before ingress and after egress. Default true.",
                 "Final Fit Baseline Duration Multiplier": "Set optional_info 'final_fit_baseline_duration_multiplier' to the number of fitted transit durations to keep as baseline before ingress and after egress during the automatic final-fit prefit/refit. Default 1.0.",
+                "Quick Look Mode": "Set optional_info 'quick_look_mode' to true to request preliminary least-squares Quick Look analysis from this initialization file. Default false; a missing entry runs the normal full route. Supports FITS and pre-reduced inputs.",
                 "EEBLS Tmid Initializer": "Set optional_info 'use_eebls_to_initialize_tmid_and_bounds' to y to run a fixed-period box least squares search over the light curve, use the strongest bracketed transit-like signal to initialize Tmid, and narrow the Tmid search range before fitting. Default y.",
                 "Pick Comparison by EEBLS SNR": "Set optional_info 'pick_comparison_by_eebls_snr' to y to prefer the comparison star whose target light curve yields the highest finite EEBLS SNR, falling back to residual scatter if no usable EEBLS SNR is available. Default y.",
                 "Impact Parameter Fit": "Set optional_info 'use_impactparameter_rather_than_inclination_to_fit' to y to sample impact parameter instead of inclination in nested fitting and triangle plots. Default y.",
@@ -1554,6 +1571,7 @@ def main():
                 "Prior Rp/Rs Fallback For Pinned Posterior": "Set optional_info 'use_prior_Rp/Rs_when_posterior_pinned' to y to rerun a fit with Rp/Rs fixed to the input prior and quote a data-only Rp/Rs uncertainty when the Rp/Rs posterior remains edge-pinned after retry handling. Default y.",
                 "Restrict a/Rs Search Range": "Set optional_info 'restrict_a/Rs_range' to y to restrict a/Rs to a prior-centered percentage window. Set 'restrict_a/Rs_range_percentage' to control the half-width. Defaults y and 10.",
                 "Sparse Posterior Live-Point Retry": "Set optional_info 'use_sparse_posterior_live_point_retry' to y to rank comparison-star candidates at the configured UltraNest live-point count, then continue the chosen final comparison-star fit with 5x additional minimum live points using its retained final-pass bounds. Standalone final fits still only continue when Rp/Rs, Tmid, or a/Rs posteriors are too sparse. Set to n to disable. Default y.",
+                "LM Boundary Scout Before UltraNest": "Set optional_info 'use_lm_boundary_scout_before_ultranest' to y to run fast deterministic fits first and expand any edge-limited Rp/Rs, a/Rs, or Tmid bounds before launching UltraNest. The original search range is preserved and posterior retries remain available. Default y.",
                 "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
                 "Reject Overexposed Stars": "Set optional_info 'reject_overexposed_stars' to true to reject overexposed target frames and overexposed comparison-star measurements. Default true.",
                 "Saturation Value": "Set optional_info 'saturation_value' to the detector saturation value in the same units as the image pixels. If omitted/default, EXOTIC uses FITS SATURATE when available, maps TELESCOP Cecilia to 4096, otherwise uses 65535.",
@@ -1622,6 +1640,7 @@ def main():
                     new_inits['user_info'] = original_inits['user_info']
 
                 new_inits['optional_info'] = {
+                    "quick_look_mode": reduction_opt.get() == 3,
                     "Filter Minimum Wavelength (nm)": input_data.get('filtermin', null),
                     "Filter Maximum Wavelength (nm)": input_data.get('filtermax', null),
                     "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
@@ -1649,6 +1668,7 @@ def main():
                     "restrict_a/Rs_range": "y",
                     "restrict_a/Rs_range_percentage": 10.0,
                     "use_sparse_posterior_live_point_retry": "y",
+                    "use_lm_boundary_scout_before_ultranest": "y",
                     "use_adaptive_apertures": False,
                     "reject_overexposed_stars": True,
                     "saturation_value": 65535,
@@ -1697,6 +1717,7 @@ def main():
                     new_inits['user_info'] = original_inits['user_info']
 
                 new_inits['optional_info'] = {
+                    "quick_look_mode": reduction_opt.get() == 3,
                     "Pre-reduced File:": prered_file.file_path,
                     "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
                     "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
@@ -1722,6 +1743,7 @@ def main():
                     "use_impactparameter_rather_than_inclination_to_fit": "y",
                     "use_prior_Rp/Rs_when_posterior_pinned": "y",
                     "use_sparse_posterior_live_point_retry": "y",
+                    "use_lm_boundary_scout_before_ultranest": "y",
                     "use_adaptive_apertures": False,
                     "reject_overexposed_stars": True,
                     "saturation_value": 65535,
@@ -1806,12 +1828,7 @@ def main():
 
             tk.mainloop()
 
-        run_mthd = None
-
-        if fitsortext.get() == 1:
-            run_mthd = '--reduce'
-        elif fitsortext.get() == 2:
-            run_mthd = '--prereduced'
+        run_mthd = gui_reduction_command(reduction_opt.get(), fitsortext.get())
 
         #         If the user already has an inits file, then go for it
         try:

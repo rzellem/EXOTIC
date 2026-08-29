@@ -16,6 +16,7 @@ BOOLEAN_RUNTIME_PARSERS = (
     exotic_module.should_use_single_comparison_for_fortuitous_variables,
     exotic_module.should_use_nextastro_vsx_cache_first,
     exotic_module.should_use_sparse_posterior_live_point_retry,
+    exotic_module.should_use_lm_boundary_scout_before_ultranest,
     exotic_module.should_run_fast_ultranest_before_final_run,
     exotic_module.should_run_final_residual_rejection,
     exotic_module.should_use_legacy_psf_flux_mode,

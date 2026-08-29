@@ -630,7 +630,7 @@ def _stellar_variability_reference_label(vsp_param, comparison_label):
         details.append(f"Label: {comparison_label}")
 
     if comp_ra is not None and comp_dec is not None:
-        details.extend((f"Comparison RA={comp_ra:.6f}", f"Dec={comp_dec:.6f}"))
+        details.append(f"Comparison RA={comp_ra:.6f} | Dec={comp_dec:.6f}")
 
     if not details and comparison_label:
         details.append(comparison_label)
@@ -684,7 +684,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     ax.set_title("\n".join(title_lines), fontsize=11)
     ax.set_ylabel(f"Magnitude ({band})")
     ax.invert_yaxis()
-    ax.set_xlabel("Time [JD]")
+    ax.set_xlabel("Time [BJD_TDB]")
     fig.tight_layout()
     output_dir = _working_artifacts_dir(save)
     output_path = Path(save) / "Stellar_Variability.png"
@@ -1195,7 +1195,10 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
         show_baseline_uncertainty=True,
     )
 
-    ax_lc.set_title(targ_name)
+    if getattr(fit, 'quick_look_mode', False):
+        ax_lc.set_title(f"{targ_name}\nQUICK LOOK — PRELIMINARY")
+    else:
+        ax_lc.set_title(targ_name)
     drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):
         ax_lc.plot(fit.phase_upsample, fit.transit_upsample, 'r', zorder=1000, lw=2)

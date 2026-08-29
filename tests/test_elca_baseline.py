@@ -158,6 +158,74 @@ def test_lc_fitter_recovers_explicit_a0_baseline(monkeypatch, tmp_path):
     assert np.median(fit.detrended[oot_mask]) == pytest.approx(1.0, abs=5e-4)
 
 
+def test_lc_fitter_lm_minimizes_normalized_residuals_and_reports_covariance(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    true_prior = prior.copy()
+    true_prior["tmid"] = 0.0025
+    time = np.linspace(-0.04, 0.04, 161)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 8e-4)
+    rng = np.random.default_rng(2048)
+    data = elca.transit(time, true_prior) + rng.normal(0.0, dataerr)
+
+    captured = {}
+    scipy_least_squares = elca.least_squares
+
+    def capture_initial_residuals(fun, *args, **kwargs):
+        x0 = np.asarray(kwargs.get("x0", args[0] if args else []), dtype=float)
+        captured["residuals"] = np.asarray(fun(x0), dtype=float)
+        return scipy_least_squares(fun, *args, **kwargs)
+
+    monkeypatch.setattr(elca, "least_squares", capture_initial_residuals)
+    initial_model = elca.transit(time, prior)
+    initial_model *= elca.solve_flux_baseline(initial_model, data, dataerr)
+    expected_residuals = (data - initial_model) / dataerr
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.01, 0.01]},
+        mode="lm",
+        verbose=False,
+    )
+
+    np.testing.assert_allclose(captured["residuals"], expected_residuals)
+    assert fit.parameters["tmid"] == pytest.approx(true_prior["tmid"], abs=3e-4)
+    assert np.isfinite(fit.errors["tmid"])
+    assert fit.errors["tmid"] > 0
+
+
+@pytest.mark.parametrize("time", [
+    np.linspace(-0.035, -0.002, 90),
+    np.linspace(0.007, 0.040, 90),
+])
+def test_lc_fitter_lm_recovers_tmid_from_a_single_transit_edge(monkeypatch, tmp_path, time):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    true_prior = prior.copy()
+    true_prior["tmid"] = 0.0025
+    dataerr = np.full_like(time, 2e-4)
+    data = elca.transit(time, true_prior)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        np.zeros_like(time),
+        prior.copy(),
+        {"tmid": [-0.01, 0.01]},
+        mode="lm",
+        verbose=False,
+    )
+
+    assert fit.parameters["tmid"] == pytest.approx(true_prior["tmid"], abs=2e-5)
+    assert np.isfinite(fit.errors["tmid"])
+
+
 def test_lc_fitter_explicit_a0_tracks_mean_airmass_normalization(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()

@@ -234,7 +234,8 @@ def test_lm_boundary_scout_geometry_envelope_covers_central_duration_limit():
 
     central_limit = (1.0 + 0.1312) / np.sin(np.pi * 0.09 / 3.86813881)
     assert bounds["rprs"] == pytest.approx([0.0668, 0.2004])
-    assert bounds["ars"][0] == pytest.approx(1.1312)
+    # Issue #1406: the a/R* floor is the physical envelope, not merely 1 + Rp/R*.
+    assert bounds["ars"][0] == pytest.approx(max(1.1312, 1.5, 0.35 * 12.17))
     assert bounds["ars"][1] == pytest.approx(2.0 * central_limit)
     assert {item["reason"] for item in adjustments} == {
         "prior_scale_envelope",

@@ -332,6 +332,21 @@ ULTRANEST_LM_BOUNDARY_SCOUT_KEYS = ('rprs', 'ars', 'tmid')
 ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_LOWER_SCALE = 0.5
 ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_UPPER_SCALE = 1.5
 ULTRANEST_LM_BOUNDARY_SCOUT_ARS_CENTRAL_DURATION_UPPER_SCALE = 2.0
+# Physical envelope for the scout (issue #1406). The global search floors are
+# unphysical for a/R* (ARS_SEARCH_BOUND_MIN = 1e-6), so a scout that expands
+# "within the existing limits" can walk a/R* to the inside of the star and hand
+# UltraNest the deep-grazing degeneracy. These caps are relative to the input
+# prior where one exists, with absolute floors where it does not.
+ULTRANEST_LM_BOUNDARY_SCOUT_ARS_PHYSICAL_FLOOR = 1.5
+ULTRANEST_LM_BOUNDARY_SCOUT_ARS_PRIOR_LOWER_SCALE = 0.35
+ULTRANEST_LM_BOUNDARY_SCOUT_ARS_PRIOR_UPPER_SCALE = 3.0
+ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_ABSOLUTE_CEILING = 0.30
+ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_CEILING_SCALE = 2.0
+# Prior-inconsistency fallback (issue #1406, item 3): when the final Rp/R*
+# posterior sits far from the input prior AND the transit QC is a clear FAIL,
+# route the depth through the same data-only path the edge-pinning fallback
+# uses. MARGINAL nights are left alone on purpose (maintainer's call).
+RPRS_PRIOR_INCONSISTENCY_FALLBACK_SIGMA = 3.0
 FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT = True
 FAST_ULTRANEST_MAX_BINNED_POINTS = 20
 FAST_ULTRANEST_MIN_POINTS_TO_BIN = 60
@@ -7544,6 +7559,45 @@ def clamp_retry_priors_to_bounds(prior, bounds):
     )
 
 
+def lm_boundary_scout_physical_envelope(configured_prior):
+    """Physical [min, max] the scout may never expand past, per key (issue #1406)."""
+    prior = configured_prior if isinstance(configured_prior, dict) else {}
+    try:
+        prior_rprs = float(prior.get('rprs', np.nan))
+    except (TypeError, ValueError):
+        prior_rprs = np.nan
+    try:
+        prior_ars = float(prior.get('ars', np.nan))
+    except (TypeError, ValueError):
+        prior_ars = np.nan
+
+    rprs_ceiling = float(RPRS_SEARCH_BOUND_MAX)
+    if np.isfinite(prior_rprs) and prior_rprs > 0:
+        rprs_ceiling = min(
+            rprs_ceiling,
+            max(
+                ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_ABSOLUTE_CEILING,
+                ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_CEILING_SCALE * prior_rprs,
+            ),
+        )
+
+    # A transit needs a/R* > 1 + Rp/R* just to exist; 1.5 is the practical floor.
+    ars_floor = float(ULTRANEST_LM_BOUNDARY_SCOUT_ARS_PHYSICAL_FLOOR)
+    if np.isfinite(prior_rprs) and prior_rprs >= 0:
+        ars_floor = max(ars_floor, 1.0 + prior_rprs)
+    ars_ceiling = float(ARS_SEARCH_BOUND_FALLBACK_MAX)
+    if np.isfinite(prior_ars) and prior_ars > 0:
+        ars_floor = max(ars_floor, ULTRANEST_LM_BOUNDARY_SCOUT_ARS_PRIOR_LOWER_SCALE * prior_ars)
+        ars_ceiling = min(ars_ceiling, ULTRANEST_LM_BOUNDARY_SCOUT_ARS_PRIOR_UPPER_SCALE * prior_ars)
+    if not ars_ceiling > ars_floor:
+        ars_ceiling = ars_floor * 2.0
+
+    return {
+        'rprs': (float(RPRS_SEARCH_BOUND_MIN), float(rprs_ceiling)),
+        'ars': (float(ars_floor), float(ars_ceiling)),
+    }
+
+
 def lm_boundary_scout_expanded_bounds(
     parameter_value,
     parameter_error,
@@ -7620,6 +7674,7 @@ def lm_boundary_scout_geometry_safe_bounds(configured_prior, fit, bounds, expand
     expanded_keys = set(expanded_keys or [])
     parameters = dict(getattr(fit, 'parameters', {}) or {}) if fit is not None else {}
     adjustments = []
+    envelope = lm_boundary_scout_physical_envelope(configured_prior)
 
     if 'rprs' in expanded_keys and 'rprs' in safe_bounds:
         try:
@@ -7639,7 +7694,7 @@ def lm_boundary_scout_geometry_safe_bounds(configured_prior, fit, bounds, expand
                 max(
                     old_upper,
                     min(
-                        RPRS_SEARCH_BOUND_MAX,
+                        envelope['rprs'][1],
                         ULTRANEST_LM_BOUNDARY_SCOUT_RPRS_PRIOR_UPPER_SCALE * configured_rprs,
                     ),
                 ),
@@ -7713,17 +7768,29 @@ def lm_boundary_scout_geometry_safe_bounds(configured_prior, fit, bounds, expand
                 np.isfinite(rprs) and rprs >= 0
                 and np.isfinite(transit_separation_scale) and transit_separation_scale > 0
             )
-            else ARS_SEARCH_BOUND_MIN
+            else np.nan
         )
         if np.isfinite(central_ars_limit) and central_ars_limit > 0:
+            ars_floor, ars_ceiling = envelope['ars']
+            # Never fall back to the unphysical global floor: if the geometric
+            # lower limit cannot be computed, keep the current lower bound.
+            candidate_lower = (
+                max(ars_floor, physical_lower) if np.isfinite(physical_lower) else old_lower
+            )
             new_bounds = [
-                min(old_lower, max(ARS_SEARCH_BOUND_MIN, physical_lower)),
-                max(
-                    old_upper,
-                    ULTRANEST_LM_BOUNDARY_SCOUT_ARS_CENTRAL_DURATION_UPPER_SCALE
-                    * central_ars_limit,
+                min(old_lower, candidate_lower),
+                min(
+                    ars_ceiling,
+                    max(
+                        old_upper,
+                        ULTRANEST_LM_BOUNDARY_SCOUT_ARS_CENTRAL_DURATION_UPPER_SCALE
+                        * central_ars_limit,
+                    ),
                 ),
             ]
+            new_bounds[0] = max(new_bounds[0], ars_floor)
+            if not new_bounds[1] > new_bounds[0]:
+                new_bounds = [old_lower, old_upper]
             if new_bounds[0] < old_lower - 1e-12 or new_bounds[1] > old_upper + 1e-12:
                 safe_bounds['ars'] = new_bounds
                 adjustments.append({
@@ -7733,6 +7800,24 @@ def lm_boundary_scout_geometry_safe_bounds(configured_prior, fit, bounds, expand
                     'original_bounds': [old_lower, old_upper],
                     'new_bounds': list(new_bounds),
                 })
+
+    # Issue #1406: whatever the geometric reasoning above could or could not
+    # compute, the scout's a/R* interval must sit inside the physical envelope.
+    if 'ars' in expanded_keys and 'ars' in safe_bounds:
+        try:
+            lower, upper = [float(value) for value in safe_bounds['ars']]
+            ars_floor, ars_ceiling = envelope['ars']
+            clamped = [max(lower, ars_floor), min(upper, ars_ceiling)]
+            if clamped[1] > clamped[0] and (clamped[0] != lower or clamped[1] != upper):
+                safe_bounds['ars'] = clamped
+                adjustments.append({
+                    'key': 'ars',
+                    'reason': 'physical_envelope_clamp',
+                    'original_bounds': [lower, upper],
+                    'new_bounds': list(clamped),
+                })
+        except (TypeError, ValueError):
+            pass
 
     return sanitize_retry_search_bounds(safe_bounds), adjustments
 
@@ -7836,16 +7921,14 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
                 working_prior[key] = value
 
         iteration_adjustments = []
+        scout_envelope = lm_boundary_scout_physical_envelope(prior)
         for key in ULTRANEST_LM_BOUNDARY_SCOUT_KEYS:
             if key not in working_bounds or key not in parameters:
                 continue
             physical_minimum = None
             physical_maximum = None
-            if key == 'rprs':
-                physical_minimum = RPRS_SEARCH_BOUND_MIN
-                physical_maximum = RPRS_SEARCH_BOUND_MAX
-            elif key == 'ars':
-                physical_minimum = ARS_SEARCH_BOUND_MIN
+            if key in scout_envelope:
+                physical_minimum, physical_maximum = scout_envelope[key]
 
             previous_bounds = list(working_bounds[key])
             expanded_bounds, adjusted = lm_boundary_scout_expanded_bounds(
@@ -8688,11 +8771,52 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     elif latest_diagnostics.get('rprs') is not None:
         rprs_final_diagnostics = latest_diagnostics['rprs']
 
+    # Issue #1406, item 3: the edge-pinning trigger alone is disarmed once the
+    # scout has widened the bounds. A posterior that wandered far from a
+    # well-established prior on a night whose transit QC is a clear FAIL gets
+    # the same data-only treatment. MARGINAL nights are deliberately exempt.
+    rprs_prior_inconsistent_on_fail = False
     if (
         use_prior_rprs_when_posterior_pinned
         and 'rprs' in current_bounds
-        and isinstance(rprs_final_diagnostics, dict)
-        and rprs_final_diagnostics.get('clipped')
+        and not (isinstance(rprs_final_diagnostics, dict) and rprs_final_diagnostics.get('clipped'))
+    ):
+        try:
+            expected_context = fit_transit_qc_expected_context(fit)
+            expected_rprs = float(expected_context.get('expected_rprs', np.nan))
+            expected_rprs_unc = float(expected_context.get('expected_rprs_unc', np.nan))
+            fitted_rprs = float((getattr(fit, 'parameters', {}) or {}).get('rprs', np.nan))
+            fitted_rprs_unc = float((getattr(fit, 'errors', {}) or {}).get('rprs', np.nan))
+            combined_unc = np.sqrt(
+                (fitted_rprs_unc if np.isfinite(fitted_rprs_unc) else 0.0) ** 2
+                + (expected_rprs_unc if np.isfinite(expected_rprs_unc) else 0.0) ** 2
+            )
+            if (
+                np.isfinite(expected_rprs) and expected_rprs > 0
+                and np.isfinite(fitted_rprs) and combined_unc > 0
+                and abs(fitted_rprs - expected_rprs) > RPRS_PRIOR_INCONSISTENCY_FALLBACK_SIGMA * combined_unc
+            ):
+                qc_status = str((evaluate_transit_detection_qc(fit) or {}).get('status', '')).strip().lower()
+                if qc_status == 'fail':
+                    rprs_prior_inconsistent_on_fail = True
+                    rprs_final_diagnostics = dict(rprs_final_diagnostics or {})
+                    rprs_final_diagnostics['edge'] = 'prior-inconsistent'
+                    log_info(
+                        f"Rp/R* posterior ({fitted_rprs:.4f} +/- {fitted_rprs_unc:.4f}) sits "
+                        f"{abs(fitted_rprs - expected_rprs) / combined_unc:.1f} sigma from the input prior "
+                        f"({expected_rprs:.4f}) on a night whose transit QC is FAIL; treating the depth as "
+                        "poorly constrained and applying the prior fallback."
+                    )
+        except Exception as prior_check_error:  # never let the guard break a fit
+            log_info(f"Prior-inconsistency check skipped: {prior_check_error}")
+
+    if (
+        use_prior_rprs_when_posterior_pinned
+        and 'rprs' in current_bounds
+        and (
+            rprs_prior_inconsistent_on_fail
+            or (isinstance(rprs_final_diagnostics, dict) and rprs_final_diagnostics.get('clipped'))
+        )
     ):
         prior_rprs = restriction_reference_prior.get('rprs', prior.get('rprs') if isinstance(prior, dict) else np.nan)
         try:

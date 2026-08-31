@@ -252,6 +252,27 @@ def test_save_final_triangle_plot_regenerates_even_when_selected_candidate_artif
     assert output_path == final_dir / "Diagnostics" / "FinalTriangle_TOI-1728b_2024-12-14.png"
     assert output_path.read_bytes() == b"regenerated-final"
     assert (final_dir / "Diagnostics" / "Triangle_TOI-1728b_2024-12-14.png").read_bytes() == b"regenerated-final"
+    for extension in ("pdf", "eps"):
+        assert (
+            final_dir
+            / "Diagnostics"
+            / f"FinalTriangle_TOI-1728b_2024-12-14.{extension}"
+        ).read_bytes() == b"regenerated-final"
+        assert (
+            final_dir
+            / "Diagnostics"
+            / f"Triangle_TOI-1728b_2024-12-14.{extension}"
+        ).read_bytes() == b"regenerated-final"
+    assert (
+        final_dir
+        / "Diagnostics"
+        / "FinalTriangle_TOI-1728b_2024-12-14_HighRes.png"
+    ).read_bytes() == b"regenerated-final"
+    assert (
+        final_dir
+        / "Diagnostics"
+        / "Triangle_TOI-1728b_2024-12-14_HighRes.png"
+    ).read_bytes() == b"regenerated-final"
     assert fit.called is True
 
 
@@ -321,6 +342,14 @@ def test_save_final_triangle_plot_creates_zoomed_companion_when_supported(tmp_pa
     )
     assert output_path.read_bytes() == b"full"
     assert zoomed_output_path.read_bytes() == b"zoomed"
+    assert zoomed_output_path.with_suffix(".pdf").read_bytes() == b"zoomed"
+    assert zoomed_output_path.with_suffix(".eps").read_bytes() == b"zoomed"
+    assert (
+        zoomed_output_path
+        .with_name("ZoomedTrianglePlot_TOI-1728b_2024-12-14_HighRes.png")
+        .read_bytes()
+        == b"zoomed"
+    )
     assert fit.calls == [
         {"plot_title": "Final selected fit (comparison candidate #4)", "zoom_sigma": None},
         {"plot_title": "Final selected fit (comparison candidate #4) (5-sigma zoom)", "zoom_sigma": 5.0},

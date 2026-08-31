@@ -21,6 +21,7 @@ from exotic.plots import (
     plot_prior_posterior_comparison,
     plot_differential_magnitude,
     plot_stellar_variability,
+    save_figure_formats,
 )
 
 
@@ -36,6 +37,21 @@ def test_format_parameter_value_uses_uncertainty_precision_without_scientific_no
         == "2461197.86458\n+/- 0.00050"
     )
     assert _format_parameter_value(89.3511, 2.16, unit="deg") == "89.4 +/- 2.2 deg"
+
+
+def test_save_figure_formats_keeps_native_square_png_and_adds_square_high_res_png(tmp_path):
+    figure, axis = plt.subplots(figsize=(4, 4))
+    axis.plot([0.0, 1.0], [0.0, 1.0])
+    png_path = tmp_path / "FinalTriangle_Target_2026-03-09.png"
+
+    save_figure_formats(figure, png_path)
+    plt.close(figure)
+
+    assert plt.imread(png_path).shape[:2] != (1920, 1920)
+    high_res_path = tmp_path / "FinalTriangle_Target_2026-03-09_HighRes.png"
+    assert plt.imread(high_res_path).shape[:2] == (1920, 1920)
+    assert png_path.with_suffix(".pdf").exists()
+    assert png_path.with_suffix(".eps").exists()
 
 
 def test_plot_obs_stats_applies_relative_flux_mask(tmp_path, monkeypatch):
@@ -163,7 +179,13 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
     assert captured_ylabels[-1] == "Magnitude (r)"
     assert len(inverted_axes) == 2
     assert "O-C [%]" not in captured_ylabels
-    assert (tmp_path / "FinalLightCurve_Target_2026-07-08.png").exists()
+    png_path = tmp_path / "FinalLightCurve_Target_2026-07-08.png"
+    high_res_png_path = tmp_path / "FinalLightCurve_Target_2026-07-08_HighRes.png"
+    assert png_path.exists()
+    assert (tmp_path / "FinalLightCurve_Target_2026-07-08.pdf").exists()
+    assert (tmp_path / "FinalLightCurve_Target_2026-07-08.eps").exists()
+    assert high_res_png_path.exists()
+    assert plt.imread(high_res_png_path).shape[:2] == (1080, 1920)
 
 
 def test_stellar_variability_differential_plot_survives_without_apparent_magnitudes(
@@ -638,8 +660,13 @@ def test_plot_final_lightcurve_requests_uncertainty_bands_without_baseline_label
         "show_model_uncertainty": True,
         "show_baseline_uncertainty": True,
     }
-    assert (tmp_path / "FinalLightCurve_Target_2026-03-09.png").exists()
+    png_path = tmp_path / "FinalLightCurve_Target_2026-03-09.png"
+    high_res_png_path = tmp_path / "FinalLightCurve_Target_2026-03-09_HighRes.png"
+    assert png_path.exists()
     assert (tmp_path / "FinalLightCurve_Target_2026-03-09.pdf").exists()
+    assert (tmp_path / "FinalLightCurve_Target_2026-03-09.eps").exists()
+    assert high_res_png_path.exists()
+    assert plt.imread(high_res_png_path).shape[:2] == (1080, 1920)
 
 
 def test_plot_final_lightcurve_adds_apparent_magnitude_axis_when_calibrated(tmp_path, monkeypatch):

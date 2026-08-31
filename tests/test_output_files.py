@@ -712,16 +712,33 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         "wl_min": None,
         "wl_max": None,
     }
-    final_plot_source = tmp_path / "FinalLightCurve_HAT-P-32b_2020-01-01.png"
-    final_plot_source.write_bytes(b"final lightcurve")
+    final_plot_sources = [
+        tmp_path / f"FinalLightCurve_HAT-P-32b_2020-01-01.{extension}"
+        for extension in ("png", "pdf", "eps")
+    ]
+    for final_plot_source in final_plot_sources:
+        final_plot_source.write_bytes(b"final lightcurve")
+    final_plot_high_res_source = (
+        tmp_path / "FinalLightCurve_HAT-P-32b_2020-01-01_HighRes.png"
+    )
+    final_plot_high_res_source.write_bytes(b"final lightcurve high res")
     diagnostics_dir = tmp_path / "Diagnostics"
     diagnostics_dir.mkdir()
     diagnostic_sources = [
         diagnostics_dir / filename
         for filename in (
             "FinalTriangle_HAT-P-32b_2020-01-01.png",
+            "FinalTriangle_HAT-P-32b_2020-01-01.pdf",
+            "FinalTriangle_HAT-P-32b_2020-01-01.eps",
+            "FinalTriangle_HAT-P-32b_2020-01-01_HighRes.png",
             "Triangle_HAT-P-32b_2020-01-01.png",
+            "Triangle_HAT-P-32b_2020-01-01.pdf",
+            "Triangle_HAT-P-32b_2020-01-01.eps",
+            "Triangle_HAT-P-32b_2020-01-01_HighRes.png",
             "ZoomedTrianglePlot_HAT-P-32b_2020-01-01.png",
+            "ZoomedTrianglePlot_HAT-P-32b_2020-01-01.pdf",
+            "ZoomedTrianglePlot_HAT-P-32b_2020-01-01.eps",
+            "ZoomedTrianglePlot_HAT-P-32b_2020-01-01_HighRes.png",
             "KTMF_QC_HAT-P-32b_2020-01-01.png",
             "KTMF_QC_HAT-P-32b_2020-01-01.pdf",
             "PriorPosteriorComparison_HAT-P-32b_2020-01-01.png",
@@ -743,9 +760,13 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
 
     output_file = tmp_path / "AAVSO_Files" / "AAVSO_HAT-P-32b_2020-01-01.txt"
     output_text = output_file.read_text(encoding="utf-8")
+    for final_plot_source in final_plot_sources:
+        assert (
+            tmp_path / "AAVSO_Files" / final_plot_source.name
+        ).read_bytes() == b"final lightcurve"
     assert (
-        tmp_path / "AAVSO_Files" / final_plot_source.name
-    ).read_bytes() == b"final lightcurve"
+        tmp_path / "AAVSO_Files" / final_plot_high_res_source.name
+    ).read_bytes() == b"final lightcurve high res"
     for diagnostic_source in diagnostic_sources:
         assert (
             tmp_path / "AAVSO_Files" / diagnostic_source.name

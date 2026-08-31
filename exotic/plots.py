@@ -1,6 +1,7 @@
 from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormalize
 from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
 import inspect
+from io import BytesIO
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
@@ -46,6 +47,15 @@ except ImportError:
 plt.style.use(astropy_mpl_style)
 
 
+# Final plots are also used as presentation artifacts.  Keep the raster
+# export dimensions explicit rather than relying on the user's Matplotlib
+# defaults (which vary by backend and environment).
+FINAL_PLOT_PNG_SIZE = (1920, 1080)
+FINAL_PLOT_SQUARE_PNG_SIZE = (1920, 1920)
+FINAL_PLOT_PNG_DPI = 100
+FINAL_PLOT_VECTOR_FORMATS = ("pdf", "eps")
+
+
 def _dated_plot_filename(prefix, *parts, date, extension):
     return safe_output_filename(prefix, *parts, filename_date_token(date), extension=extension)
 
@@ -54,6 +64,216 @@ def _working_artifacts_dir(save):
     output_dir = Path(save) / "working_artifacts"
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def _savefig_with_supported_kwargs(figure, path, **kwargs):
+    """Save a figure while remaining compatible with lightweight test figures.
+
+    Production Matplotlib figures accept the save options below through
+    ``**kwargs``.  A few callers/tests use a minimal ``savefig(path)`` object;
+    filtering unsupported options keeps those objects useful without changing
+    the production export behavior.
+    """
+    try:
+        signature = inspect.signature(figure.savefig)
+    except (TypeError, ValueError):
+        signature = None
+
+    if signature is not None:
+        parameters = signature.parameters.values()
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if not accepts_kwargs:
+            kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if key in signature.parameters
+            }
+    try:
+        return figure.savefig(path, **kwargs)
+    except TypeError:
+        # If a proxy object hides its signature, preserve the historical
+        # ``savefig(path)`` fallback used by the plotting callers.
+        if kwargs:
+            return figure.savefig(path)
+        raise
+
+
+def _save_high_res_png(figure, path):
+    """Save ``figure`` as a high-resolution PNG without distorting it.
+
+    Non-square plots use a 1920x1080 canvas.  Square plots use a 1920x1920
+    canvas so posterior/triangle panels are not letterboxed.
+    """
+    width, height = FINAL_PLOT_PNG_SIZE
+    figure_size_for_aspect = None
+    get_size_inches = getattr(figure, "get_size_inches", None)
+    if callable(get_size_inches):
+        try:
+            candidate_size = np.asarray(get_size_inches(), dtype=float).reshape(-1)
+            if (
+                candidate_size.size >= 2
+                and np.all(np.isfinite(candidate_size[:2]))
+                and np.all(candidate_size[:2] > 0)
+            ):
+                figure_size_for_aspect = candidate_size[:2]
+        except (TypeError, ValueError):
+            figure_size_for_aspect = None
+    if (
+        figure_size_for_aspect is not None
+        and np.isclose(
+            figure_size_for_aspect[0],
+            figure_size_for_aspect[1],
+            rtol=1.0e-3,
+            atol=1.0e-6,
+        )
+    ):
+        width, height = FINAL_PLOT_SQUARE_PNG_SIZE
+
+    # Render at the largest scale that fits the requested canvas, then pad
+    # the shorter dimension.  This keeps square posterior/triangle panels
+    # square instead of stretching them to the lightcurve's 16:9 presentation
+    # canvas.
+    try:
+        if figure_size_for_aspect is not None:
+            figure_size = figure_size_for_aspect
+            if (
+                figure_size.size >= 2
+                and np.all(np.isfinite(figure_size[:2]))
+                and np.all(figure_size[:2] > 0)
+            ):
+                render_dpi = min(
+                    width / figure_size[0],
+                    height / figure_size[1],
+                )
+                if np.isfinite(render_dpi) and render_dpi > 0:
+                    rendered = BytesIO()
+                    _savefig_with_supported_kwargs(
+                        figure,
+                        rendered,
+                        dpi=render_dpi,
+                        bbox_inches=None,
+                        format="png",
+                    )
+                    rendered.seek(0)
+                    from PIL import Image
+
+                    source = Image.open(rendered).convert("RGBA")
+                    source_width, source_height = source.size
+                    scale = min(width / source_width, height / source_height)
+                    scaled_size = (
+                        max(1, int(round(source_width * scale))),
+                        max(1, int(round(source_height * scale))),
+                    )
+                    if scaled_size != source.size:
+                        resampling = getattr(Image, "Resampling", Image).LANCZOS
+                        source = source.resize(scaled_size, resampling)
+                    face_color = np.asarray(
+                        getattr(figure, "get_facecolor", lambda: (1, 1, 1, 1))(),
+                        dtype=float,
+                    ).reshape(-1)
+                    if face_color.size < 4:
+                        face_color = np.pad(face_color, (0, 4 - face_color.size), constant_values=1.0)
+                    background = tuple(
+                        int(np.clip(channel, 0.0, 1.0) * 255.0)
+                        for channel in face_color[:4]
+                    )
+                    canvas = Image.new("RGBA", (width, height), background)
+                    offset = (
+                        (width - source.width) // 2,
+                        (height - source.height) // 2,
+                    )
+                    canvas.alpha_composite(source, offset)
+                    canvas.save(path, format="PNG")
+                    return
+    except Exception:
+        # Fall through to a direct Matplotlib export if Pillow or an unusual
+        # figure proxy is unavailable.  The normal Matplotlib path above is
+        # what production figures use.
+        pass
+
+    # Lightweight figure proxies used by integrations/tests may not expose a
+    # canvas or size.  Keep their historical savefig(path) behavior.
+    original_size = None
+    set_size_inches = getattr(figure, "set_size_inches", None)
+    if callable(get_size_inches) and callable(set_size_inches):
+        try:
+            original_size = np.asarray(get_size_inches(), dtype=float).copy()
+            target_size = (width / FINAL_PLOT_PNG_DPI, height / FINAL_PLOT_PNG_DPI)
+            try:
+                set_size_inches(target_size, forward=True)
+            except TypeError:
+                set_size_inches(target_size)
+        except (TypeError, ValueError):
+            original_size = None
+
+    try:
+        # Do not use bbox_inches="tight" here: it crops the canvas and would
+        # make the resulting pixel dimensions dependent on plot decorations.
+        _savefig_with_supported_kwargs(
+            figure,
+            path,
+            dpi=FINAL_PLOT_PNG_DPI,
+            bbox_inches=None,
+        )
+    finally:
+        if original_size is not None and callable(set_size_inches):
+            try:
+                set_size_inches(original_size, forward=True)
+            except TypeError:
+                set_size_inches(original_size)
+
+
+def save_figure_formats(figure, png_path, *, original_bbox_inches=None, high_res_png_path=None):
+    """Save original and presentation versions of a final plot.
+
+    ``png_path`` is the canonical output path and keeps its existing native
+    Matplotlib export.  PDF/EPS use the same stem.  A separate high-resolution
+    PNG is written beside them (``*_HighRes.png`` by default), using a
+    1920x1080 canvas or a square 1920x1920 canvas for square figures.
+    """
+    png_path = Path(png_path)
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    if high_res_png_path is None:
+        high_res_png_path = png_path.with_name(f"{png_path.stem}_HighRes.png")
+    high_res_png_path = Path(high_res_png_path)
+    high_res_png_path.parent.mkdir(parents=True, exist_ok=True)
+    output_paths = {
+        "png": png_path,
+        **{
+            extension: png_path.with_suffix(f".{extension}")
+            for extension in FINAL_PLOT_VECTOR_FORMATS
+        },
+        "high_res_png": high_res_png_path,
+    }
+
+    # Keep the original PNG/PDF behavior intact, then add EPS and the separate
+    # presentation PNG.  Each format is independent so one backend failure
+    # does not prevent the others from landing.
+    try:
+        _savefig_with_supported_kwargs(
+            figure,
+            output_paths["png"],
+            bbox_inches=original_bbox_inches,
+        )
+    except Exception:
+        pass
+    for extension in FINAL_PLOT_VECTOR_FORMATS:
+        try:
+            _savefig_with_supported_kwargs(
+                figure,
+                output_paths[extension],
+                bbox_inches=original_bbox_inches,
+            )
+        except Exception:
+            pass
+    try:
+        _save_high_res_png(figure, output_paths["high_res_png"])
+    except Exception:
+        pass
+    return output_paths
 
 
 # Plots of the centroid positions as a function of time
@@ -1172,8 +1392,16 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
 
         Path(save).mkdir(parents=True, exist_ok=True)
         try:
-            f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="png"), bbox_inches="tight")
-            f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="pdf"), bbox_inches="tight")
+            save_figure_formats(
+                f,
+                Path(save) / _dated_plot_filename(
+                    "FinalLightCurve",
+                    targ_name,
+                    date=date,
+                    extension="png",
+                ),
+                original_bbox_inches="tight",
+            )
         except Exception:
             pass
         plt.close(f)
@@ -1211,8 +1439,16 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
 
     Path(save).mkdir(parents=True, exist_ok=True)
     try:
-        f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="png"), bbox_inches="tight")
-        f.savefig(Path(save) / _dated_plot_filename("FinalLightCurve", targ_name, date=date, extension="pdf"), bbox_inches="tight")
+        save_figure_formats(
+            f,
+            Path(save) / _dated_plot_filename(
+                "FinalLightCurve",
+                targ_name,
+                date=date,
+                extension="png",
+            ),
+            original_bbox_inches="tight",
+        )
     except Exception:
         pass
     plt.close()

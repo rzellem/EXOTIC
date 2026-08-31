@@ -199,14 +199,14 @@ try:  # plots
         plot_stellar_variability, plot_differential_magnitude, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
         plot_comp_star_calibration_series, plot_individual_comp_star_calibration_series, \
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
-        plot_adaptive_aperture_diagnostics
+        plot_adaptive_aperture_diagnostics, save_figure_formats
 except ImportError:  # package import
     from .plots import plot_fov, plot_centroids, plot_obs_stats, plot_final_lightcurve, plot_flux, \
         plot_prior_posterior_comparison, plot_ktmf_qc_metrics, \
         plot_stellar_variability, plot_differential_magnitude, plot_variable_residuals, plot_comp_star_pairwise_matrix, \
         plot_comp_star_calibration_series, plot_individual_comp_star_calibration_series, \
         plot_comp_star_candidate_lightcurve_fits, plot_comp_star_suitability, \
-        plot_adaptive_aperture_diagnostics
+        plot_adaptive_aperture_diagnostics, save_figure_formats
 try:  # tools
     from utils import (
         AAVSO_OUTPUT_FOLDER_NAME,
@@ -3296,28 +3296,58 @@ def comparison_candidate_output_dir(save_dir, comp_index):
     return Path(save_dir) / "Diagnostics" / f"comp{comp_index + 1}"
 
 
-def triangle_plot_output_path(save_dir, planet_name, observation_date):
+def triangle_plot_output_path(save_dir, planet_name, observation_date, extension="png"):
     return (
         Path(save_dir)
         / "Diagnostics"
-        / safe_output_filename("Triangle", planet_name, filename_date_token(observation_date), extension="png")
+        / safe_output_filename(
+            "Triangle",
+            planet_name,
+            filename_date_token(observation_date),
+            extension=extension,
+        )
     )
 
 
-def final_triangle_plot_output_path(save_dir, planet_name, observation_date):
+def triangle_plot_high_res_output_path(save_dir, planet_name, observation_date):
+    output_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
+    return output_path.with_name(f"{output_path.stem}_HighRes.png")
+
+
+def final_triangle_plot_output_path(save_dir, planet_name, observation_date, extension="png"):
     return (
         Path(save_dir)
         / "Diagnostics"
-        / safe_output_filename("FinalTriangle", planet_name, filename_date_token(observation_date), extension="png")
+        / safe_output_filename(
+            "FinalTriangle",
+            planet_name,
+            filename_date_token(observation_date),
+            extension=extension,
+        )
     )
 
 
-def zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date):
+def final_triangle_plot_high_res_output_path(save_dir, planet_name, observation_date):
+    output_path = final_triangle_plot_output_path(save_dir, planet_name, observation_date)
+    return output_path.with_name(f"{output_path.stem}_HighRes.png")
+
+
+def zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date, extension="png"):
     return (
         Path(save_dir)
         / "Diagnostics"
-        / safe_output_filename("ZoomedTrianglePlot", planet_name, filename_date_token(observation_date), extension="png")
+        / safe_output_filename(
+            "ZoomedTrianglePlot",
+            planet_name,
+            filename_date_token(observation_date),
+            extension=extension,
+        )
     )
+
+
+def zoomed_final_triangle_plot_high_res_output_path(save_dir, planet_name, observation_date):
+    output_path = zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date)
+    return output_path.with_name(f"{output_path.stem}_HighRes.png")
 
 
 def comparison_candidate_triangle_plot_output_path(save_dir, planet_name, observation_date, comp_index):
@@ -3372,11 +3402,29 @@ def _close_plot_figure(fig):
 
 def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, source_dir=None):
     output_path = final_triangle_plot_output_path(save_dir, planet_name, observation_date)
+    high_res_output_path = final_triangle_plot_high_res_output_path(
+        save_dir,
+        planet_name,
+        observation_date,
+    )
     zoomed_output_path = zoomed_final_triangle_plot_output_path(save_dir, planet_name, observation_date)
+    zoomed_high_res_output_path = zoomed_final_triangle_plot_high_res_output_path(
+        save_dir,
+        planet_name,
+        observation_date,
+    )
     compatibility_path = triangle_plot_output_path(save_dir, planet_name, observation_date)
+    compatibility_high_res_output_path = triangle_plot_high_res_output_path(
+        save_dir,
+        planet_name,
+        observation_date,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    high_res_output_path.parent.mkdir(parents=True, exist_ok=True)
     zoomed_output_path.parent.mkdir(parents=True, exist_ok=True)
+    zoomed_high_res_output_path.parent.mkdir(parents=True, exist_ok=True)
     compatibility_path.parent.mkdir(parents=True, exist_ok=True)
+    compatibility_high_res_output_path.parent.mkdir(parents=True, exist_ok=True)
 
     source_label = comparison_candidate_label_from_output_dir(source_dir)
     plot_title = "Final selected fit"
@@ -3385,12 +3433,30 @@ def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, sourc
     fig = _plot_triangle_for_output(fit, plot_title=plot_title)
     if fig is None:
         return None
-    fig.savefig(output_path)
-    if compatibility_path != output_path:
+    output_paths = save_figure_formats(
+        fig,
+        output_path,
+        high_res_png_path=high_res_output_path,
+    )
+    for extension, saved_output_path in output_paths.items():
+        if extension == "high_res_png":
+            compatibility_format_path = compatibility_high_res_output_path
+        else:
+            compatibility_format_path = triangle_plot_output_path(
+                save_dir,
+                planet_name,
+                observation_date,
+                extension=extension,
+            )
+        if compatibility_format_path == saved_output_path:
+            continue
         try:
-            shutil.copy2(output_path, compatibility_path)
+            shutil.copy2(saved_output_path, compatibility_format_path)
         except Exception:
-            fig.savefig(compatibility_path)
+            try:
+                fig.savefig(compatibility_format_path)
+            except Exception:
+                pass
     _close_plot_figure(fig)
 
     zoomed_fig = None
@@ -3403,7 +3469,11 @@ def save_final_triangle_plot(fit, save_dir, planet_name, observation_date, sourc
             zoom_sigma=5.0,
         )
         if zoomed_fig is not None:
-            zoomed_fig.savefig(zoomed_output_path)
+            save_figure_formats(
+                zoomed_fig,
+                zoomed_output_path,
+                high_res_png_path=zoomed_high_res_output_path,
+            )
     except Exception as exc:
         try:
             log_info(f"Warning: Could not save zoomed final triangle plot: {exc}", warn=True)

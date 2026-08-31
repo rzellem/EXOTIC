@@ -79,18 +79,26 @@ AAVSO_FINDER_STRETCH_NAMES = (
 
 
 def copy_aavso_supporting_artifacts(save, target_name, observation_date):
-    """Copy final lightcurve, finder, triangle, and QC products into ``AAVSO_Files``."""
+    """Copy final lightcurve, finder, triangle, and QC products into ``AAVSO_Files``.
+
+    Final lightcurve and triangle products are copied in their original
+    formats plus the presentation EPS/PDF and ``*_HighRes.png`` variants.
+    """
 
     output_dir = Path(save)
     working_artifacts_dir = output_dir / 'working_artifacts'
     diagnostics_dir = output_dir / 'Diagnostics'
     date_token = filename_date_token(observation_date)
+    final_lightcurve_png = output_dir / safe_output_filename(
+        'FinalLightCurve', target_name, date_token, extension='png'
+    )
     source_paths = [
         output_dir / safe_output_filename(
             'FinalLightCurve', target_name, date_token, extension=extension
         )
-        for extension in ('png', 'pdf')
+        for extension in ('png', 'pdf', 'eps')
     ]
+    source_paths.append(final_lightcurve_png.with_name(f'{final_lightcurve_png.stem}_HighRes.png'))
     source_paths.append(
         working_artifacts_dir / safe_output_filename(
             'FinalLightCurve', target_name, date_token, extension='csv'
@@ -104,9 +112,9 @@ def copy_aavso_supporting_artifacts(save, target_name, observation_date):
             for extension in ('png', 'pdf')
         )
     for prefix, extensions in (
-        ('FinalTriangle', ('png',)),
-        ('Triangle', ('png',)),
-        ('ZoomedTrianglePlot', ('png',)),
+        ('FinalTriangle', ('png', 'pdf', 'eps')),
+        ('Triangle', ('png', 'pdf', 'eps')),
+        ('ZoomedTrianglePlot', ('png', 'pdf', 'eps')),
         ('KTMF_QC', ('png', 'pdf')),
         ('PriorPosteriorComparison', ('png', 'pdf')),
     ):
@@ -116,6 +124,14 @@ def copy_aavso_supporting_artifacts(save, target_name, observation_date):
             )
             for extension in extensions
         )
+        if prefix in {'FinalTriangle', 'Triangle', 'ZoomedTrianglePlot'}:
+            triangle_png = diagnostics_dir / safe_output_filename(
+                prefix,
+                target_name,
+                date_token,
+                extension='png',
+            )
+            source_paths.append(triangle_png.with_name(f'{triangle_png.stem}_HighRes.png'))
 
     aavso_dir = aavso_output_directory(output_dir)
     copied_paths = []

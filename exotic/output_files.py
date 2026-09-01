@@ -3602,8 +3602,8 @@ class AIDOutputFiles:
             f.write(format_aavso_json_header("MAGNITUDE_FIELDS-XC", {
                 'apparent_magnitude': 'MAG',
                 'apparent_magnitude_error': 'MERR',
-                'differential_magnitude': 'NOTES subfield DIFFMAG',
-                'differential_magnitude_error': 'NOTES subfield DIFFERR',
+                'differential_magnitude': 'NOTES text DIFFMAG',
+                'differential_magnitude_error': 'NOTES text DIFFERR',
                 'differential_magnitude_definition': (
                     'target minus selected comparison reference; '
                     '-2.5 log10(target_flux/reference_flux)'
@@ -3659,12 +3659,12 @@ class AIDOutputFiles:
                     default=None,
                     digits=MAGNITUDE_DECIMAL_PLACES,
                 )
-                notes_subfields = []
+                notes_parts = []
                 if differential_mag_text is not None:
-                    notes_subfields.append(f"|DIFFMAG={differential_mag_text}")
+                    notes_parts.append(f"DIFFMAG={differential_mag_text}")
                 if differential_error_text is not None:
-                    notes_subfields.append(f"|DIFFERR={differential_error_text}")
-                notes = ''.join(notes_subfields) or 'na'
+                    notes_parts.append(f"DIFFERR={differential_error_text}")
+                notes = ';'.join(notes_parts) or 'na'
                 aid_time = self._aid_row_time(vsp_p)
                 f.write(f"{variable_name},{round(aid_time, 5)},{mag},{mag_err},"
                         f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{cmag},na,na,"

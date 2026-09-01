@@ -3491,12 +3491,13 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
         '#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,'
         'GROUP,CHART,NOTES'
     ) in aid_text
-    assert '|DIFFMAG=' in aid_text
-    assert '|DIFFERR=' in aid_text
+    assert 'DIFFMAG=' in aid_text
+    assert ';DIFFERR=' in aid_text
     aid_data_row = next(line for line in aid_text.splitlines() if not line.startswith('#'))
     assert len(aid_data_row.split(',')) == 15
-    assert aid_data_row.split(',')[-1].startswith('|DIFFMAG=')
-    assert '|DIFFERR=' in aid_data_row.split(',')[-1]
+    assert aid_data_row.split(',')[-1].startswith('DIFFMAG=')
+    assert ';DIFFERR=' in aid_data_row.split(',')[-1]
+    assert '|' not in aid_data_row.split(',')[-1]
     ensemble_header = next(
         line for line in aid_text.splitlines()
         if line.startswith('#ENSEMBLE-COMPARISONS-XC=')

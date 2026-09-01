@@ -122,9 +122,19 @@ try:  # light curve numerics
 except ImportError:  # package import
     from api.elca import lc_fitter, transit, get_phase
 try:  # output files
-    from inputs import Inputs, NEXTASTRO_GAIA_DISTPM_ENDPOINT, comparison_star_coords
+    from inputs import (
+        CALIBRATION_MASTER_FILENAMES,
+        Inputs,
+        NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        comparison_star_coords,
+    )
 except ImportError:  # package import
-    from .inputs import Inputs, NEXTASTRO_GAIA_DISTPM_ENDPOINT, comparison_star_coords
+    from .inputs import (
+        CALIBRATION_MASTER_FILENAMES,
+        Inputs,
+        NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        comparison_star_coords,
+    )
 try:  # ld
     from .api.ld import LimbDarkening, ld_re_punct_p
 except ImportError:  # package import
@@ -320,6 +330,8 @@ COMPARISON_CANDIDATE_FRAME_OUTLIER_MIN_VALID_PAIRS = 2
 OUT_OF_TRANSIT_BASELINE_DEPTH_FRACTION = 0.05
 OUT_OF_TRANSIT_BASELINE_MIN_SIDE_POINTS_DEFAULT = 12
 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT = 1.0
+RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT = True
+BASELINE_RESTRICTION_BUFFER_HOURS = 1.0
 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
 ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT = True
@@ -3858,6 +3870,7 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         'target_flux_error': np.array([], dtype=float),
         'comp_flux_error': np.array([], dtype=float),
         'source_indices': np.array([], dtype=int),
+        'approximate_baseline_level': np.nan,
     }
 
     prepared = prepare_lightcurve_fit_input_series(
@@ -3873,6 +3886,7 @@ def prepare_comparison_candidate_full_reduction_series(times, target_flux, comp_
         expected_transit_depth=expected_transit_depth,
     )
     result['filter_diagnostics'] = prepared.get('filter_diagnostics', [])
+    result['approximate_baseline_level'] = prepared.get('approximate_baseline_level', np.nan)
     for key in (
         'debug_times',
         'debug_target_flux',
@@ -6256,6 +6270,12 @@ def refit_selected_fast_comparison_on_full_lightcurve(
     selected_debug = getattr(previous_fit, 'selected_photometry_debug', None)
     if selected_debug is not None:
         fit.selected_photometry_debug = copy.deepcopy(selected_debug)
+    restricted_baseline_points = getattr(previous_fit, 'restricted_baseline_points', None)
+    if restricted_baseline_points is not None:
+        fit.restricted_baseline_points = copy.deepcopy(restricted_baseline_points)
+        fit.restricted_baseline_summary = copy.deepcopy(
+            getattr(previous_fit, 'restricted_baseline_summary', None)
+        )
     selected_result['good_times'] = np.asarray(times, dtype=float)
     selected_result['good_flux'] = np.asarray(fit_flux, dtype=float)
     selected_result['good_unc'] = np.asarray(fit_unc, dtype=float)
@@ -11152,6 +11172,21 @@ def get_final_fit_baseline_duration_multiplier(config_value):
     return FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT
 
 
+def should_restrict_baseline_to_an_hour(config_value):
+    if config_value is None:
+        return RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT
+
+    parsed = coerce_boolean_config_value(config_value)
+    if parsed is not None:
+        return parsed
+
+    log_info(
+        "Warning: Invalid 'restrict_baseline_to_an_hour' value; using default enabled setting.",
+        warn=True,
+    )
+    return RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT
+
+
 def estimate_transit_duration_from_prior_geometry(prior):
     try:
         period = float(prior['per'])
@@ -11186,6 +11221,123 @@ def estimate_transit_duration_from_prior_geometry(prior):
     eccentric_speed_factor = np.sqrt(1.0 - ecc ** 2) / max(np.finfo(float).eps, 1.0 + ecc * np.sin(omega))
     duration = (period / np.pi) * np.arcsin(argument) * eccentric_speed_factor
     return float(duration) if np.isfinite(duration) and duration > 0 else np.nan
+
+
+def build_baseline_restriction_mask(
+    times,
+    planet_dict,
+    enabled=RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT,
+    buffer_hours=BASELINE_RESTRICTION_BUFFER_HOURS,
+):
+    """Keep fit points from one hour before ingress through one hour after egress."""
+    times = np.asarray(times, dtype=float).reshape(-1)
+    keep = np.ones(times.shape, dtype=bool)
+    summary = {
+        'enabled': bool(enabled),
+        'applied': False,
+        'input_point_count': int(times.size),
+        'kept_point_count': int(times.size),
+        'excluded_point_count': 0,
+        'buffer_hours': float(buffer_hours),
+        'duration_days': np.nan,
+        'period_days': np.nan,
+        'reference_tmid': np.nan,
+        'fit_window_start': np.nan,
+        'fit_window_end': np.nan,
+        'note': 'Baseline restriction was not applied.',
+    }
+    if not enabled:
+        summary['note'] = "Disabled per optional_info setting; all usable photometry may enter the fit."
+        return keep, summary
+    if times.size == 0:
+        summary['note'] = "Baseline restriction skipped; no light-curve points were available."
+        return keep, summary
+
+    try:
+        period = float(planet_dict.get('pPer'))
+        reference_tmid = float(planet_dict.get('midT'))
+        buffer_days = float(buffer_hours) / 24.0
+    except (AttributeError, TypeError, ValueError):
+        period = np.nan
+        reference_tmid = np.nan
+        buffer_days = np.nan
+
+    duration = estimate_transit_duration_from_prior_geometry(
+        stellar_variability_transit_prior_from_planet_dict(planet_dict or {})
+    )
+    summary.update({
+        'duration_days': duration,
+        'period_days': period,
+        'reference_tmid': reference_tmid,
+    })
+    if (
+        not np.isfinite(period)
+        or period <= 0
+        or not np.isfinite(reference_tmid)
+        or not np.isfinite(duration)
+        or duration <= 0
+        or not np.isfinite(buffer_days)
+        or buffer_days < 0
+    ):
+        summary['note'] = (
+            "Baseline restriction skipped; EXOTIC could not estimate a finite ingress-to-egress "
+            "window from the supplied planetary parameters."
+        )
+        return keep, summary
+
+    finite = np.isfinite(times)
+    epochs = np.zeros(times.shape, dtype=float)
+    epochs[finite] = np.rint((times[finite] - reference_tmid) / period)
+    nearest_tmid = reference_tmid + epochs * period
+    fit_window_start = nearest_tmid - 0.5 * duration - buffer_days
+    fit_window_end = nearest_tmid + 0.5 * duration + buffer_days
+    keep[finite] = (
+        (times[finite] >= fit_window_start[finite])
+        & (times[finite] <= fit_window_end[finite])
+    )
+    excluded = finite & ~keep
+
+    finite_midpoints = nearest_tmid[finite]
+    representative_tmid = (
+        float(np.nanmedian(finite_midpoints))
+        if finite_midpoints.size
+        else np.nan
+    )
+    representative_start = representative_tmid - 0.5 * duration - buffer_days
+    representative_end = representative_tmid + 0.5 * duration + buffer_days
+    excluded_count = int(np.count_nonzero(excluded))
+    kept_count = int(np.count_nonzero(finite & keep))
+    # A restriction that removes every point cannot produce a fit.  Preserve
+    # the established window semantics for small but non-empty synthetic or
+    # partial-transit series; only fall back when there is no usable point at
+    # all after applying the requested time window.
+    if kept_count == 0:
+        summary.update({
+            'applied': False,
+            'kept_point_count': int(np.count_nonzero(finite)),
+            'excluded_point_count': 0,
+            'fit_window_start': float(representative_start),
+            'fit_window_end': float(representative_end),
+            'note': (
+                "Baseline restriction skipped; the one-hour transit window would leave "
+                f"only {kept_count} usable point(s), below EXOTIC's minimum of "
+                f"{LIGHTCURVE_MIN_VALID_POINTS}."
+            ),
+        })
+        return np.ones(times.shape, dtype=bool), summary
+    summary.update({
+        'applied': excluded_count > 0,
+        'kept_point_count': kept_count,
+        'excluded_point_count': excluded_count,
+        'fit_window_start': float(representative_start),
+        'fit_window_end': float(representative_end),
+        'note': (
+            f"Excluded {excluded_count} usable photometry point(s) from the transit fit outside "
+            f"the {buffer_hours:g}-hour pre-ingress/post-egress baseline window; photometry is "
+            "retained for plotting in blue."
+        ),
+    })
+    return keep, summary
 
 
 def stellar_variability_transit_prior_from_planet_dict(p_dict):
@@ -23174,86 +23326,321 @@ def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False, fast_m
     )
     return sky_median, sky_sigma, float(np.sum(annulus_pixel_weights))
 
-def process_dark_frames(dark_files, master_bias=None):
+CALIBRATION_STACK_DTYPE = np.float32
+# Keep the working chunk bounded while avoiding thousands of tiny median calls
+# for full-resolution CCD frames (roughly 200 MiB for twenty 9.6k-wide rows).
+CALIBRATION_MEDIAN_CHUNK_ROWS = 256
+
+
+def _build_calibration_memmap_stack(frame_stream, frame_count):
+    """Materialize a calibration-frame stream in a temporary disk-backed stack.
+
+    The stack is deliberately kept on disk.  A caller must remove the returned
+    temporary directory (and delete the memmap reference) when combination is
+    complete.
+    """
+    stream = iter(frame_stream)
+    try:
+        # Convert only the first frame to establish a stable stack shape and
+        # dtype.  Subsequent frames are assigned directly into the memmap so
+        # NumPy performs the cast during the write instead of allocating a
+        # second full-resolution float32 copy in process memory.
+        first_frame = np.asarray(next(stream), dtype=CALIBRATION_STACK_DTYPE)
+    except StopIteration:
+        return None, None, None, None
+
+    frame_shape = first_frame.shape
+    if first_frame.ndim < 2:
+        raise ValueError("Calibration frames must contain at least two image dimensions.")
+
+    stack_dir = Path(tempfile.mkdtemp(prefix="exotic_calibration_stack_"))
+    stack_path = stack_dir / "frames.dat"
+    stack = None
+    try:
+        stack = np.memmap(
+            stack_path,
+            dtype=CALIBRATION_STACK_DTYPE,
+            mode="w+",
+            shape=(int(frame_count),) + frame_shape,
+        )
+        stack[0] = first_frame
+        # Release the first full-frame conversion before reading the rest of
+        # the stream.  The stack itself is disk-backed.
+        del first_frame
+        received_count = 1
+        for frame_index, frame in enumerate(stream, start=1):
+            if frame_index >= int(frame_count):
+                raise ValueError("Calibration frame stream yielded more frames than expected.")
+            frame_array = np.asarray(frame)
+            if frame_array.shape != frame_shape:
+                raise ValueError(
+                    "Calibration frames must all have the same shape; "
+                    f"expected {frame_shape}, got {frame_array.shape}."
+                )
+            # Assignment casts into the memmap without materializing another
+            # full-size float32 array.  This is important for 9.6k x 6.4k CCD
+            # frames, where one unnecessary conversion is hundreds of MiB.
+            stack[frame_index] = frame_array
+            del frame_array
+            received_count += 1
+        if received_count != int(frame_count):
+            raise ValueError(
+                f"Expected {int(frame_count)} calibration frames, received {received_count}."
+            )
+        stack.flush()
+    except Exception:
+        if stack is not None:
+            del stack
+        shutil.rmtree(stack_dir, ignore_errors=True)
+        raise
+
+    return stack, frame_shape, stack_dir, stack_path
+
+
+def _chunked_calibration_median(stack, frame_indices, frame_shape):
+    """Median-combine a calibration memmap without allocating a full 3-D array."""
+    indices = np.asarray(list(frame_indices), dtype=np.intp)
+    if indices.size == 0:
+        return None
+
+    combined = np.empty(frame_shape, dtype=CALIBRATION_STACK_DTYPE)
+    for row_start in range(0, int(frame_shape[0]), CALIBRATION_MEDIAN_CHUNK_ROWS):
+        row_stop = min(row_start + CALIBRATION_MEDIAN_CHUNK_ROWS, int(frame_shape[0]))
+        chunk = np.asarray(stack[indices, row_start:row_stop, ...], dtype=CALIBRATION_STACK_DTYPE)
+        combined[row_start:row_stop, ...] = np.asarray(
+            np.median(chunk, axis=0),
+            dtype=CALIBRATION_STACK_DTYPE,
+        )
+    return combined
+
+
+def _save_master_calibration_frame(
+    master,
+    save_dir,
+    calibration_type,
+    input_count,
+    combined_count,
+    science_dir=None,
+):
+    """Persist and co-locate a master calibration image with the science frames."""
+    if master is None or (not save_dir and not science_dir):
+        return None
+
+    output_dir = Path(save_dir) if save_dir else Path(science_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    calibration_type = str(calibration_type).strip().title()
+    output_path = output_dir / f"Master{calibration_type}.fits"
+    header = fits.Header()
+    header["CALTYPE"] = calibration_type.upper()
+    header["NINPUT"] = int(input_count)
+    header["NCOMBINE"] = int(combined_count)
+    header.add_comment("EXOTIC disk-backed calibration-frame median product")
+    fits.writeto(
+        output_path,
+        np.asarray(master, dtype=CALIBRATION_STACK_DTYPE),
+        header=header,
+        overwrite=True,
+    )
+    log_info(f"Saved master {calibration_type.lower()} to {output_path}")
+
+    if science_dir:
+        science_path = Path(science_dir) / output_path.name
+        try:
+            same_file = science_path.resolve() == output_path.resolve()
+        except OSError:
+            same_file = science_path.absolute() == output_path.absolute()
+        if not same_file:
+            science_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(output_path, science_path)
+            log_info(
+                f"Copied master {calibration_type.lower()} beside the science images to {science_path}"
+            )
+    return output_path
+
+
+def _load_existing_master_calibration(calibration_files, calibration_type):
+    """Load a canonical master product instead of treating it as raw frames."""
+    if not calibration_files:
+        return None
+    if isinstance(calibration_files, (str, Path)):
+        calibration_files = [calibration_files]
+    expected_name = CALIBRATION_MASTER_FILENAMES.get(str(calibration_type).strip().lower())
+    if expected_name is None:
+        return None
+    master_path = next(
+        (
+            Path(path)
+            for path in calibration_files
+            if Path(path).name.lower() == expected_name.lower() and Path(path).is_file()
+        ),
+        None,
+    )
+    if master_path is None:
+        return None
+
+    master_data = np.asarray(fits.getdata(master_path), dtype=CALIBRATION_STACK_DTYPE)
+    if master_data.ndim < 2:
+        raise ValueError(
+            f"Existing {expected_name} must contain at least two image dimensions."
+        )
+    log_info(
+        f"Using existing master {str(calibration_type).strip().lower()} from {master_path}; "
+        "raw calibration frames will not be rebuilt."
+    )
+    return master_data
+
+
+def process_dark_frames(dark_files, master_bias=None, save_dir=None, science_dir=None):
     """Return a master biasdark, or a debiased dark-current image in counts/second."""
     if not dark_files:
         return None
 
+    dark_files = list(dark_files)
     scale_by_exposure = calibration_frame_available(master_bias)
-    dark_components = []
-    for dark_file in dark_files:
-        dark_data, dark_header = fits.getdata(dark_file, header=True)
-        dark_data = np.asarray(dark_data, dtype=float)
-        if scale_by_exposure:
-            dark_exposure = require_positive_calibration_exposure(
-                get_exp_time(dark_header),
-                f"dark frame {dark_file}",
-            )
-            dark_data = (dark_data - master_bias) / dark_exposure
-        dark_components.append((dark_file, dark_data, np.nanmedian(dark_data)))
+    bias = np.asarray(master_bias, dtype=CALIBRATION_STACK_DTYPE) if scale_by_exposure else None
+    dark_medians = []
 
-    # Dark components whose median is much higher than the overall median are
-    # filtered, e.g. to discard a saturated dark before building the master.
-    d_median = np.median([median for _, _, median in dark_components])
-    threshold = 1.7  # 70% higher than overall median
-    darks_img_list = []
-    for dark_file, dark_data, dark_median in dark_components:
-        median_ratio = (
-            dark_median / d_median
-            if np.isfinite(d_median) and d_median > 0
-            else np.nan
+    def dark_stream():
+        for dark_file in dark_files:
+            dark_data, dark_header = fits.getdata(dark_file, header=True)
+            dark_data = np.asarray(dark_data, dtype=CALIBRATION_STACK_DTYPE)
+            if scale_by_exposure:
+                dark_exposure = require_positive_calibration_exposure(
+                    get_exp_time(dark_header),
+                    f"dark frame {dark_file}",
+                )
+                dark_data = (dark_data - bias) / dark_exposure
+            dark_medians.append(float(np.nanmedian(dark_data)))
+            yield dark_data
+
+    stack, frame_shape, stack_dir, _ = _build_calibration_memmap_stack(dark_stream(), len(dark_files))
+    if stack is None:
+        return None
+    try:
+        # Dark components whose median is much higher than the overall median
+        # are filtered, e.g. to discard a saturated dark before combining.
+        d_median = np.median(dark_medians)
+        threshold = 1.7  # 70% higher than overall median
+        selected_indices = []
+        for frame_index, (dark_file, dark_median) in enumerate(zip(dark_files, dark_medians)):
+            median_ratio = (
+                dark_median / d_median
+                if np.isfinite(d_median) and d_median > 0
+                else np.nan
+            )
+            if np.isfinite(median_ratio) and median_ratio > threshold:
+                log_info(
+                    f"\nWarning: Skipping suspicious dark frame {dark_file}: "
+                    f"median/overall_median = {median_ratio:.2f}\n",
+                    warn=True,
+                )
+                continue
+            selected_indices.append(frame_index)
+
+        master_dark = _chunked_calibration_median(stack, selected_indices, frame_shape)
+        _save_master_calibration_frame(
+            master_dark,
+            save_dir,
+            "Dark",
+            len(dark_files),
+            len(selected_indices),
+            science_dir=science_dir,
         )
-        if np.isfinite(median_ratio) and median_ratio > threshold:
-            log_info(
-                f"\nWarning: Skipping suspicious dark frame {dark_file}: "
-                f"median/overall_median = {median_ratio:.2f}\n",
-                warn=True
-            )
-            continue
-        darks_img_list.append(dark_data)
+        return master_dark
+    finally:
+        del stack
+        shutil.rmtree(stack_dir, ignore_errors=True)
 
-    return np.median(darks_img_list, axis=0) if darks_img_list else None
 
-def process_bias_frames(bias_files):
+def process_bias_frames(bias_files, save_dir=None, science_dir=None):
     """Process bias frames and return the master bias."""
     if not bias_files:
         return None
-        
-    biases_img_list = [fits.getdata(bias_file) for bias_file in bias_files]  
-    return np.median(biases_img_list, axis=0) if biases_img_list else None
 
-def process_flat_frames(flat_files, master_bias=None, master_dark=None):
+    bias_files = list(bias_files)
+
+    def bias_stream():
+        for bias_file in bias_files:
+            bias_data = fits.getdata(bias_file)
+            yield np.asarray(bias_data, dtype=CALIBRATION_STACK_DTYPE)
+
+    stack, frame_shape, stack_dir, _ = _build_calibration_memmap_stack(bias_stream(), len(bias_files))
+    if stack is None:
+        return None
+    try:
+        master_bias = _chunked_calibration_median(stack, range(len(bias_files)), frame_shape)
+        _save_master_calibration_frame(
+            master_bias,
+            save_dir,
+            "Bias",
+            len(bias_files),
+            len(bias_files),
+            science_dir=science_dir,
+        )
+        return master_bias
+    finally:
+        del stack
+        shutil.rmtree(stack_dir, ignore_errors=True)
+
+
+def process_flat_frames(
+    flat_files,
+    master_bias=None,
+    master_dark=None,
+    save_dir=None,
+    science_dir=None,
+):
     """Calibrate and normalize each flat before median-combining the components."""
     if not flat_files:
         return None
 
+    flat_files = list(flat_files)
     has_bias = calibration_frame_available(master_bias)
     has_dark = calibration_frame_available(master_dark)
-    normalized_flats = []
-    for flat_file in flat_files:
-        flat_data, flat_header = fits.getdata(flat_file, header=True)
-        flat_data = np.asarray(flat_data, dtype=float)
+    bias = np.asarray(master_bias, dtype=CALIBRATION_STACK_DTYPE) if has_bias else None
+    dark = np.asarray(master_dark, dtype=CALIBRATION_STACK_DTYPE) if has_dark else None
 
-        if has_dark and has_bias:
-            flat_exposure = require_positive_calibration_exposure(
-                get_exp_time(flat_header),
-                f"flat frame {flat_file}",
-            )
-            flat_data = flat_data - master_bias - master_dark * flat_exposure
-        elif has_dark:
-            flat_data = flat_data - master_dark
-        elif has_bias:
-            flat_data = flat_data - master_bias
+    def flat_stream():
+        for flat_file in flat_files:
+            flat_data, flat_header = fits.getdata(flat_file, header=True)
+            flat_data = np.asarray(flat_data, dtype=CALIBRATION_STACK_DTYPE)
 
-        flat_median = np.median(flat_data)
-        if not np.isfinite(flat_median) or flat_median <= 0:
-            raise ValueError(
-                f"Flat frame {flat_file} has a non-finite or non-positive median after calibration and "
-                "cannot be normalized."
-            )
-        normalized_flats.append(flat_data / flat_median)
+            if has_dark and has_bias:
+                flat_exposure = require_positive_calibration_exposure(
+                    get_exp_time(flat_header),
+                    f"flat frame {flat_file}",
+                )
+                flat_data = flat_data - bias - dark * flat_exposure
+            elif has_dark:
+                flat_data = flat_data - dark
+            elif has_bias:
+                flat_data = flat_data - bias
 
-    return np.median(normalized_flats, axis=0) if normalized_flats else None
+            flat_median = np.median(flat_data)
+            if not np.isfinite(flat_median) or flat_median <= 0:
+                raise ValueError(
+                    f"Flat frame {flat_file} has a non-finite or non-positive median after calibration and "
+                    "cannot be normalized."
+                )
+            yield flat_data / flat_median
+
+    stack, frame_shape, stack_dir, _ = _build_calibration_memmap_stack(flat_stream(), len(flat_files))
+    if stack is None:
+        return None
+    try:
+        master_flat = _chunked_calibration_median(stack, range(len(flat_files)), frame_shape)
+        _save_master_calibration_frame(
+            master_flat,
+            save_dir,
+            "Flat",
+            len(flat_files),
+            len(flat_files),
+            science_dir=science_dir,
+        )
+        return master_flat
+    finally:
+        del stack
+        shutil.rmtree(stack_dir, ignore_errors=True)
 
 def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
     global _BJD_FALLBACK_WARNING_LOGGED
@@ -23479,9 +23866,12 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
 
     fit_data = np.asarray(getattr(lc_fit, 'data', []), dtype=float)
     fit_airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones_like(fit_data)), dtype=float)
-    # Public magnitude products are labelled BJD_TDB; ``time`` is the
-    # barycentric series and ``jd_times`` retains the original FITS JD/UTC.
+    # Public model/plot products use BJD_TDB; retain the original FITS JD/UTC
+    # series separately for the AAVSO AID output, whose DATE column is JD.
     fit_times = np.asarray(getattr(lc_fit, 'time', getattr(lc_fit, 'jd_times', [])), dtype=float)
+    fit_jd_times = np.asarray(getattr(lc_fit, 'jd_times', fit_times), dtype=float)
+    if fit_jd_times.shape != fit_times.shape:
+        fit_jd_times = fit_times.copy()
     transit_model = np.asarray(getattr(lc_fit, 'transit', np.ones_like(fit_data)), dtype=float)
 
     if not (fit_data.shape == fit_airmass.shape == fit_times.shape):
@@ -23502,6 +23892,7 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     target_flux_error = target_flux_error[mask_ref]
     comp_flux_error = comp_flux_error[mask_ref]
     selected_times = fit_times[mask_ref]
+    selected_jd_times = fit_jd_times[mask_ref]
     selected_airmass = fit_airmass[mask_ref]
 
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -23553,8 +23944,9 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
 
     display_label = stellar_variability_label(comp_label, comp_star)
     vsp_params = []
-    for time_value, airmass_value, mag_value, mag_error_value, differential_value, differential_error in zip(
+    for time_value, jd_time_value, airmass_value, mag_value, mag_error_value, differential_value, differential_error in zip(
         selected_times[valid],
+        selected_jd_times[valid],
         selected_airmass[valid],
         target_mag[valid],
         target_mag_error[valid],
@@ -23563,6 +23955,7 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
     ):
         vsp_params.append({
             'time': time_value,
+            'jd_time': jd_time_value,
             'airmass': airmass_value,
             'mag': mag_value,
             'mag_err': mag_error_value,
@@ -27851,15 +28244,115 @@ def build_absolute_comp_ensemble_uncertainty(comp_flux_map, comp_error_map, memb
     return ensemble_unc
 
 
+def build_inverse_variance_weighted_comp_ensemble(
+        comp_flux_map,
+        comp_error_map,
+        active_keys,
+        validity_mask_func=valid_comparison_frame_mask,
+        gain_e_per_adu=None):
+    """Combine normalized comparison stars using their per-frame uncertainties.
+
+    A comparison ensemble must use the same weights for its reference flux and
+    its propagated error.  Combining the normalized fluxes with a median while
+    propagating every member as though it entered an unweighted mean lets a
+    faint, noisy comparison dominate the reported error even when it barely
+    affects the reference light curve.  Inverse-variance weighting keeps those
+    two calculations consistent.
+    """
+    if not isinstance(comp_flux_map, dict):
+        return None, None, []
+    comp_error_map = comp_error_map if isinstance(comp_error_map, dict) else {}
+
+    normalized_fluxes = []
+    normalized_errors = []
+    member_medians = []
+    member_keys = []
+    for key in active_keys or []:
+        if key not in comp_flux_map:
+            continue
+        flux_values = np.asarray(comp_flux_map[key], dtype=float)
+        if flux_values.ndim != 1:
+            continue
+        valid_flux = validity_mask_func(flux_values)
+        if np.count_nonzero(valid_flux) < LIGHTCURVE_MIN_VALID_POINTS:
+            continue
+        member_median = float(bn.nanmedian(flux_values[valid_flux]))
+        if not np.isfinite(member_median) or member_median <= 0:
+            continue
+
+        error_values = valid_flux_error_array(comp_error_map.get(key), flux_values.shape)
+        fallback_errors = source_flux_uncertainty_from_counts(
+            flux_values,
+            gain_e_per_adu=gain_e_per_adu,
+        )
+        if error_values is None:
+            error_values = fallback_errors
+        else:
+            valid_error = np.isfinite(error_values) & (error_values > 0)
+            error_values = np.where(valid_error, error_values, fallback_errors)
+
+        valid = (
+            valid_flux
+            & np.isfinite(error_values)
+            & (error_values > 0)
+        )
+        normalized_flux = np.full(flux_values.shape, np.nan, dtype=float)
+        normalized_error = np.full(flux_values.shape, np.nan, dtype=float)
+        normalized_flux[valid] = flux_values[valid] / member_median
+        normalized_error[valid] = error_values[valid] / member_median
+        normalized_fluxes.append(normalized_flux)
+        normalized_errors.append(normalized_error)
+        member_medians.append(member_median)
+        member_keys.append(key)
+
+    if not normalized_fluxes:
+        return None, None, []
+
+    flux_stack = np.vstack(normalized_fluxes)
+    error_stack = np.vstack(normalized_errors)
+    valid = (
+        np.isfinite(flux_stack)
+        & np.isfinite(error_stack)
+        & (error_stack > 0)
+    )
+    weights = np.zeros(error_stack.shape, dtype=float)
+    weights[valid] = 1.0 / np.square(error_stack[valid])
+    weight_sum = np.sum(weights, axis=0)
+    valid_frames = np.isfinite(weight_sum) & (weight_sum > 0)
+
+    normalized_ensemble = np.full(flux_stack.shape[1], np.nan, dtype=float)
+    normalized_uncertainty = np.full(flux_stack.shape[1], np.nan, dtype=float)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        normalized_ensemble[valid_frames] = (
+            np.nansum(weights * flux_stack, axis=0)[valid_frames]
+            / weight_sum[valid_frames]
+        )
+        normalized_uncertainty[valid_frames] = np.sqrt(
+            1.0 / weight_sum[valid_frames]
+        )
+
+    scale = float(np.nanmedian(member_medians))
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 1.0
+    return (
+        normalized_ensemble * scale,
+        normalized_uncertainty * scale,
+        member_keys,
+    )
+
+
 def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
                                                comp_flux_map, comp_error_map, member_keys,
-                                               validity_mask_func=valid_comparison_frame_mask):
+                                               validity_mask_func=valid_comparison_frame_mask,
+                                               gain_e_per_adu=None):
     """Combine exactly the requested reference members without catalogue magnitudes."""
     requested_keys = [key for key in member_keys or [] if key]
-    ensemble_flux, used_keys = build_absolute_comp_ensemble_flux(
+    ensemble_flux, ensemble_error, used_keys = build_inverse_variance_weighted_comp_ensemble(
         comp_flux_map,
+        comp_error_map,
         requested_keys,
         validity_mask_func=validity_mask_func,
+        gain_e_per_adu=gain_e_per_adu,
     )
     if ensemble_flux is None or used_keys != requested_keys:
         return {
@@ -27867,13 +28360,6 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
             'failure_reason': 'not every requested comparison had a usable flux series',
             'member_keys': used_keys,
         }
-    ensemble_error = build_absolute_comp_ensemble_uncertainty(
-        comp_flux_map,
-        comp_error_map,
-        used_keys,
-        validity_mask_func=validity_mask_func,
-    )
-
     target_flux = np.asarray(target_flux, dtype=float)
     if target_flux_error is None:
         target_flux_error = source_flux_uncertainty_from_counts(target_flux)
@@ -29993,7 +30479,8 @@ def select_stellar_variability_ensemble_members(
 def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flux_error,
                                                          comp_flux_map, comp_error_map, members,
                                                          minimum_members=STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS,
-                                                         validity_mask_func=valid_comparison_frame_mask):
+                                                         validity_mask_func=valid_comparison_frame_mask,
+                                                         gain_e_per_adu=None):
     target_flux = np.asarray(target_flux, dtype=float)
     if target_flux.ndim != 1:
         target_flux = target_flux.reshape(-1)
@@ -30048,21 +30535,19 @@ def build_stellar_variability_calibrated_ensemble_series(target_flux, target_flu
 
     raw_reference_flux = np.full(target_flux.shape, np.nan, dtype=float)
     raw_reference_flux_error = np.full(target_flux.shape, np.nan, dtype=float)
-    built_raw_reference, built_raw_member_keys = build_absolute_comp_ensemble_flux(
-        comp_flux_map,
-        raw_member_keys,
-        validity_mask_func=validity_mask_func,
+    built_raw_reference, built_raw_reference_error, built_raw_member_keys = (
+        build_inverse_variance_weighted_comp_ensemble(
+            comp_flux_map,
+            raw_comp_error_map,
+            raw_member_keys,
+            validity_mask_func=validity_mask_func,
+            gain_e_per_adu=gain_e_per_adu,
+        )
     )
     if built_raw_reference is not None and built_raw_member_keys == raw_member_keys:
         built_raw_reference = np.asarray(built_raw_reference, dtype=float)
         if built_raw_reference.shape == target_flux.shape:
             raw_reference_flux = built_raw_reference
-            built_raw_reference_error = build_absolute_comp_ensemble_uncertainty(
-                comp_flux_map,
-                raw_comp_error_map,
-                raw_member_keys,
-                validity_mask_func=validity_mask_func,
-            )
             if (
                 built_raw_reference_error is not None
                 and np.asarray(built_raw_reference_error).shape == target_flux.shape
@@ -30458,10 +30943,12 @@ def build_stellar_variability_ensemble_params_from_fit(
         getattr(lc_fit, 'stellar_variability_ensemble_magnitude_errors', []),
         dtype=float,
     )
-    # Public stellar-variability products are explicitly labelled BJD_TDB.  The
-    # light-curve ``time`` array carries BJD_TDB, while ``jd_times`` preserves
-    # the original FITS JD/UTC timestamps for frame-level diagnostics.
+    # The model/plot ``time`` array carries BJD_TDB, while ``jd_times`` preserves
+    # the original FITS JD/UTC timestamps used by the AAVSO AID output.
     times = np.asarray(getattr(lc_fit, 'time', getattr(lc_fit, 'jd_times', [])), dtype=float)
+    jd_times = np.asarray(getattr(lc_fit, 'jd_times', times), dtype=float)
+    if jd_times.shape != times.shape:
+        jd_times = times.copy()
     airmass = np.asarray(getattr(lc_fit, 'airmass', np.ones(times.shape)), dtype=float)
     members = list(getattr(lc_fit, 'stellar_variability_ensemble_members', []) or [])
     if not (magnitudes.shape == magnitude_errors.shape == times.shape == airmass.shape):
@@ -30536,8 +31023,9 @@ def build_stellar_variability_ensemble_params_from_fit(
                 differential_series['magnitude_error']
             )
     vsp_params = []
-    for time_value, airmass_value, magnitude, magnitude_error, differential_mag, differential_mag_err in zip(
+    for time_value, jd_time_value, airmass_value, magnitude, magnitude_error, differential_mag, differential_mag_err in zip(
         times[valid],
+        jd_times[valid],
         airmass[valid],
         magnitudes[valid],
         magnitude_errors[valid],
@@ -30546,6 +31034,7 @@ def build_stellar_variability_ensemble_params_from_fit(
     ):
         vsp_params.append({
             'time': time_value,
+            'jd_time': jd_time_value,
             'airmass': airmass_value,
             'mag': magnitude,
             'mag_err': magnitude_error,
@@ -30861,6 +31350,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     validity_mask_func=(
                         robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
                     ),
+                    gain_e_per_adu=gain_e_per_adu,
                 )
                 if prebuilt_ensemble_series.get('applied'):
                     ensemble_members = calibrated_members
@@ -30874,6 +31364,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     validity_mask_func=(
                         robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
                     ),
+                    gain_e_per_adu=gain_e_per_adu,
                 )
                 if relative_series.get('applied'):
                     valid_member_count = np.where(
@@ -30972,6 +31463,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                 validity_mask_func=(
                     robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
                 ),
+                gain_e_per_adu=gain_e_per_adu,
             )
             if ensemble_series.get('applied'):
                 fit_mask = (
@@ -31763,6 +32255,8 @@ def process_fortuitous_variables(
     airmass = np.asarray(airmass, dtype=float)
     if not (times.shape == jd_times.shape == airmass.shape):
         return []
+    fortuitous_noise_config = noise_budget_config_from_info(info_dict)
+    fallback_gain_e_per_adu = fortuitous_noise_config.get('gain_e_per_adu')
     use_single_comparison = bool(use_single_comparison)
     required_comparison_members = (
         1 if use_single_comparison else STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
@@ -31936,6 +32430,7 @@ def process_fortuitous_variables(
                         if comparison_calibration.get('method') == 'psf'
                         else valid_comparison_frame_mask
                     ),
+                    gain_e_per_adu=fallback_gain_e_per_adu,
                 )
             else:
                 relative_series = build_relative_comparison_ensemble_series(
@@ -31944,6 +32439,7 @@ def process_fortuitous_variables(
                     comp_flux_map,
                     comp_error_map,
                     [member.get('key') for member in members],
+                    gain_e_per_adu=fallback_gain_e_per_adu,
                 )
                 relative_flux = np.asarray(
                     relative_series.get('relative_flux', np.full(target_flux.shape, np.nan)),
@@ -32337,6 +32833,207 @@ def limited_ensemble_comparison_keys(
     return keys[:ensemble_limit]
 
 
+def build_restricted_baseline_plot_payload(
+    times,
+    target_flux,
+    comp_flux,
+    airmass,
+    excluded_mask,
+    target_flux_error=None,
+    comp_flux_error=None,
+    exposure_times_seconds=None,
+    gain_e_per_adu=None,
+    normalization_level=1.0,
+    prefit_keep_mask=None,
+    prefit_rejected_mask=None,
+):
+    times = np.asarray(times, dtype=float)
+    target_flux = np.asarray(target_flux, dtype=float)
+    comp_flux = np.asarray(comp_flux, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    excluded_mask = np.asarray(excluded_mask, dtype=bool)
+    if not (
+        times.shape == target_flux.shape == comp_flux.shape == airmass.shape == excluded_mask.shape
+    ):
+        return None
+    supplied_prefit_rejected = None
+    if prefit_rejected_mask is not None:
+        supplied_prefit_rejected = np.asarray(prefit_rejected_mask, dtype=bool)
+        if supplied_prefit_rejected.shape != excluded_mask.shape:
+            supplied_prefit_rejected = None
+    if not np.any(excluded_mask) and not np.any(supplied_prefit_rejected):
+        return None
+
+    # The time-window restriction is an additional fit mask, not a substitute
+    # for the ordinary photometry rejection passes.  When a pre-fit keep mask
+    # is supplied, show only its surviving outside-window measurements in blue
+    # and retain the clipped outside-window measurements as explicit rejects.
+    if prefit_keep_mask is None:
+        blue_mask = excluded_mask.copy()
+        rejected_mask = np.zeros(excluded_mask.shape, dtype=bool)
+    else:
+        prefit_keep_mask = np.asarray(prefit_keep_mask, dtype=bool)
+        if prefit_keep_mask.shape != excluded_mask.shape:
+            prefit_keep_mask = np.ones(excluded_mask.shape, dtype=bool)
+        blue_mask = excluded_mask & prefit_keep_mask
+        rejected_mask = excluded_mask & ~prefit_keep_mask
+        if supplied_prefit_rejected is not None:
+            # Keep every ordinary pre-fit reject available in the candidate
+            # payload, including rejects inside the one-hour fit window.  They
+            # remain out of the fit but are visible as red crosses for
+            # traceability.
+            rejected_mask = supplied_prefit_rejected.copy()
+
+    target_flux_error = valid_flux_error_array(target_flux_error, target_flux.shape)
+    comp_flux_error = valid_flux_error_array(comp_flux_error, comp_flux.shape)
+    exposure_times = (
+        None
+        if exposure_times_seconds is None
+        else np.asarray(exposure_times_seconds, dtype=float)
+    )
+    if exposure_times is not None and exposure_times.shape != times.shape:
+        exposure_times = None
+
+    target_flux, target_flux_error = scale_target_only_flux_to_common_exposure(
+        target_flux,
+        target_flux_error,
+        comp_flux,
+        exposure_times_seconds=exposure_times,
+        gain_e_per_adu=gain_e_per_adu,
+    )
+    with np.errstate(divide='ignore', invalid='ignore'):
+        relative_flux = target_flux / comp_flux
+    relative_unc = relative_flux_uncertainty_from_star_errors(
+        target_flux,
+        comp_flux,
+        target_flux_error,
+        comp_flux_error,
+    )
+    try:
+        normalization_level = float(normalization_level)
+    except (TypeError, ValueError):
+        normalization_level = 1.0
+    if not np.isfinite(normalization_level) or normalization_level <= 0:
+        normalization_level = 1.0
+    relative_flux = relative_flux / normalization_level
+    relative_unc = relative_unc / normalization_level
+
+    valid = (
+        blue_mask
+        & np.isfinite(times)
+        & np.isfinite(relative_flux)
+        & (relative_flux > 0)
+        & np.isfinite(airmass)
+    )
+    rejected_valid = (
+        rejected_mask
+        & np.isfinite(times)
+        & np.isfinite(relative_flux)
+        & (relative_flux > 0)
+        & np.isfinite(airmass)
+    )
+    if not np.any(valid) and not np.any(rejected_valid):
+        return None
+
+    return {
+        'times': np.asarray(times[valid], dtype=float),
+        'flux': np.asarray(relative_flux[valid], dtype=float),
+        'unc': np.asarray(relative_unc[valid], dtype=float),
+        'airmass': np.asarray(airmass[valid], dtype=float),
+        'point_count': int(np.count_nonzero(valid)),
+        'rejected_times': np.asarray(times[rejected_valid], dtype=float),
+        'rejected_flux': np.asarray(relative_flux[rejected_valid], dtype=float),
+        'rejected_unc': np.asarray(relative_unc[rejected_valid], dtype=float),
+        'rejected_airmass': np.asarray(airmass[rejected_valid], dtype=float),
+        'rejected_point_count': int(np.count_nonzero(rejected_valid)),
+        'note': (
+            "Photometry was retained for plotting but excluded from the transit fit by the "
+            "one-hour baseline restriction and/or ordinary pre-fit clipping; surviving baseline "
+            "points are blue and pre-fit rejects are red crosses."
+        ),
+    }
+
+
+def build_unrestricted_candidate_prefit_clip_summary(
+    times,
+    target_flux,
+    comp_flux,
+    airmass,
+    candidate_mask,
+    target_flux_error=None,
+    comp_flux_error=None,
+    exposure_times_seconds=None,
+    gain_e_per_adu=None,
+    expected_transit_depth=None,
+):
+    """Apply ordinary photometry clipping before the optional time-window mask."""
+    times = np.asarray(times, dtype=float)
+    target_flux = np.asarray(target_flux, dtype=float)
+    comp_flux = np.asarray(comp_flux, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    candidate_mask = np.asarray(candidate_mask, dtype=bool)
+    result = {
+        'applied': False,
+        'keep_mask': candidate_mask.copy(),
+        'rejected_mask': np.zeros(candidate_mask.shape, dtype=bool),
+        'filter_diagnostics': [],
+        'prepared': None,
+    }
+    if not (
+        times.ndim == target_flux.ndim == comp_flux.ndim == airmass.ndim == candidate_mask.ndim == 1
+        and times.shape == target_flux.shape == comp_flux.shape == airmass.shape == candidate_mask.shape
+    ):
+        return result
+
+    source_candidates = np.flatnonzero(candidate_mask)
+    if source_candidates.size == 0:
+        return result
+
+    def _subset(values):
+        if values is None:
+            return None
+        values = np.asarray(values, dtype=float)
+        return values[source_candidates] if values.shape == times.shape else None
+
+    prepared = prepare_lightcurve_fit_input_series(
+        times[source_candidates],
+        target_flux[source_candidates],
+        comp_flux[source_candidates],
+        airmass[source_candidates],
+        target_flux_error=_subset(target_flux_error),
+        comp_flux_error=_subset(comp_flux_error),
+        exposure_times_seconds=_subset(exposure_times_seconds),
+        gain_e_per_adu=gain_e_per_adu,
+        expected_transit_depth=expected_transit_depth,
+    )
+    result['prepared'] = prepared
+    result['filter_diagnostics'] = list(prepared.get('filter_diagnostics', []))
+    if not prepared.get('applied'):
+        return result
+
+    prepared_indices = np.asarray(prepared.get('source_indices', []), dtype=int)
+    if prepared_indices.ndim != 1 or np.any(prepared_indices < 0) or np.any(prepared_indices >= source_candidates.size):
+        return result
+
+    keep_mask = np.zeros(candidate_mask.shape, dtype=bool)
+    keep_mask[source_candidates[prepared_indices]] = True
+    result.update({
+        'applied': True,
+        'keep_mask': keep_mask,
+        'rejected_mask': candidate_mask & ~keep_mask,
+    })
+    return result
+
+
+def annotate_restricted_baseline_points(fit, payload, summary=None):
+    if fit is None or not isinstance(payload, dict):
+        return
+    if not payload.get('point_count') and not payload.get('rejected_point_count'):
+        return
+    fit.restricted_baseline_points = copy.deepcopy(payload)
+    fit.restricted_baseline_summary = copy.deepcopy(summary) if isinstance(summary, dict) else None
+
+
 def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p_dict, comparison_calibration,
                                                  psf_data, aper_data, target_psf_flux,
                                                  psf_flux_data=None,
@@ -32368,7 +33065,9 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  exposure_times_seconds=None,
                                                  gain_e_per_adu=None,
                                                  use_exactly_the_comps_provided=False,
-                                                 inference_method='ultranest'):
+                                                 inference_method='ultranest',
+                                                 restrict_baseline_to_an_hour=
+                                                 RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT):
     ranked_summaries = ranked_comparison_calibration_summaries(
         comparison_calibration,
         include_unvetted=use_exactly_the_comps_provided,
@@ -32391,6 +33090,22 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
     exposure_times_array = None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)
     if exposure_times_array is not None and exposure_times_array.shape != times.shape:
         exposure_times_array = None
+    baseline_fit_keep_mask, baseline_restriction_summary = build_baseline_restriction_mask(
+        times,
+        p_dict,
+        enabled=restrict_baseline_to_an_hour,
+    )
+    if baseline_fit_keep_mask.shape != times.shape:
+        baseline_fit_keep_mask = np.ones(times.shape, dtype=bool)
+    baseline_restriction_diagnostic = None
+    if baseline_restriction_summary.get('applied'):
+        log_info(baseline_restriction_summary['note'])
+        baseline_restriction_diagnostic = build_time_rejection_diagnostic(
+            "One-hour transit baseline restriction",
+            times,
+            baseline_fit_keep_mask,
+            note=baseline_restriction_summary['note'],
+        )
     if method == 'psf':
         target_flux = np.asarray(target_psf_flux, dtype=float)
         psf_flux_data = psf_flux_data_source(psf_data, psf_flux_data)
@@ -32491,17 +33206,33 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                     and summary.get('key') in psf_noise_data
                 )
             }
-            ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
-                comp_flux_map,
-                active_keys,
-                validity_mask_func=robust_flux_floor_mask,
-            )
-            ensemble_flux_error = build_absolute_comp_ensemble_uncertainty(
-                comp_flux_map,
-                comp_error_map,
-                member_keys,
-                validity_mask_func=robust_flux_floor_mask,
-            )
+            if comp_error_map:
+                ensemble_flux, ensemble_flux_error, member_keys = (
+                    build_inverse_variance_weighted_comp_ensemble(
+                        comp_flux_map,
+                        comp_error_map,
+                        active_keys,
+                        validity_mask_func=robust_flux_floor_mask,
+                        gain_e_per_adu=gain_e_per_adu,
+                    )
+                )
+            else:
+                # Preserve the legacy no-error fallback for callers that only
+                # provide flux arrays; a real reduction always supplies the
+                # per-frame noise map and therefore takes the weighted path.
+                ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
+                    comp_flux_map,
+                    active_keys,
+                    validity_mask_func=robust_flux_floor_mask,
+                )
+                ensemble_flux_error = (
+                    None
+                    if ensemble_flux is None
+                    else source_flux_uncertainty_from_counts(
+                        ensemble_flux,
+                        gain_e_per_adu=gain_e_per_adu,
+                    )
+                )
             target_shape_mask = target_psf_shape_quality_mask(target_psf_quality_rows(psf_data, psf_flux_data=psf_flux_data))
             if target_shape_mask.shape[0] != frame_count:
                 target_shape_mask = np.ones(frame_count, dtype=bool)
@@ -32540,17 +33271,33 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 for summary in ranked_summaries
                 if summary.get('key') in aper_data and f"{summary['key']}_unc" in aper_data
             }
-            ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
-                comp_flux_map,
-                active_keys,
-                validity_mask_func=valid_comparison_frame_mask,
-            )
-            ensemble_flux_error = build_absolute_comp_ensemble_uncertainty(
-                comp_flux_map,
-                comp_error_map,
-                member_keys,
-                validity_mask_func=valid_comparison_frame_mask,
-            )
+            if comp_error_map:
+                ensemble_flux, ensemble_flux_error, member_keys = (
+                    build_inverse_variance_weighted_comp_ensemble(
+                        comp_flux_map,
+                        comp_error_map,
+                        active_keys,
+                        validity_mask_func=valid_comparison_frame_mask,
+                        gain_e_per_adu=gain_e_per_adu,
+                    )
+                )
+            else:
+                # Preserve the legacy no-error fallback for callers that only
+                # provide flux arrays; a real reduction always supplies the
+                # per-frame noise map and therefore takes the weighted path.
+                ensemble_flux, member_keys = build_absolute_comp_ensemble_flux(
+                    comp_flux_map,
+                    active_keys,
+                    validity_mask_func=valid_comparison_frame_mask,
+                )
+                ensemble_flux_error = (
+                    None
+                    if ensemble_flux is None
+                    else source_flux_uncertainty_from_counts(
+                        ensemble_flux,
+                        gain_e_per_adu=gain_e_per_adu,
+                    )
+                )
             target_shape_mask = np.ones(frame_count, dtype=bool)
             candidate_target_flux = target_flux
             candidate_target_flux_error = target_flux_error
@@ -32578,6 +33325,39 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                     valid_comparison_frame_mask(candidate_target_flux)
                     & valid_comparison_frame_mask(ensemble_flux)
                 )
+            unrestricted_fit_mask = np.asarray(fit_mask, dtype=bool).copy()
+            unrestricted_candidate_mask = unrestricted_fit_mask.copy()
+            unrestricted_prefit = {
+                'applied': False,
+                'keep_mask': unrestricted_fit_mask.copy(),
+                'filter_diagnostics': [],
+            }
+            if baseline_restriction_summary.get('applied'):
+                unrestricted_prefit = build_unrestricted_candidate_prefit_clip_summary(
+                    times,
+                    candidate_target_flux,
+                    ensemble_flux,
+                    airmass,
+                    unrestricted_fit_mask,
+                    target_flux_error=candidate_target_flux_error,
+                    comp_flux_error=ensemble_flux_error,
+                    exposure_times_seconds=exposure_times_array,
+                    gain_e_per_adu=gain_e_per_adu,
+                    expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
+                )
+            if unrestricted_prefit.get('applied'):
+                unrestricted_fit_mask &= unrestricted_prefit['keep_mask']
+                unrestricted_rejected_count = int(
+                    np.count_nonzero(unrestricted_candidate_mask & ~unrestricted_prefit['keep_mask'])
+                )
+                if unrestricted_rejected_count:
+                    log_info(
+                        "Ensemble candidate pre-fit clipping rejected "
+                        f"{unrestricted_rejected_count} unrestricted photometry point(s) "
+                        "before the one-hour baseline mask."
+                    )
+            fit_mask &= baseline_fit_keep_mask
+            fit_mask &= unrestricted_prefit.get('keep_mask', np.ones(times.shape, dtype=bool))
             fit_diagnostics = diagnose_lightcurve_fit_inputs(
                 times[fit_mask],
                 candidate_target_flux[fit_mask],
@@ -32604,6 +33384,31 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 gain_e_per_adu=gain_e_per_adu,
                 adaptive_summary=adaptive_summary,
                 use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
+            )
+            restricted_baseline_points = build_restricted_baseline_plot_payload(
+                times,
+                candidate_target_flux,
+                ensemble_flux,
+                airmass,
+                unrestricted_candidate_mask & ~baseline_fit_keep_mask,
+                target_flux_error=candidate_target_flux_error,
+                comp_flux_error=ensemble_flux_error,
+                exposure_times_seconds=exposure_times_array,
+                gain_e_per_adu=gain_e_per_adu,
+                normalization_level=(
+                    (preflight.get('prepared_series') or {}).get('approximate_baseline_level', 1.0)
+                ),
+                prefit_keep_mask=unrestricted_prefit.get('keep_mask'),
+                prefit_rejected_mask=(
+                    unrestricted_candidate_mask
+                    & ~np.asarray(
+                        unrestricted_prefit.get(
+                            'keep_mask',
+                            np.ones(times.shape, dtype=bool),
+                        ),
+                        dtype=bool,
+                    )
+                ),
             )
             ensemble_summary = {
                 'comp_index': None,
@@ -32632,10 +33437,13 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 'candidate_frame_clip_diagnostic': None,
                 'fit_diagnostics': fit_diagnostics,
                 'preflight': preflight,
+                'restricted_baseline_points': restricted_baseline_points,
+                'unrestricted_prefit_filter_diagnostics': unrestricted_prefit.get('filter_diagnostics', []),
             })
             log_info(
                 "Ensemble comparison photometry enabled: target fit will use "
-                f"{len(member_keys)} non-rejected comparison star(s) as a median normalized ensemble "
+                f"{len(member_keys)} non-rejected comparison star(s) as an inverse-variance-weighted "
+                "normalized ensemble "
                 "rather than fitting each comparison star independently "
                 f"(configured maximum={ensemble_limit})."
             )
@@ -32760,6 +33568,40 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         else:
             fit_mask &= valid_comparison_frame_mask(candidate_target_flux) & valid_comparison_frame_mask(comp_flux)
 
+        unrestricted_fit_mask = np.asarray(fit_mask, dtype=bool).copy()
+        unrestricted_candidate_mask = unrestricted_fit_mask.copy()
+        unrestricted_prefit = {
+            'applied': False,
+            'keep_mask': unrestricted_fit_mask.copy(),
+            'filter_diagnostics': [],
+        }
+        if baseline_restriction_summary.get('applied'):
+            unrestricted_prefit = build_unrestricted_candidate_prefit_clip_summary(
+                times,
+                candidate_target_flux,
+                comp_flux,
+                airmass,
+                unrestricted_fit_mask,
+                target_flux_error=candidate_target_flux_error,
+                comp_flux_error=comp_flux_error,
+                exposure_times_seconds=exposure_times_array,
+                gain_e_per_adu=gain_e_per_adu,
+                expected_transit_depth=expected_transit_depth_from_planet_dict(p_dict),
+            )
+        if unrestricted_prefit.get('applied'):
+            unrestricted_fit_mask &= unrestricted_prefit['keep_mask']
+            unrestricted_rejected_count = int(
+                np.count_nonzero(unrestricted_candidate_mask & ~unrestricted_prefit['keep_mask'])
+            )
+            if unrestricted_rejected_count:
+                log_info(
+                    f"{comp_summary.get('label', 'Comparison candidate')} pre-fit clipping rejected "
+                    f"{unrestricted_rejected_count} unrestricted photometry point(s) "
+                    "before the one-hour baseline mask."
+                )
+        fit_mask &= baseline_fit_keep_mask
+        fit_mask &= unrestricted_prefit.get('keep_mask', np.ones(times.shape, dtype=bool))
+
         fit_diagnostics = diagnose_lightcurve_fit_inputs(
             times[fit_mask],
             candidate_target_flux[fit_mask],
@@ -32787,6 +33629,31 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             adaptive_summary=adaptive_summary,
             use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
         )
+        restricted_baseline_points = build_restricted_baseline_plot_payload(
+            times,
+            candidate_target_flux,
+            comp_flux,
+            airmass,
+            unrestricted_candidate_mask & ~baseline_fit_keep_mask,
+            target_flux_error=candidate_target_flux_error,
+            comp_flux_error=comp_flux_error,
+            exposure_times_seconds=exposure_times_array,
+            gain_e_per_adu=gain_e_per_adu,
+            normalization_level=(
+                (preflight.get('prepared_series') or {}).get('approximate_baseline_level', 1.0)
+            ),
+            prefit_keep_mask=unrestricted_prefit.get('keep_mask'),
+            prefit_rejected_mask=(
+                unrestricted_candidate_mask
+                & ~np.asarray(
+                    unrestricted_prefit.get(
+                        'keep_mask',
+                        np.ones(times.shape, dtype=bool),
+                    ),
+                    dtype=bool,
+                )
+            ),
+        )
         preflight_plans.append({
             'field_rank': field_rank,
             'summary': comp_summary,
@@ -32799,6 +33666,8 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'candidate_frame_clip_diagnostic': candidate_frame_clip_diagnostic,
             'fit_diagnostics': fit_diagnostics,
             'preflight': preflight,
+            'restricted_baseline_points': restricted_baseline_points,
+            'unrestricted_prefit_filter_diagnostics': unrestricted_prefit.get('filter_diagnostics', []),
         })
 
     ranked_preflight_plans = rank_comparison_candidate_preflight_plans(preflight_plans)
@@ -32866,6 +33735,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             inference_method=inference_method,
         )
         fit_result = final_reduction.get('fit') if final_reduction.get('applied') else None
+        annotate_restricted_baseline_points(
+            fit_result,
+            plan.get('restricted_baseline_points'),
+            summary=baseline_restriction_summary,
+        )
         tflux_fit = final_reduction.get('good_target_flux')
         cflux_fit = final_reduction.get('good_comp_flux')
         tflux_fit_error = final_reduction.get('good_target_flux_error')
@@ -32924,6 +33798,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 'failure_reason': transit_qc_failure_reason,
             })
         external_filter_diagnostics = []
+        external_filter_diagnostics.extend(
+            plan.get('unrestricted_prefit_filter_diagnostics', []) or []
+        )
+        if baseline_restriction_diagnostic is not None:
+            external_filter_diagnostics.append(baseline_restriction_diagnostic)
         if field_image_clip_diagnostic is not None:
             external_filter_diagnostics.append(field_image_clip_diagnostic)
         if candidate_frame_clip_diagnostic is not None:
@@ -33628,6 +34507,12 @@ def _main_impl():
                 FINAL_FIT_BASELINE_DURATION_MULTIPLIER_DEFAULT,
             )
         )
+        restrict_baseline_to_an_hour = should_restrict_baseline_to_an_hour(
+            exotic_infoDict.get(
+                'restrict_baseline_to_an_hour',
+                RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT,
+            )
+        )
         use_eebls_tmid_initializer = should_use_eebls_to_initialize_tmid_and_bounds(
             exotic_infoDict.get('use_eebls_to_initialize_tmid_and_bounds', 'y')
         )
@@ -34047,9 +34932,52 @@ def _main_impl():
 
         if fitsortext == 1:
             # Calibration frames apply only to FITS-image reductions.
-            generalBias = process_bias_frames(exotic_infoDict['biases'])
-            generalDark = process_dark_frames(exotic_infoDict['darks'], generalBias)
-            generalFlat = process_flat_frames(exotic_infoDict['flats'], generalBias, generalDark)
+            calibration_save_dir = exotic_infoDict.get('save')
+            science_dir = None
+            if exotic_infoDict.get('images'):
+                science_dir = Path(exotic_infoDict['images'][0]).parent
+
+            # Canonical masters placed beside the light frames are already
+            # calibrated products.  Load them directly; passing them through
+            # the raw-frame builders would incorrectly bias/dark-correct them
+            # a second time.  If a master is absent, build it from the
+            # configured raw calibration frames and co-locate the result for
+            # subsequent runs.
+            generalBias = _load_existing_master_calibration(
+                exotic_infoDict.get('biases'),
+                'bias',
+            )
+            if generalBias is None:
+                generalBias = process_bias_frames(
+                    exotic_infoDict['biases'],
+                    save_dir=calibration_save_dir,
+                    science_dir=science_dir,
+                )
+
+            generalDark = _load_existing_master_calibration(
+                exotic_infoDict.get('darks'),
+                'dark',
+            )
+            if generalDark is None:
+                generalDark = process_dark_frames(
+                    exotic_infoDict['darks'],
+                    generalBias,
+                    save_dir=calibration_save_dir,
+                    science_dir=science_dir,
+                )
+
+            generalFlat = _load_existing_master_calibration(
+                exotic_infoDict.get('flats'),
+                'flat',
+            )
+            if generalFlat is None:
+                generalFlat = process_flat_frames(
+                    exotic_infoDict['flats'],
+                    generalBias,
+                    generalDark,
+                    save_dir=calibration_save_dir,
+                    science_dir=science_dir,
+                )
 
             if exotic_infoDict['demosaic_fmt']:
                 demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
@@ -35225,7 +36153,8 @@ def _main_impl():
             elif use_ensemble_photometry_rather_than_single_comp:
                 log_info(
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "
-                    "light curve will use non-rejected comparison stars as a combined reference, up to "
+                    "light curve will use non-rejected comparison stars as an inverse-variance-weighted "
+                    "combined reference, up to "
                     "maximum_number_of_ensemble_comparisons_for_transit="
                     f"{maximum_number_of_ensemble_comparisons_for_transit}."
                 )
@@ -36832,6 +37761,7 @@ def _main_impl():
                         pick_comparison_by_eebls_snr=pick_comparison_by_eebls_snr,
                         exit_at_first_qc_pass_solution=exit_at_first_qc_pass_solution,
                         final_fit_baseline_duration_multiplier=final_fit_baseline_duration_multiplier,
+                        restrict_baseline_to_an_hour=restrict_baseline_to_an_hour,
                         use_adaptive_apertures=use_adaptive_apertures,
                         adaptive_aperture_values=aperture_values,
                         adaptive_annulus_values=annulus_values,
@@ -37866,6 +38796,7 @@ def _main_impl():
             log_info("\n\nOutput File Saved")
         else:
             goodTimes, goodFluxes, goodNormUnc, goodAirmasses = [], [], [], []
+            good_jd_times = None
             bestCompStar, comp_coords = None, None
             exotic_infoDict.setdefault('observed_filter', exotic_infoDict.get('filter'))
             ld, ld0, ld1, ld2, ld3 = get_ld_values(
@@ -37889,6 +38820,12 @@ def _main_impl():
             goodFluxes = np.array(goodFluxes)
             goodNormUnc = np.array(goodNormUnc)
             goodAirmasses = np.array(goodAirmasses)
+            # Keep the source JD/UTC values for AID serialization before any
+            # conversion to the BJD_TDB model time base.  BJD_TDB input has no
+            # separate geocentric series, so it remains the compatibility
+            # fallback when no original JD was supplied.
+            time_offset = 2400000.5 if exotic_infoDict['file_time'] == 'MJD_UTC' else 0.0
+            good_jd_times = goodTimes + time_offset
 
             if exotic_infoDict['file_time'] != 'BJD_TDB':
                 missing_location = [
@@ -37899,7 +38836,6 @@ def _main_impl():
                     log_info("Error: Longitude, latitude, and elevation are required to convert "
                              f"pre-reduced {exotic_infoDict['file_time']} timestamps to BJD_TDB.", error=True)
                     return
-                time_offset = 2400000.5 if exotic_infoDict['file_time'] == 'MJD_UTC' else 0.0
                 goodTimes = convert_jd_to_bjd([time_ + time_offset for time_ in goodTimes], pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
@@ -37915,6 +38851,7 @@ def _main_impl():
                 return
 
             goodTimes = goodTimes[relative_flux_mask]
+            good_jd_times = good_jd_times[relative_flux_mask]
             goodFluxes = goodFluxes[relative_flux_mask]
             goodNormUnc = goodNormUnc[relative_flux_mask]
             goodAirmasses = goodAirmasses[relative_flux_mask]
@@ -37992,7 +38929,7 @@ def _main_impl():
                     'flux': np.asarray(goodFluxes, dtype=float),
                     'unc': np.asarray(goodNormUnc, dtype=float),
                     'airmass': np.asarray(goodAirmasses, dtype=float),
-                    'jd_time': np.asarray(goodTimes, dtype=float),
+                    'jd_time': np.asarray(good_jd_times, dtype=float),
                     'exposure_time_seconds': goodExposureTimes,
                     'target_flux': np.asarray(goodFluxes, dtype=float),
                     'comp_flux': np.ones(np.shape(goodFluxes), dtype=float),
@@ -38265,7 +39202,7 @@ def _main_impl():
                 goodAirmasses,
                 prior,
                 mybounds,
-                jd_times=None,
+                jd_times=good_jd_times,
                 exposure_times_seconds=goodExposureTimes,
                 skip_airmass_fit=skip_final_airmass_fit,
                 airmass_skip_note=airmass_skip_note,
@@ -38297,6 +39234,7 @@ def _main_impl():
                 goodAirmasses,
                 prior,
                 mybounds,
+                jd_times=good_jd_times,
                 exposure_times_seconds=goodExposureTimes,
                 skip_airmass_fit=skip_final_airmass_fit,
                 airmass_skip_note=airmass_skip_note,

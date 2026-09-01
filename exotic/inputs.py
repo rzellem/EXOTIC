@@ -62,6 +62,11 @@ AAVSO_TIME_FORMAT_HEADER_KEYS = ('DATE_TYPE',)
 AAVSO_MEASUREMENT_TYPE_HEADER_KEYS = ('MEASUREMENT_TYPE',)
 AAVSO_DETREND_PARAMETER_HEADER_KEYS = ('DETREND_PARAMETERS',)
 AAVSO_ALLOWED_FILE_TIME_FORMATS = {'BJD_TDB', 'JD_UTC', 'MJD_UTC'}
+CALIBRATION_MASTER_FILENAMES = {
+    'bias': 'MasterBias.fits',
+    'dark': 'MasterDark.fits',
+    'flat': 'MasterFlat.fits',
+}
 AAVSO_WAVELENGTH_UNIT_FACTORS_TO_NM = {
     'a': 0.1,
     'angstrom': 0.1,
@@ -279,6 +284,7 @@ class Inputs:
             'use_nextastro_vsx_cache_first': False,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
+            'restrict_baseline_to_an_hour': True,
             'use_eebls_to_initialize_tmid_and_bounds': 'y',
             'pick_comparison_by_eebls_snr': 'y',
             'use_deviation_from_expected_transit_in_qc': True,
@@ -356,7 +362,8 @@ class Inputs:
             if key == 'save':
                 self.info_dict['flats'], self.info_dict['darks'], self.info_dict['biases'] = \
                     image_calibrations(self.info_dict['flats'], self.info_dict['darks'],
-                                       self.info_dict['biases'], self.init_opt)
+                                       self.info_dict['biases'], self.init_opt,
+                                       science_images=self.info_dict['images'])
                 if not planet:
                     planet = planet_name(planet)
                 self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'] = \
@@ -626,6 +633,11 @@ class Inputs:
             'final_fit_baseline_duration_multiplier': (
                 'final_fit_baseline_duration_multiplier',
                 'Final Fit Baseline Duration Multiplier',
+            ),
+            'restrict_baseline_to_an_hour': (
+                'restrict_baseline_to_an_hour',
+                'Restrict Baseline to an Hour? (y/n)',
+                'Restrict Baseline to an Hour',
             ),
             'use_eebls_to_initialize_tmid_and_bounds': (
                 'use_eebls_to_initialize_tmid_and_bounds',
@@ -911,7 +923,7 @@ class Inputs:
         return populate_missing_gaia_astrometry(planet_dict)
 
 
-def check_imaging_files(directory, img_type):
+def check_imaging_files(directory, img_type, exclude_calibration_masters=False):
     file_extensions = ['.fits', '.fit', '.fts', '.fz', '.fits.gz', '.fit.gz', '.fits.fz', 'fit.fz']
     input_files = []
 
@@ -922,7 +934,14 @@ def check_imaging_files(directory, img_type):
                 for ext in file_extensions:
                     for file in directory.iterdir():
                         if file.is_file() and file.name.lower().endswith(ext.lower()) \
-                                and file.name[0:2] not in ('ref', 'wcs'):
+                                and file.name[0:2] not in ('ref', 'wcs') \
+                                and not (
+                                    exclude_calibration_masters
+                                    and file.name.lower() in {
+                                        filename.lower()
+                                        for filename in CALIBRATION_MASTER_FILENAMES.values()
+                                    }
+                                ):
                             input_files.append(str(file))
                     if input_files:
                         return input_files
@@ -951,7 +970,7 @@ def imaging_files(directory):
     if not directory:
         directory = user_input("\nEnter the directory path where imaging files are located. "
                                "(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
-    return check_imaging_files(directory, 'Imaging')
+    return check_imaging_files(directory, 'Imaging', exclude_calibration_masters=True)
 
 
 def save_directory(directory):
@@ -986,18 +1005,49 @@ def create_directory():
             return save_path
 
 
-def image_calibrations(flats_dir, darks_dir, biases_dir, init):
+def _science_directory_calibration_masters(science_images):
+    """Return canonical master products found beside the science images."""
+    if not science_images:
+        return {}
+    if isinstance(science_images, (str, Path)):
+        science_images = [science_images]
+    try:
+        science_dir = Path(science_images[0]).parent
+    except (IndexError, TypeError, ValueError):
+        return {}
+    if not science_dir.is_dir():
+        return {}
+    return {
+        calibration_type: science_dir / filename
+        for calibration_type, filename in CALIBRATION_MASTER_FILENAMES.items()
+        if (science_dir / filename).is_file()
+    }
+
+
+def image_calibrations(flats_dir, darks_dir, biases_dir, init, science_images=None):
     opt, flats_list, darks_list, biases_list = None, None, None, None
 
-    if init == 'n':
+    discovered_masters = _science_directory_calibration_masters(science_images)
+    # A complete set of canonical masters is self-describing: do not make an
+    # interactive run ask whether raw calibration frames exist when it can
+    # reuse the already-built products beside the science images.  If the set
+    # is incomplete, retain the normal prompt so the missing calibration types
+    # can still be supplied or intentionally omitted.
+    if init == 'n' and len(discovered_masters) < len(CALIBRATION_MASTER_FILENAMES):
         opt = user_input("\nDo you have any Calibration Images? (Flats, Darks or Biases)? (y/n): ",
                          type_=str, values=['y', 'n'])
 
-    if opt == 'y' or flats_dir:
+    if discovered_masters.get('flat') is not None:
+        flats_list = [str(discovered_masters['flat'])]
+    elif opt == 'y' or flats_dir:
         flats_list = check_calibration(flats_dir, 'Flats')
-    if opt == 'y' or darks_dir:
+    if discovered_masters.get('dark') is not None:
+        darks_list = [str(discovered_masters['dark'])]
+    elif opt == 'y' or darks_dir:
         darks_list = check_calibration(darks_dir, 'Darks')
-    if opt == 'y' or biases_dir:
+    if discovered_masters.get('bias') is not None:
+        biases_list = [str(discovered_masters['bias'])]
+    elif opt == 'y' or biases_dir:
         biases_list = check_calibration(biases_dir, 'Biases')
 
     return flats_list, darks_list, biases_list
@@ -1010,6 +1060,11 @@ def check_calibration(directory, image_type):
             directory = user_input(f"Please enter the directory path to your {image_type} "
                                    "(must be in their own separate folder): ", type_=str)
     if directory:
+        if isinstance(directory, (list, tuple)):
+            return [str(Path(path)) for path in directory if Path(path).is_file()]
+        direct_path = Path(directory)
+        if direct_path.is_file():
+            return [str(direct_path)]
         return check_imaging_files(directory, image_type)
     return None
 

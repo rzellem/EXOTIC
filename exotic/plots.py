@@ -1324,6 +1324,146 @@ def _plot_final_residual_rejected_points(ax_lc, ax_res, fit):
     )
 
 
+def _finite_plot_values(values):
+    """Return finite numeric values without making plotting callers fragile."""
+    try:
+        array = np.asarray(values, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return np.array([], dtype=float)
+    return array[np.isfinite(array)]
+
+
+def _canonical_lightcurve_x_bounds(values):
+    """Set a small, cadence-sized margin around the plotted x observations."""
+    finite = _finite_plot_values(values)
+    if finite.size == 0:
+        return None
+
+    unique = np.unique(finite)
+    if unique.size > 1:
+        gaps = np.diff(unique)
+        gaps = gaps[np.isfinite(gaps) & (gaps > 0)]
+    else:
+        gaps = np.array([], dtype=float)
+
+    if gaps.size:
+        margin = 0.5 * float(np.nanmedian(gaps))
+    else:
+        margin = 0.01 * max(float(np.nanmax(np.abs(unique))), 1.0)
+    if not np.isfinite(margin) or margin <= 0:
+        margin = 0.01
+    return float(np.nanmin(finite) - margin), float(np.nanmax(finite) + margin)
+
+
+def _fit_plot_phase_for_times(fit, times):
+    """Project additional BJD values onto the same unwrapped phase as ``fit``."""
+    times = _finite_plot_values(times)
+    if times.size == 0:
+        return times
+    try:
+        period = float(fit.parameters.get('per'))
+        tmid = float(fit.parameters.get('tmid'))
+    except (AttributeError, TypeError, ValueError):
+        return np.array([], dtype=float)
+    if not np.isfinite(period) or period == 0 or not np.isfinite(tmid):
+        return np.array([], dtype=float)
+
+    raw_phase = (times - tmid) / period
+    fit_times = np.asarray(getattr(fit, 'time', []), dtype=float).reshape(-1)
+    fit_phase = np.asarray(getattr(fit, 'phase', []), dtype=float).reshape(-1)
+    if fit_times.shape == fit_phase.shape and fit_times.size:
+        finite = np.isfinite(fit_times) & np.isfinite(fit_phase)
+        if np.any(finite):
+            epoch = np.nanmedian((fit_times[finite] - tmid) / period - fit_phase[finite])
+            if np.isfinite(epoch):
+                return raw_phase - float(np.rint(epoch))
+    return raw_phase - float(np.rint(np.nanmedian(raw_phase)))
+
+
+def _set_canonical_lightcurve_limits(fit, ax_lc, ax_res, phase=True):
+    """Use the visible canonical observations, rather than errorbar extents, for limits.
+
+    The diagnostic full-data plot deliberately retains Matplotlib's broader limits so
+    excluded observations and their uncertainties remain inspectable.  This helper is
+    therefore called only for the canonical black-point/red-cross export.
+    """
+    x_attribute = 'phase' if phase else 'time'
+    x_values = list(_finite_plot_values(getattr(fit, x_attribute, [])))
+    rejection = getattr(fit, 'final_residual_rejection', None)
+    if isinstance(rejection, dict) and rejection.get('applied'):
+        rejected_attribute = 'rejected_phase' if phase else 'rejected_time'
+        x_values.extend(_finite_plot_values(rejection.get(rejected_attribute, [])))
+    restricted_payload = getattr(fit, 'restricted_baseline_points', None)
+    if isinstance(restricted_payload, dict):
+        rejected_times = _finite_plot_values(restricted_payload.get('rejected_times', []))
+        if phase and rejected_times.size:
+            rejected_x = _fit_plot_phase_for_times(fit, rejected_times)
+        else:
+            rejected_x = rejected_times
+        x_values.extend(_finite_plot_values(rejected_x))
+    x_bounds = _canonical_lightcurve_x_bounds(x_values)
+    if x_bounds is not None:
+        ax_lc.set_xlim(x_bounds)
+        ax_res.set_xlim(x_bounds)
+
+    # The requested canonical y window is tied to the black measured points.  Do
+    # not let large per-frame uncertainty bars or model bands expand the limits.
+    y_values = _finite_plot_values(getattr(fit, 'detrended', []))
+    if y_values.size:
+        # Keep the canonical view close to the measured light curve: one
+        # hundredth of relative-flux unit beyond the visible extrema.  Error
+        # bars, uncertainty bands, and red rejection markers must not expand
+        # this data-focused window.
+        ax_lc.set_ylim(float(np.nanmin(y_values) - 0.01), float(np.nanmax(y_values) + 0.01))
+
+
+def _build_final_lightcurve_figure(
+    fit,
+    high_res,
+    targ_name,
+    *,
+    show_restricted_baseline_points,
+    show_binned_points,
+    diagnostic=False,
+):
+    f, (ax_lc, ax_res) = _plot_bestfit_for_lightcurve_png(
+        fit,
+        show_flux_baseline_label=False,
+        show_model_uncertainty=True,
+        show_baseline_uncertainty=True,
+        show_restricted_baseline_points=show_restricted_baseline_points,
+        show_rejected_points=True,
+        show_binned_points=show_binned_points,
+    )
+
+    if getattr(fit, 'quick_look_mode', False):
+        title = f"{targ_name}\nQUICK LOOK — PRELIMINARY"
+    elif diagnostic:
+        title = f"{targ_name}\nFULL DATA / FULL LIGHT CURVE (DIAGNOSTIC)"
+    else:
+        title = targ_name
+    ax_lc.set_title(title)
+
+    drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
+    if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):
+        ax_lc.plot(fit.phase_upsample, fit.transit_upsample, 'r', zorder=1000, lw=2)
+    else:
+        ax_lc.plot(
+            np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000),
+            high_res,
+            'r',
+            zorder=1000,
+            lw=2,
+        )
+    _plot_final_residual_rejected_points(ax_lc, ax_res, fit)
+    if drew_data_scatter_band:
+        ax_lc.legend(loc='best')
+    if not diagnostic:
+        _set_canonical_lightcurve_limits(fit, ax_lc, ax_res)
+    _add_apparent_magnitude_axis(ax_lc, fit)
+    return f
+
+
 def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=None):
     plot_differential_magnitude(
         fit,
@@ -1416,28 +1556,58 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
             except Exception:
                 pass
 
-    f, (ax_lc, ax_res) = _plot_bestfit_for_lightcurve_png(
-        fit,
-        show_flux_baseline_label=False,
-        show_model_uncertainty=True,
-        show_baseline_uncertainty=True,
-    )
-
-    if getattr(fit, 'quick_look_mode', False):
-        ax_lc.set_title(f"{targ_name}\nQUICK LOOK — PRELIMINARY")
-    else:
-        ax_lc.set_title(targ_name)
-    drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
-    if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):
-        ax_lc.plot(fit.phase_upsample, fit.transit_upsample, 'r', zorder=1000, lw=2)
-    else:
-        ax_lc.plot(np.linspace(np.nanmin(fit.phase), np.nanmax(fit.phase), 1000), high_res, 'r', zorder=1000, lw=2)
-    _plot_final_residual_rejected_points(ax_lc, ax_res, fit)
-    if drew_data_scatter_band:
-        ax_lc.legend(loc='best')
-    _add_apparent_magnitude_axis(ax_lc, fit)
-
     Path(save).mkdir(parents=True, exist_ok=True)
+
+    # The full-data view is diagnostic: it keeps the measured observations
+    # outside the one-hour fit window in blue, along with the traditional
+    # binned overlay, so sky-condition structure can be inspected without
+    # confusing it with the accepted final light curve.
+    restricted_payload = getattr(fit, 'restricted_baseline_points', None)
+    has_restricted_baseline_points = (
+        isinstance(restricted_payload, dict)
+        and (
+            int(restricted_payload.get('point_count', 0) or 0) > 0
+            or int(restricted_payload.get('rejected_point_count', 0) or 0) > 0
+        )
+    )
+    if has_restricted_baseline_points:
+        diagnostic_figure = _build_final_lightcurve_figure(
+            fit,
+            high_res,
+            targ_name,
+            show_restricted_baseline_points=True,
+            show_binned_points=True,
+            diagnostic=True,
+        )
+        diagnostics_dir = Path(save) / "Diagnostics"
+        diagnostics_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            save_figure_formats(
+                diagnostic_figure,
+                diagnostics_dir / _dated_plot_filename(
+                    "FullDataFullLightCurve",
+                    targ_name,
+                    date=date,
+                    extension="png",
+                ),
+                original_bbox_inches="tight",
+            )
+        except Exception:
+            pass
+        plt.close(diagnostic_figure)
+
+    # The published/canonical final light curve is intentionally uncluttered:
+    # only the fitted black points, model, and established red rejection
+    # markers are shown.  The blue excluded points and blue binned summaries
+    # live in the diagnostic export above.
+    f = _build_final_lightcurve_figure(
+        fit,
+        high_res,
+        targ_name,
+        show_restricted_baseline_points=False,
+        show_binned_points=False,
+        diagnostic=False,
+    )
     try:
         save_figure_formats(
             f,
@@ -1451,7 +1621,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
         )
     except Exception:
         pass
-    plt.close()
+    plt.close(f)
 
 
 def _plot_scalar(value, default=np.nan):

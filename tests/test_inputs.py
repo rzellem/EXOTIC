@@ -23,6 +23,63 @@ def test_camera_keeps_dslr_as_dslr():
     assert camera("canon dslr") == "DSLR"
 
 
+def test_imaging_directory_ignores_canonical_calibration_masters(tmp_path):
+    science_file = tmp_path / "science_001.fits"
+    fits.writeto(science_file, np.ones((2, 2)), overwrite=True)
+    for filename in ("MasterBias.fits", "MasterDark.fits", "MasterFlat.fits"):
+        fits.writeto(tmp_path / filename, np.ones((2, 2)), overwrite=True)
+
+    result = inputs_module.imaging_files(str(tmp_path))
+
+    assert result == [str(science_file)]
+
+
+def test_image_calibrations_prefers_masters_next_to_science_images(tmp_path):
+    science_file = tmp_path / "science_001.fits"
+    fits.writeto(science_file, np.ones((2, 2)), overwrite=True)
+    for filename in ("MasterBias.fits", "MasterDark.fits", "MasterFlat.fits"):
+        fits.writeto(tmp_path / filename, np.ones((2, 2)), overwrite=True)
+
+    flats, darks, biases = inputs_module.image_calibrations(
+        None,
+        None,
+        None,
+        "y",
+        science_images=[str(science_file)],
+    )
+
+    assert flats == [str(tmp_path / "MasterFlat.fits")]
+    assert darks == [str(tmp_path / "MasterDark.fits")]
+    assert biases == [str(tmp_path / "MasterBias.fits")]
+
+
+def test_complete_co_located_masters_skip_interactive_calibration_prompt(tmp_path, monkeypatch):
+    science_file = tmp_path / "science_001.fits"
+    fits.writeto(science_file, np.ones((2, 2)), overwrite=True)
+    for filename in ("MasterBias.fits", "MasterDark.fits", "MasterFlat.fits"):
+        fits.writeto(tmp_path / filename, np.ones((2, 2)), overwrite=True)
+
+    monkeypatch.setattr(
+        inputs_module,
+        "user_input",
+        lambda *_args, **_kwargs: pytest.fail(
+            "a complete set of co-located masters must not prompt"
+        ),
+    )
+
+    flats, darks, biases = inputs_module.image_calibrations(
+        None,
+        None,
+        None,
+        "n",
+        science_images=[str(science_file)],
+    )
+
+    assert flats == [str(tmp_path / "MasterFlat.fits")]
+    assert darks == [str(tmp_path / "MasterDark.fits")]
+    assert biases == [str(tmp_path / "MasterBias.fits")]
+
+
 @pytest.mark.parametrize("parser", [inputs_module.plate_solution_opt, inputs_module.aavso_comp])
 def test_user_info_boolean_options_accept_supported_forms_without_prompt(monkeypatch, parser):
     monkeypatch.setattr(
@@ -771,6 +828,36 @@ def test_comp_params_defaults_final_fit_baseline_duration_multiplier_to_one(tmp_
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["final_fit_baseline_duration_multiplier"] == pytest.approx(1.0)
+
+
+def test_comp_params_defaults_restrict_baseline_to_an_hour_to_true(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["restrict_baseline_to_an_hour"] is True
+
+
+def test_comp_params_reads_restrict_baseline_to_an_hour_from_optional_info(tmp_path):
+    init_data = {
+        "user_info": {},
+        "optional_info": {"restrict_baseline_to_an_hour": False},
+        "planetary_parameters": {},
+    }
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps(init_data))
+
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+
+    assert inputs.info_dict["restrict_baseline_to_an_hour"] is False
 
 
 def test_comp_params_defaults_use_eebls_tmid_initializer_to_yes(tmp_path):

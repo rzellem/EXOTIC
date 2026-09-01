@@ -677,6 +677,32 @@ def time_bin(time, flux, dt=1. / (60 * 24)):
     return btime[~zmask], bflux[~zmask], bstds[~zmask]
 
 
+def _pointwise_plot_uncertainties(values, errors, residuals=None, reference=None):
+    """Return per-point flux uncertainties, with a scatter fallback."""
+    values = np.asarray(values, dtype=float).reshape(-1)
+    errors = np.asarray(errors, dtype=float).reshape(-1)
+    if reference is None:
+        reference = values
+    reference = np.asarray(reference, dtype=float).reshape(-1)
+
+    fallback = np.nan
+    if residuals is not None:
+        residuals = np.asarray(residuals, dtype=float).reshape(-1)
+        finite_residuals = residuals[np.isfinite(residuals)]
+        finite_reference = reference[np.isfinite(reference)]
+        if finite_residuals.size and finite_reference.size:
+            reference_median = float(np.nanmedian(finite_reference))
+            if np.isfinite(reference_median) and reference_median != 0:
+                fallback = float(np.nanstd(finite_residuals) / abs(reference_median))
+    if not np.isfinite(fallback) or fallback < 0:
+        fallback = 0.0
+
+    if errors.shape != values.shape:
+        return np.full(values.shape, fallback, dtype=float)
+    valid = np.isfinite(errors) & (errors >= 0)
+    return np.where(valid, np.abs(errors), fallback)
+
+
 # Function that bins an array
 def binner(arr, n, err=''):
     if len(err) == 0:
@@ -4581,6 +4607,118 @@ class lc_fitter(object):
         # final model
         self.create_fit_variables()
 
+    def _plot_restricted_baseline_points(
+        self,
+        ax_lc,
+        ax_res,
+        phase=True,
+        include_excluded=True,
+        include_rejected=True,
+    ):
+        """Overlay measured points outside the fit window and its pre-fit rejects."""
+        payload = getattr(self, 'restricted_baseline_points', None)
+        if not isinstance(payload, dict):
+            return
+
+        def _plot_group(prefix, color, marker, label, zorder):
+            times = np.asarray(payload.get(f'{prefix}times', []), dtype=float).reshape(-1)
+            flux = np.asarray(payload.get(f'{prefix}flux', []), dtype=float).reshape(-1)
+            flux_unc = np.asarray(payload.get(f'{prefix}unc', []), dtype=float).reshape(-1)
+            if times.size == 0 or times.shape != flux.shape:
+                return
+            if flux_unc.shape != flux.shape:
+                flux_unc = np.full(flux.shape, np.nan, dtype=float)
+
+            try:
+                transit_model = np.asarray(self._transit_model(times, self.parameters), dtype=float)
+                systematics = np.asarray(
+                    self._build_systematics_model_at(self.parameters, times),
+                    dtype=float,
+                )
+            except Exception:
+                transit_model = np.full(times.shape, np.nan, dtype=float)
+                systematics = np.ones(times.shape, dtype=float)
+
+            # Apply the same correction used by the final baseline-detrending
+            # pass to points that were measured but left out of the fit.
+            if getattr(self, 'oot_baseline_detrending_applied', False):
+                try:
+                    slope = float(getattr(self, 'oot_baseline_slope', np.nan))
+                    intercept = float(getattr(self, 'oot_baseline_intercept', np.nan))
+                    reference = float(getattr(self, 'oot_baseline_reference_time_bjd_tdb', np.nan))
+                    correction = intercept + slope * (times - reference)
+                    if np.all(np.isfinite(correction)) and np.all(correction > 0):
+                        systematics = correction
+                except (TypeError, ValueError):
+                    pass
+
+            with np.errstate(divide='ignore', invalid='ignore'):
+                detrended = flux / systematics
+            median_data = np.nanmedian(np.asarray(getattr(self, 'data', []), dtype=float))
+            if not np.isfinite(median_data) or median_data == 0:
+                median_data = 1.0
+            with np.errstate(divide='ignore', invalid='ignore'):
+                propagated_unc = np.abs(flux_unc / systematics)
+            detrended_unc = _pointwise_plot_uncertainties(
+                detrended,
+                propagated_unc,
+                residuals=getattr(self, 'residuals', None),
+                reference=getattr(self, 'data', None),
+            )
+            with np.errstate(invalid='ignore'):
+                residual_percent = (detrended - transit_model) / median_data * 100.0
+
+            finite = np.isfinite(times) & np.isfinite(detrended)
+            if not np.any(finite):
+                return
+            if phase:
+                x_values = get_plot_phase(
+                    times,
+                    self.parameters.get('per'),
+                    self.parameters.get('tmid'),
+                    getattr(self, 'plot_time_range', None),
+                )
+            else:
+                x_values = times
+            x_values = np.asarray(x_values, dtype=float)
+            finite &= np.isfinite(x_values)
+            if not np.any(finite):
+                return
+
+            valid_unc = finite & np.isfinite(detrended_unc) & (detrended_unc >= 0)
+            if marker == 'o':
+                if np.any(valid_unc):
+                    ax_lc.errorbar(
+                        x_values[valid_unc], detrended[valid_unc], yerr=detrended_unc[valid_unc],
+                        ls='none', marker=marker, color=color, ecolor=color,
+                        elinewidth=1.0, markersize=4.5, zorder=zorder, label=label,
+                    )
+                no_unc = finite & ~valid_unc
+                if np.any(no_unc):
+                    ax_lc.plot(
+                        x_values[no_unc], detrended[no_unc], linestyle='none', marker=marker,
+                        color=color, markersize=4.5, zorder=zorder, label='_nolegend_',
+                    )
+            else:
+                ax_lc.scatter(
+                    x_values[finite], detrended[finite], marker=marker, s=58,
+                    linewidths=1.6, color=color, zorder=zorder, label=label,
+                )
+
+            residual_finite = finite & np.isfinite(residual_percent)
+            if np.any(residual_finite):
+                ax_res.scatter(
+                    x_values[residual_finite], residual_percent[residual_finite],
+                    marker=marker, s=28 if marker == 'o' else 58,
+                    linewidths=1.6 if marker != 'o' else 1.0,
+                    color=color, zorder=zorder, label='_nolegend_',
+                )
+
+        if include_excluded:
+            _plot_group('', '#1565c0', 'o', 'Excluded baseline points', 8)
+        if include_rejected:
+            _plot_group('rejected_', '#d62728', 'x', 'Rejected photometry', 9)
+
     def plot_bestfit(
         self,
         title="",
@@ -4590,6 +4728,9 @@ class lc_fitter(object):
         show_flux_baseline_label=True,
         show_model_uncertainty=False,
         show_baseline_uncertainty=False,
+        show_restricted_baseline_points=True,
+        show_rejected_points=True,
+        show_binned_points=True,
     ):
         f = plt.figure(figsize=(9, 6))
         f.subplots_adjust(top=0.92, bottom=0.09, left=0.14, right=0.98, hspace=0)
@@ -4639,14 +4780,33 @@ class lc_fitter(object):
         if zoom:
             axs[0].set_ylim([1 - 1.25 * self.parameters['rprs'] ** 2, 1 + 0.5 * self.parameters['rprs'] ** 2])
         else:
+            plot_uncertainties = _pointwise_plot_uncertainties(
+                self.detrended,
+                getattr(self, 'detrendederr', None),
+                residuals=self.residuals,
+                reference=self.data,
+            )
             if phase:
-                axs[0].errorbar(self.phase, self.detrended, yerr=np.std(self.residuals) / np.median(self.data),
+                axs[0].errorbar(self.phase, self.detrended, yerr=plot_uncertainties,
                                 ls='none', marker='.', color='black', ecolor='0.72',
                                 elinewidth=1.0, zorder=1, alpha=1.0)
             else:
-                axs[0].errorbar(self.time, self.detrended, yerr=np.std(self.residuals) / np.median(self.data),
+                axs[0].errorbar(self.time, self.detrended, yerr=plot_uncertainties,
                                 ls='none', marker='.', color='black', ecolor='0.72',
                                 elinewidth=1.0, zorder=1, alpha=1.0)
+
+        # Keep measured baseline observations visible, while distinguishing
+        # points intentionally excluded from the fit with blue markers.  The
+        # canonical final export can disable this overlay and retain it only
+        # in the full-data diagnostic plot.
+        if show_restricted_baseline_points or show_rejected_points:
+            self._plot_restricted_baseline_points(
+                axs[0],
+                axs[1],
+                phase=phase,
+                include_excluded=show_restricted_baseline_points,
+                include_rejected=show_rejected_points,
+            )
 
         if phase:
             si = np.argsort(self.phase)
@@ -4654,14 +4814,16 @@ class lc_fitter(object):
                                    self.residuals[si] / np.median(self.data) * 1e2, bin_dt)
             axs[1].plot(self.phase, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=1.0,
                         label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals / np.median(self.data) * 1e2)))
-            axs[1].plot(bt2 / self.parameters['per'], br2, 'bs', alpha=1, zorder=2)
+            if show_binned_points:
+                axs[1].plot(bt2 / self.parameters['per'], br2, 'bs', alpha=1, zorder=2)
             axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
             axs[1].set_xlabel("Phase", fontsize=14)
 
             si = np.argsort(self.phase)
             bt2, bf2, bs = time_bin(self.phase[si] * self.parameters['per'], self.detrended[si], bin_dt)
-            axs[0].errorbar(bt2 / self.parameters['per'], bf2, yerr=bs, alpha=1, zorder=2, color='blue', ls='none',
-                            marker='s')
+            if show_binned_points:
+                axs[0].errorbar(bt2 / self.parameters['per'], bf2, yerr=bs, alpha=1, zorder=2, color='blue', ls='none',
+                                marker='s')
             # axs[0].plot(self.phase[si], self.transit[si], 'r-', zorder=3, label=lclabel)
             sii = np.argsort(self.phase_upsample)
             if show_baseline_uncertainty:
@@ -4687,14 +4849,16 @@ class lc_fitter(object):
             bt, br, _ = time_bin(self.time, self.residuals / np.median(self.data) * 1e2, bin_dt)
             axs[1].plot(self.time, self.residuals / np.median(self.data) * 1e2, 'k.', alpha=1.0,
                         label=r'$\sigma$ = {:.2f} %'.format(np.std(self.residuals / np.median(self.data) * 1e2)))
-            axs[1].plot(bt, br, 'bs', alpha=1, zorder=2, label=r'$\sigma$ = {:.2f} %'.format(np.std(br)))
+            if show_binned_points:
+                axs[1].plot(bt, br, 'bs', alpha=1, zorder=2, label=r'$\sigma$ = {:.2f} %'.format(np.std(br)))
             axs[1].set_xlim([min(self.time_upsample), max(self.time_upsample)])
             axs[1].set_xlabel("Time [day]", fontsize=14)
 
             bt, bf, bs = time_bin(self.time, self.detrended, bin_dt)
             si = np.argsort(self.time)
             sii = np.argsort(self.time_upsample)
-            axs[0].errorbar(bt, bf, yerr=bs, alpha=1, zorder=2, color='blue', ls='none', marker='s')
+            if show_binned_points:
+                axs[0].errorbar(bt, bf, yerr=bs, alpha=1, zorder=2, color='blue', ls='none', marker='s')
             if show_baseline_uncertainty:
                 self._plot_baseline_model_uncertainty(
                     axs[0],
@@ -5200,7 +5364,19 @@ class glc_fitter(lc_fitter):
             #bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.lc_data[n]['residuals'][si]/np.median(self.lc_data[n]['flux'])*1e2, bin_dt)
 
             # plot data
-            axs[0].errorbar(phase, self.lc_data[n]['detrend'], yerr=np.std(self.lc_data[n]['residuals'])/np.median(self.lc_data[n]['flux']), 
+            with np.errstate(divide='ignore', invalid='ignore'):
+                normalized_uncertainties = np.abs(
+                    np.asarray(self.lc_data[n].get('ferr'), dtype=float)
+                    * np.asarray(self.lc_data[n]['detrend'], dtype=float)
+                    / np.asarray(self.lc_data[n].get('flux'), dtype=float)
+                )
+            point_uncertainties = _pointwise_plot_uncertainties(
+                self.lc_data[n]['detrend'],
+                normalized_uncertainties,
+                residuals=self.lc_data[n].get('residuals'),
+                reference=self.lc_data[n].get('flux'),
+            )
+            axs[0].errorbar(phase, self.lc_data[n]['detrend'], yerr=point_uncertainties,
                             ls='none', marker=nmarker, color=ncolor, zorder=1, alpha=alpha)
 
             # plot residuals
@@ -5334,7 +5510,19 @@ class glc_fitter(lc_fitter):
             bt2, br2, _ = time_bin(phase[si]*self.parameters['per'], self.lc_data[n]['residuals'][si]/np.median(self.lc_data[n]['flux'])*1e2, bin_dt)
             
             # plot data
-            ax.errorbar(phase, self.lc_data[n]['detrend']-n*dy, yerr=np.std(self.lc_data[n]['residuals'])/np.median(self.lc_data[n]['flux']), 
+            with np.errstate(divide='ignore', invalid='ignore'):
+                normalized_uncertainties = np.abs(
+                    np.asarray(self.lc_data[n].get('ferr'), dtype=float)
+                    * np.asarray(self.lc_data[n]['detrend'], dtype=float)
+                    / np.asarray(self.lc_data[n].get('flux'), dtype=float)
+                )
+            point_uncertainties = _pointwise_plot_uncertainties(
+                self.lc_data[n]['detrend'],
+                normalized_uncertainties,
+                residuals=self.lc_data[n].get('residuals'),
+                reference=self.lc_data[n].get('flux'),
+            )
+            ax.errorbar(phase, self.lc_data[n]['detrend']-n*dy, yerr=point_uncertainties,
                             ls='none', marker=nmarker, color=ncolor, zorder=1, alpha=0.25)
         
             # plot binned data

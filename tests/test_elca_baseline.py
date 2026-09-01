@@ -639,7 +639,7 @@ def test_plot_bestfit_draws_unbinned_points_black_with_grey_errorbars(monkeypatc
     prior = make_prior()
     time = np.linspace(-0.015, 0.010, 51)
     airmass = np.zeros_like(time)
-    dataerr = np.full_like(time, 1e-3)
+    dataerr = np.linspace(5e-4, 4e-3, time.size)
     data = 0.99 * elca.transit(time, prior)
     captured_errorbars = []
 
@@ -667,6 +667,157 @@ def test_plot_bestfit_draws_unbinned_points_black_with_grey_errorbars(monkeypatc
     assert captured_errorbars[0]["color"] == "black"
     assert captured_errorbars[0]["ecolor"] == "0.72"
     assert captured_errorbars[0]["alpha"] == 1.0
+    plot_yerr = np.asarray(captured_errorbars[0]["yerr"], dtype=float)
+    assert np.ptp(plot_yerr) > 0
+    np.testing.assert_allclose(plot_yerr, fit.detrendederr)
+    plt.close(fig)
+
+
+def test_plot_bestfit_draws_restricted_baseline_points_blue(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+    captured_errorbars = []
+
+    original_errorbar = Axes.errorbar
+
+    def spy_errorbar(self, *args, **kwargs):
+        captured_errorbars.append(kwargs.copy())
+        return original_errorbar(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+    fit.restricted_baseline_points = {
+        "times": np.array([-0.03, 0.03]),
+        "flux": np.array([1.0, 1.0]),
+        "unc": np.array([1e-3, 1e-3]),
+    }
+
+    fig, _ = fit.plot_bestfit()
+
+    assert any(
+        errorbar.get("color") == "#1565c0"
+        and errorbar.get("label") == "Excluded baseline points"
+        for errorbar in captured_errorbars
+    )
+    plt.close(fig)
+
+
+def test_plot_bestfit_can_hide_restricted_and_binned_blue_points(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+    captured_errorbars = []
+    captured_scatter = []
+
+    original_errorbar = Axes.errorbar
+
+    def spy_errorbar(self, *args, **kwargs):
+        captured_errorbars.append(kwargs.copy())
+        return original_errorbar(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
+    original_scatter = Axes.scatter
+
+    def spy_scatter(self, *args, **kwargs):
+        captured_scatter.append(kwargs.copy())
+        return original_scatter(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "scatter", spy_scatter)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+    fit.restricted_baseline_points = {
+        "times": np.array([-0.03, 0.03]),
+        "flux": np.array([1.0, 1.0]),
+        "unc": np.array([1e-3, 1e-3]),
+        "rejected_times": np.array([-0.04]),
+        "rejected_flux": np.array([0.75]),
+        "rejected_unc": np.array([1e-3]),
+    }
+
+    fig, _ = fit.plot_bestfit(
+        show_restricted_baseline_points=False,
+        show_binned_points=False,
+    )
+
+    assert not any(
+        errorbar.get("color") in {"blue", "#1565c0"}
+        for errorbar in captured_errorbars
+    )
+    assert any(
+        scatter.get("color") == "#d62728" and scatter.get("marker") == "x"
+        for scatter in captured_scatter
+    )
+    plt.close(fig)
+
+
+def test_plot_bestfit_draws_prefit_rejected_baseline_points_as_red_crosses(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.015, 0.010, 51)
+    airmass = np.zeros_like(time)
+    dataerr = np.full_like(time, 1e-3)
+    data = 0.99 * elca.transit(time, prior)
+    captured_scatter = []
+
+    original_scatter = Axes.scatter
+
+    def spy_scatter(self, *args, **kwargs):
+        captured_scatter.append(kwargs.copy())
+        return original_scatter(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "scatter", spy_scatter)
+
+    fit = elca.lc_fitter(
+        time,
+        data,
+        dataerr,
+        airmass,
+        prior.copy(),
+        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005], "a0": [0.95, 1.05]},
+        mode="lm",
+        verbose=False,
+    )
+    fit.restricted_baseline_points = {
+        "times": np.array([-0.03]),
+        "flux": np.array([1.0]),
+        "unc": np.array([1e-3]),
+        "rejected_times": np.array([-0.04]),
+        "rejected_flux": np.array([0.75]),
+        "rejected_unc": np.array([1e-3]),
+    }
+
+    fig, _ = fit.plot_bestfit()
+
+    assert any(
+        scatter.get("color") == "#d62728" and scatter.get("marker") == "x"
+        for scatter in captured_scatter
+    )
     plt.close(fig)
 
 

@@ -1524,3 +1524,30 @@ def test_build_absolute_comp_ensemble_flux_uses_median_normalized_members():
     assert member_keys == ["comp1", "comp2"]
     assert np.nanmedian(ensemble_flux) == pytest.approx(150.0)
     assert ensemble_flux[1] / np.nanmedian(ensemble_flux) == pytest.approx(1.02)
+
+
+def test_inverse_variance_weighted_comp_ensemble_weights_flux_and_error_together():
+    comp_flux_map = {
+        "good": np.array([100.0, 101.0, 99.0, 100.0, 100.0, 100.0]),
+        "noisy": np.array([100.0, 150.0, 50.0, 130.0, 70.0, 100.0]),
+    }
+    comp_error_map = {
+        "good": np.full(6, 1.0),
+        "noisy": np.full(6, 40.0),
+    }
+
+    ensemble_flux, ensemble_error, member_keys = (
+        exotic_module.build_inverse_variance_weighted_comp_ensemble(
+            comp_flux_map,
+            comp_error_map,
+            ["good", "noisy"],
+        )
+    )
+
+    assert member_keys == ["good", "noisy"]
+    # The high-error member should have negligible influence on the result.
+    assert np.allclose(ensemble_flux, comp_flux_map["good"], atol=0.05)
+    # The uncertainty must use the same weights; it should stay near the good
+    # member's one-count uncertainty rather than averaging in the 40-count one.
+    assert np.nanmedian(ensemble_error) == pytest.approx(1.0, rel=0.01)
+    assert np.nanmax(ensemble_error) < 1.01

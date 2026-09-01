@@ -1557,6 +1557,7 @@ def test_build_stellar_variability_params_records_nextastro_reference(
     captured = {}
 
     class DummyFit:
+        time = np.array([2450000.105, 2450000.205, 2450000.305], dtype=float)
         data = np.array([1.0, 1.02, 0.98], dtype=float)
         dataerr = np.full(3, 0.01, dtype=float)
         airmass_model = np.ones(3, dtype=float)
@@ -1610,6 +1611,8 @@ def test_build_stellar_variability_params_records_nextastro_reference(
     assert params[0]['observed_filter'] == observed_filter
     assert params[0]['mag_band'] == 'ClearV'
     assert params[0]['catalog_mag_band'] == 'V'
+    assert [row['time'] for row in params] == pytest.approx(DummyFit.time)
+    assert [row['jd_time'] for row in params] == pytest.approx(DummyFit.jd_times)
 
 
 def test_build_stellar_variability_params_rejects_cross_band_calibration(tmp_path):
@@ -3200,6 +3203,7 @@ def test_build_stellar_variability_ensemble_params_preserves_member_metadata(mon
 
     assert len(params) == 2
     assert [row['time'] for row in params] == pytest.approx([2460000.105, 2460000.205])
+    assert [row['jd_time'] for row in params] == pytest.approx([2460000.1, 2460000.2])
     assert params[0]['cname'] == 'ENSEMBLE (2 stars)'
     assert params[0]['cmag'] is None
     assert params[0]['mag_band'] == 'ClearV'

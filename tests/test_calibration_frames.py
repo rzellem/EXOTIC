@@ -186,3 +186,83 @@ def test_scaled_dark_requires_positive_exposure_times(tmp_path):
             1,
             exposure_time=0.0,
         )
+
+
+def test_calibration_masters_are_saved_as_final_fits_products(tmp_path):
+    bias_files = [
+        write_frame(tmp_path / "bias_1.fits", np.full((2, 2), 10.0)),
+        write_frame(tmp_path / "bias_2.fits", np.full((2, 2), 12.0)),
+    ]
+    dark_files = [
+        write_frame(tmp_path / "dark_1.fits", np.full((2, 2), 2.0)),
+        write_frame(tmp_path / "dark_2.fits", np.full((2, 2), 4.0)),
+    ]
+    flat_files = [
+        write_frame(tmp_path / "flat_1.fits", np.full((2, 2), 100.0)),
+        write_frame(tmp_path / "flat_2.fits", np.full((2, 2), 200.0)),
+    ]
+
+    master_bias = exotic_module.process_bias_frames(bias_files, save_dir=tmp_path)
+    master_dark = exotic_module.process_dark_frames(dark_files, save_dir=tmp_path)
+    master_flat = exotic_module.process_flat_frames(flat_files, save_dir=tmp_path)
+
+    for calibration_type, expected in (
+        ("Bias", master_bias),
+        ("Dark", master_dark),
+        ("Flat", master_flat),
+    ):
+        output_path = tmp_path / f"Master{calibration_type}.fits"
+        assert output_path.is_file()
+        with fits.open(output_path) as hdul:
+            np.testing.assert_allclose(hdul[0].data, expected)
+            assert hdul[0].header["CALTYPE"] == calibration_type.upper()
+            assert hdul[0].header["NCOMBINE"] == 2
+
+
+def test_calibration_masters_are_copied_beside_science_frames(tmp_path):
+    science_dir = tmp_path / "Light"
+    output_dir = tmp_path / "Results"
+    science_dir.mkdir()
+    output_dir.mkdir()
+    bias_files = [
+        write_frame(tmp_path / "bias_1.fits", np.full((2, 2), 10.0)),
+        write_frame(tmp_path / "bias_2.fits", np.full((2, 2), 12.0)),
+    ]
+    dark_files = [
+        write_frame(tmp_path / "dark_1.fits", np.full((2, 2), 2.0)),
+        write_frame(tmp_path / "dark_2.fits", np.full((2, 2), 4.0)),
+    ]
+    flat_files = [
+        write_frame(tmp_path / "flat_1.fits", np.full((2, 2), 100.0)),
+        write_frame(tmp_path / "flat_2.fits", np.full((2, 2), 200.0)),
+    ]
+
+    master_bias = exotic_module.process_bias_frames(
+        bias_files, save_dir=output_dir, science_dir=science_dir
+    )
+    master_dark = exotic_module.process_dark_frames(
+        dark_files, save_dir=output_dir, science_dir=science_dir
+    )
+    master_flat = exotic_module.process_flat_frames(
+        flat_files, save_dir=output_dir, science_dir=science_dir
+    )
+
+    for calibration_type, expected in (
+        ("Bias", master_bias),
+        ("Dark", master_dark),
+        ("Flat", master_flat),
+    ):
+        copied_path = science_dir / f"Master{calibration_type}.fits"
+        assert copied_path.is_file()
+        with fits.open(copied_path) as hdul:
+            np.testing.assert_allclose(hdul[0].data, expected)
+
+
+def test_existing_master_calibration_is_loaded_without_raw_frame_reprocessing(tmp_path):
+    master_path = tmp_path / "MasterDark.fits"
+    expected = np.arange(4, dtype=np.float32).reshape(2, 2)
+    fits.writeto(master_path, expected, overwrite=True)
+
+    result = exotic_module._load_existing_master_calibration([str(master_path)], "dark")
+
+    np.testing.assert_allclose(result, expected)

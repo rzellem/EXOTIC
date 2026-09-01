@@ -727,6 +727,10 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
     diagnostic_sources = [
         diagnostics_dir / filename
         for filename in (
+            "FullDataFullLightCurve_HAT-P-32b_2020-01-01.png",
+            "FullDataFullLightCurve_HAT-P-32b_2020-01-01.pdf",
+            "FullDataFullLightCurve_HAT-P-32b_2020-01-01.eps",
+            "FullDataFullLightCurve_HAT-P-32b_2020-01-01_HighRes.png",
             "FinalTriangle_HAT-P-32b_2020-01-01.png",
             "FinalTriangle_HAT-P-32b_2020-01-01.pdf",
             "FinalTriangle_HAT-P-32b_2020-01-01.eps",
@@ -773,6 +777,7 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         ).read_bytes() == diagnostic_source.name.encode("utf-8")
 
     assert "#OBSDATE=2020-01-01" in output_text
+    assert "#DATE_TYPE=BJD_TDB" in output_text
     assert "#EXOPLANET_NAME=HAT-P-32 b" in output_text
     assert "#OBSNAME=Whipple Observatory" in output_text
     assert "#OBSLAT=+32.41638889" in output_text
@@ -930,6 +935,7 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     }
     vsp_params = [{
         "time": 2450000.12345,
+        "jd_time": 2450000.12000,
         "mag": 12.34567,
         "mag_err": 0.012345,
         "differential_mag": 0.24567,
@@ -976,8 +982,8 @@ def test_aid_output_includes_nextastro_comparison_metadata(tmp_path):
     assert metadata["magnitude_band"] == "V"
     assert metadata["reported_measurement_band"] == "ClearV"
     assert "#COMPARISON_RA=10.1000000\n#COMPARISON_DEC=-20.2000000\n" in output_text
-    assert "#DATE=BJD_TDB" in output_text
-    assert "HAT-P-32,2450000.12345,12.3457,0.0123,V,NO,STD" in output_text
+    assert "#DATE=JD" in output_text
+    assert "HAT-P-32,2450000.12,12.3457,0.0123,V,NO,STD" in output_text
     assert (
         "#NAME,DATE,MAG,MERR,FILT,TRANS,MTYPE,CNAME,CMAG,KNAME,KMAG,AMASS,"
         "GROUP,CHART,NOTES\n"
@@ -1382,7 +1388,7 @@ def test_final_planetary_params_reports_transit_comparison_catalog_reference(tmp
     assert "Best Comparison Star" not in final_params
     assert final_params["Variable Reference Star"] == "AAVSO Label: 000-BJX-718, Position: [616, 113]"
     assert "Remeasured 2 out-of-transit target/reference point(s)" in final_params["Variable Reference Measurement"]
-    assert "AID rows list the BJD_TDB timestamps used" in final_params["Variable Reference Measurement"]
+    assert "AID rows list the JD timestamps used" in final_params["Variable Reference Measurement"]
     assert "transit-fit catalog reference" in final_params["Variable Reference Measurement"]
 
 

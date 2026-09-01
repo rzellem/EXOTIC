@@ -83,6 +83,8 @@ def copy_aavso_supporting_artifacts(save, target_name, observation_date):
 
     Final lightcurve and triangle products are copied in their original
     formats plus the presentation EPS/PDF and ``*_HighRes.png`` variants.
+    When baseline restriction is active, the full-data lightcurve diagnostic
+    is copied alongside the canonical final-lightcurve products.
     """
 
     output_dir = Path(save)
@@ -103,6 +105,18 @@ def copy_aavso_supporting_artifacts(save, target_name, observation_date):
         working_artifacts_dir / safe_output_filename(
             'FinalLightCurve', target_name, date_token, extension='csv'
         )
+    )
+    full_data_diagnostic_png = diagnostics_dir / safe_output_filename(
+        'FullDataFullLightCurve', target_name, date_token, extension='png'
+    )
+    source_paths.extend(
+        diagnostics_dir / safe_output_filename(
+            'FullDataFullLightCurve', target_name, date_token, extension=extension
+        )
+        for extension in ('png', 'pdf', 'eps')
+    )
+    source_paths.append(
+        full_data_diagnostic_png.with_name(f'{full_data_diagnostic_png.stem}_HighRes.png')
     )
     for stretch_name in AAVSO_FINDER_STRETCH_NAMES:
         source_paths.extend(
@@ -962,13 +976,13 @@ def stellar_variability_measurement_summary(vsp_params, transit_fit_comp_star=No
     if vsp_params[0].get('ensemble_reference'):
         return (
             f"Combined {point_count} out-of-transit target measurements against the calibrated "
-            "comparison-star ensemble; AID rows list the BJD_TDB timestamps used."
+            "comparison-star ensemble; AID rows list the JD timestamps used."
         )
 
     return (
         f"Remeasured {point_count} out-of-transit target/reference point(s) against the transit-fit "
         f"{'derived ' if vsp_params[0].get('derived_catalog_reference') else ''}catalog reference "
-        "for AID magnitudes; AID rows list the BJD_TDB timestamps used."
+        "for AID magnitudes; AID rows list the JD timestamps used."
     )
 
 
@@ -2793,13 +2807,13 @@ class OutputFiles:
                 if vsp_params[0].get('ensemble_reference'):
                     params_num["Variable Reference Measurement"] = (
                         f"Combined {len(vsp_params)} out-of-transit target measurements against the "
-                        "calibrated comparison-star ensemble; AID rows list the BJD_TDB timestamps used."
+                        "calibrated comparison-star ensemble; AID rows list the JD timestamps used."
                     )
                 else:
                     params_num["Variable Reference Measurement"] = (
                         f"Remeasured {len(vsp_params)} out-of-transit target/reference point(s) "
                         "against the stellar-variability reference catalog star; AID rows list the "
-                        "BJD_TDB timestamps used."
+                        "JD timestamps used."
                     )
 
             if phot_opt:
@@ -3502,6 +3516,44 @@ class AIDOutputFiles:
             extension="txt",
         )
 
+    def _aid_row_time(self, vsp_param):
+        """Return the geocentric JD to serialize for one AID row.
+
+        Stellar-variability builders retain the source timestamp explicitly as
+        ``jd_time``.  Resolve it from the model-time/fit arrays as a
+        compatibility fallback for older callers that only supplied ``time``.
+        """
+        explicit_jd = finite_float(vsp_param.get('jd_time'))
+        if np.isfinite(explicit_jd):
+            return explicit_jd
+
+        model_time = finite_float(vsp_param.get('time'))
+        fit = self.fit
+        fit_times = np.asarray(
+            getattr(fit, 'time', []) if fit is not None else [],
+            dtype=float,
+        ).reshape(-1)
+        fit_jd_times = np.asarray(
+            getattr(fit, 'jd_times', []) if fit is not None else [],
+            dtype=float,
+        ).reshape(-1)
+        if (
+            np.isfinite(model_time)
+            and fit_times.shape == fit_jd_times.shape
+            and fit_times.size
+        ):
+            matches = np.flatnonzero(np.isclose(
+                fit_times,
+                model_time,
+                rtol=0.0,
+                atol=5.0e-5,
+            ))
+            if matches.size:
+                matched_jd = finite_float(fit_jd_times[matches[0]])
+                if np.isfinite(matched_jd):
+                    return matched_jd
+        return model_time
+
     def _write_aavso(self, params_file, use_row_names=False, include_comparison_metadata=True):
         first_vsp_param = self.vsp_params[0] if self.vsp_params else {}
         comparison_metadata = aid_comparison_metadata(first_vsp_param)
@@ -3525,7 +3577,7 @@ class AIDOutputFiles:
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
                     f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
                     "#DELIM=,\n"  # fixed
-                    "#DATE=BJD_TDB\n"  # fixed
+                    "#DATE=JD\n"  # AAVSO AID requires geocentric Julian Date
                     f"#OBSDATE={format_aavso_header_value(self.i_dict.get('date'))}\n"
                     f"#OBSTYPE={self.i_dict['camera']}\n"
                     f"#OBSLAT={format_aavso_header_value(self.i_dict.get('lat'))}\n"
@@ -3613,7 +3665,8 @@ class AIDOutputFiles:
                 if differential_error_text is not None:
                     notes_subfields.append(f"|DIFFERR={differential_error_text}")
                 notes = ''.join(notes_subfields) or 'na'
-                f.write(f"{variable_name},{round(vsp_p['time'], 5)},{mag},{mag_err},"
+                aid_time = self._aid_row_time(vsp_p)
+                f.write(f"{variable_name},{round(aid_time, 5)},{mag},{mag_err},"
                         f"{self.i_dict['filter']},NO,STD,{vsp_p['cname']},{cmag},na,na,"
                         f"{round(vsp_p['airmass'], 7)},na,{chart_id},{notes}\n")
         return params_file

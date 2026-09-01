@@ -109,3 +109,164 @@ def test_prior_geometry_duration_matches_winn():
     result = exotic_main.estimate_transit_duration_from_prior_geometry(prior)
     expected = winn_2010_duration_days(3.0, 10.0, 88.0, 0.1, 0.4, 120.0)
     assert result == pytest.approx(expected, rel=1e-9)
+
+
+def test_baseline_restriction_keeps_one_hour_before_ingress_and_after_egress():
+    exotic_main = _exotic_main_module()
+    planet = {
+        "pPer": 3.0,
+        "midT": 2450000.0,
+        "rprs": 0.1,
+        "aRs": 10.0,
+        "inc": 88.0,
+        "ecc": 0.0,
+        "omega": 90.0,
+    }
+    duration = exotic_main.estimate_transit_duration_from_prior_geometry({
+        "per": planet["pPer"],
+        "rprs": planet["rprs"],
+        "ars": planet["aRs"],
+        "inc": planet["inc"],
+        "ecc": planet["ecc"],
+        "omega": planet["omega"],
+    })
+    edge = duration / 2.0 + 1.0 / 24.0
+    times = np.array([
+        planet["midT"] - edge - 1e-5,
+        planet["midT"] - edge + 1e-5,
+        planet["midT"],
+        planet["midT"] + edge - 1e-5,
+        planet["midT"] + edge + 1e-5,
+    ])
+
+    keep, summary = exotic_main.build_baseline_restriction_mask(times, planet)
+
+    assert keep.tolist() == [False, True, True, True, False]
+    assert summary["applied"] is True
+    assert summary["excluded_point_count"] == 2
+    assert summary["kept_point_count"] == 3
+
+
+def test_baseline_restriction_disabled_keeps_all_points():
+    exotic_main = _exotic_main_module()
+    planet = {"pPer": 3.0, "midT": 2450000.0, "rprs": 0.1, "aRs": 10.0, "inc": 88.0}
+    times = np.array([planet["midT"] - 10.0, planet["midT"], planet["midT"] + 10.0])
+
+    keep, summary = exotic_main.build_baseline_restriction_mask(times, planet, enabled=False)
+
+    assert np.all(keep)
+    assert summary["applied"] is False
+    assert summary["excluded_point_count"] == 0
+
+
+def test_baseline_restriction_falls_back_when_window_leaves_too_few_points():
+    exotic_main = _exotic_main_module()
+    planet = {"pPer": 3.0, "midT": 2450000.0, "rprs": 0.1, "aRs": 10.0, "inc": 88.0}
+    times = planet["midT"] + np.arange(6, dtype=float) * 0.01 + 0.5
+
+    keep, summary = exotic_main.build_baseline_restriction_mask(times, planet)
+
+    assert np.all(keep)
+    assert summary["applied"] is False
+    assert summary["excluded_point_count"] == 0
+    assert "below EXOTIC's minimum" in summary["note"]
+
+
+def test_comparison_preflight_preserves_baseline_level_for_excluded_plot_points():
+    exotic_main = _exotic_main_module()
+    times = np.linspace(2450000.0, 2450000.1, 20)
+    prepared = exotic_main.prepare_comparison_candidate_full_reduction_series(
+        times,
+        np.full(times.shape, 200.0),
+        np.full(times.shape, 100.0),
+        np.ones(times.shape),
+    )
+
+    assert prepared["applied"] is True
+    assert prepared["approximate_baseline_level"] == pytest.approx(2.0)
+    assert np.nanmedian(prepared["flux"]) == pytest.approx(1.0)
+
+
+def test_unrestricted_prefit_clip_masks_outside_window_points_before_plotting(monkeypatch):
+    exotic_main = _exotic_main_module()
+    times = np.arange(4.0)
+    target_flux = np.full(times.shape, 2.0)
+    comp_flux = np.ones(times.shape)
+    airmass = np.ones(times.shape)
+
+    def fake_prepare(*args, **kwargs):
+        return {
+            "applied": True,
+            "source_indices": np.array([0, 2, 3], dtype=int),
+            "filter_diagnostics": [{"name": "Initial sigma clip"}],
+        }
+
+    monkeypatch.setattr(exotic_main, "prepare_lightcurve_fit_input_series", fake_prepare)
+    summary = exotic_main.build_unrestricted_candidate_prefit_clip_summary(
+        times,
+        target_flux,
+        comp_flux,
+        airmass,
+        np.ones(times.shape, dtype=bool),
+    )
+
+    assert summary["applied"] is True
+    assert summary["keep_mask"].tolist() == [True, False, True, True]
+    assert summary["rejected_mask"].tolist() == [False, True, False, False]
+
+
+def test_restricted_baseline_payload_separates_prefit_rejects_from_blue_points():
+    exotic_main = _exotic_main_module()
+    times = np.arange(4.0)
+    payload = exotic_main.build_restricted_baseline_plot_payload(
+        times,
+        np.full(times.shape, 2.0),
+        np.ones(times.shape),
+        np.ones(times.shape),
+        np.array([False, True, True, False]),
+        prefit_keep_mask=np.array([True, True, False, True]),
+        normalization_level=2.0,
+    )
+
+    assert payload["point_count"] == 1
+    assert payload["rejected_point_count"] == 1
+    assert payload["flux"].tolist() == [1.0]
+    assert payload["rejected_flux"].tolist() == [1.0]
+
+
+def test_restricted_baseline_payload_can_include_all_prefit_rejects():
+    exotic_main = _exotic_main_module()
+    times = np.arange(4.0)
+    payload = exotic_main.build_restricted_baseline_plot_payload(
+        times,
+        np.full(times.shape, 2.0),
+        np.ones(times.shape),
+        np.ones(times.shape),
+        np.array([False, True, True, False]),
+        prefit_keep_mask=np.array([True, True, False, True]),
+        prefit_rejected_mask=np.array([True, False, True, False]),
+        normalization_level=2.0,
+    )
+
+    assert payload["point_count"] == 1
+    assert payload["rejected_point_count"] == 2
+    assert payload["rejected_times"].tolist() == [0.0, 2.0]
+
+
+def test_restricted_baseline_payload_keeps_prefit_rejects_when_window_has_no_blue_points():
+    exotic_main = _exotic_main_module()
+    times = np.arange(3.0)
+    payload = exotic_main.build_restricted_baseline_plot_payload(
+        times,
+        np.full(times.shape, 2.0),
+        np.ones(times.shape),
+        np.ones(times.shape),
+        np.zeros(times.shape, dtype=bool),
+        prefit_keep_mask=np.array([False, True, True]),
+        prefit_rejected_mask=np.array([True, False, False]),
+        normalization_level=2.0,
+    )
+
+    assert payload["point_count"] == 0
+    assert payload["rejected_point_count"] == 1
+    assert payload["rejected_times"].tolist() == [0.0]

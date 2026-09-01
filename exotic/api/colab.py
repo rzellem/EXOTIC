@@ -404,6 +404,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "allow_pixel_alignment_fallback": true,
             "bad_wcs_threshold_percent": 3.0,
             "detrend_on_outoftransit_baseline": true,
+            "restrict_baseline_to_an_hour": true,
             "use_eebls_to_initialize_tmid_and_bounds": "y",
             "pick_comparison_by_eebls_snr": "y",
             "use_impactparameter_rather_than_inclination_to_fit": "y",

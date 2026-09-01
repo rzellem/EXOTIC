@@ -7,8 +7,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pytest
 from matplotlib.axes import Axes
+import exotic.plots as plots_module
 
 from exotic.plots import (
+    _set_canonical_lightcurve_limits,
     _format_parameter_value,
     _short_ktmf_label,
     plot_fov,
@@ -667,6 +669,81 @@ def test_plot_final_lightcurve_requests_uncertainty_bands_without_baseline_label
     assert (tmp_path / "FinalLightCurve_Target_2026-03-09.eps").exists()
     assert high_res_png_path.exists()
     assert plt.imread(high_res_png_path).shape[:2] == (1080, 1920)
+
+
+def test_plot_final_lightcurve_splits_full_data_diagnostic_from_canonical_plot(
+    tmp_path,
+    monkeypatch,
+):
+    class DummyFinalFit:
+        def __init__(self):
+            self.calls = []
+            self.phase_upsample = np.linspace(-0.05, 0.05, 5)
+            self.transit_upsample = np.ones(5)
+            self.restricted_baseline_points = {
+                "point_count": 2,
+                "times": np.array([-0.08, 0.08]),
+                "flux": np.array([1.0, 1.0]),
+                "unc": np.array([0.01, 0.01]),
+            }
+
+        def plot_bestfit(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            fig, axes = plt.subplots(2, 1)
+            return fig, axes
+
+    rejected_point_draws = []
+    monkeypatch.setattr(
+        plots_module,
+        "_plot_final_residual_rejected_points",
+        lambda *args: rejected_point_draws.append(args),
+    )
+
+    fit = DummyFinalFit()
+    plot_final_lightcurve(
+        fit,
+        high_res=np.ones(5),
+        targ_name="Target",
+        save=str(tmp_path),
+        date="2026-03-09",
+    )
+
+    assert len(fit.calls) == 2
+    assert fit.calls[0]["show_restricted_baseline_points"] is True
+    assert fit.calls[0]["show_binned_points"] is True
+    assert fit.calls[1]["show_restricted_baseline_points"] is False
+    assert fit.calls[1]["show_binned_points"] is False
+    assert len(rejected_point_draws) == 2
+    assert (
+        tmp_path
+        / "Diagnostics"
+        / "FullDataFullLightCurve_Target_2026-03-09.png"
+    ).exists()
+    assert (tmp_path / "FinalLightCurve_Target_2026-03-09.png").exists()
+
+
+def test_canonical_lightcurve_limits_follow_visible_points_not_errorbar_extents():
+    figure, (ax_lc, ax_res) = plt.subplots(2, 1)
+    fit = SimpleNamespace(
+        phase=np.array([-0.05, -0.04, -0.03]),
+        detrended=np.array([0.98, 1.00, 1.04]),
+        final_residual_rejection={
+            "applied": True,
+            "rejected_phase": [0.02],
+            "rejected_flux": [0.50],
+        },
+    )
+
+    _set_canonical_lightcurve_limits(fit, ax_lc, ax_res)
+
+    # Median cadence is 0.01 phase, so the visible x range gets a half-cadence
+    # margin; the rejected red marker is included in the x extent.
+    np.testing.assert_allclose(ax_lc.get_xlim(), [-0.055, 0.025])
+    np.testing.assert_allclose(ax_res.get_xlim(), [-0.055, 0.025])
+    # Y limits come from black measured points +/- 0.01, not the red cross or
+    # any large uncertainty bars attached to the points.
+    np.testing.assert_allclose(ax_lc.get_ylim(), [0.97, 1.05])
+    plt.close(figure)
 
 
 def test_plot_final_lightcurve_adds_apparent_magnitude_axis_when_calibrated(tmp_path, monkeypatch):

@@ -92,7 +92,16 @@ DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE = 7
 DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE = 1.0e-5
 MIN_EXPOSURE_SMEARING_SECONDS = 1.0
 EXPOSURE_SMEARING_TRANSIT_WINDOW_PADDING_FACTOR = 2.0
-ULTRANEST_INFLATED_ERROR_REPLACEMENT_FACTOR = 3.0
+# Guard against a posterior summary that is really the prior width (a sampler that
+# never localized), see test_nested_fit_replaces_prior_width_like_error_with_local_likelihood_width.
+# The local reference is the profile-likelihood 1-sigma extent (half-range of the
+# delta-chi2<=1 dead points, scaled by 1/sqrt(delta_chi2) when the window had to widen).
+# A healthy fit lands at ratio ~0.7-1.5 against that reference; the prior-width pathology
+# lands at ~20. The factor must sit well clear of the healthy band. Issue #1401: the previous
+# reference (std of the delta-chi2<=1 points) is biased low by ~sqrt(d+2) in d sampled
+# dimensions, so with factor 3.0 a healthy 4-parameter fit sat AT the threshold and the
+# Tmid bar was cut ~3x on some runs and not others depending on sampler density.
+ULTRANEST_INFLATED_ERROR_REPLACEMENT_FACTOR = 5.0
 ULTRANEST_LOCAL_UNCERTAINTY_MAX_DELTA_CHI2 = 9.0
 ULTRANEST_EXPANDED_PRIOR_WARMSTART_FULL_PRIOR_FRACTION = 0.5
 ULTRANEST_EXPANDED_PRIOR_WARMSTART_MINIMUM_SAMPLE_COUNT = 32
@@ -2310,16 +2319,37 @@ class lc_fitter(object):
         lower, upper = np.nanpercentile(selected_values, [15.8655, 84.1345])
         std = float(np.nanstd(selected_values))
         half_width = float(0.5 * (upper - lower))
-        candidates = [value for value in (std, half_width) if np.isfinite(value) and value > 0]
+        # The spread of the points INSIDE a delta-chi2<=k region is not a 1-sigma
+        # width: projected onto one axis it is ~sigma*sqrt(k/(d+2)) for d sampled
+        # dimensions. The EXTENT of that region along the axis is the profile
+        # likelihood interval, whose half-range at k=1 is the marginal 1-sigma of a
+        # Gaussian posterior (the shadow of the delta-chi2=1 ellipsoid). Use that,
+        # rescaled when the window had to widen, and keep std / half_width only as
+        # floors (issue #1401).
+        scale = 1.0 / np.sqrt(selected_delta) if np.isfinite(selected_delta) and selected_delta > 0 else 1.0
+        half_range = float(0.5 * (np.nanmax(selected_values) - np.nanmin(selected_values)) * scale)
+        candidates = [value for value in (std, half_width, half_range) if np.isfinite(value) and value > 0]
         if not candidates:
             return None
 
         error = float(max(candidates))
+        try:
+            center_value = float(center)
+        except (TypeError, ValueError):
+            center_value = np.nan
+        if np.isfinite(center_value):
+            # Keep the quoted interval consistent with the quoted error.
+            quantiles = [center_value - error, center_value + error]
+        else:
+            quantiles = [float(lower), float(upper)]
         return {
             'error': error,
-            'quantiles': [float(lower), float(upper)],
+            'quantiles': quantiles,
             'sample_count': int(selected_values.size),
             'delta_chi2': float(selected_delta),
+            'interior_std': std,
+            'interior_half_width': half_width,
+            'profile_half_range': half_range,
         }
 
     def _ultranest_error_needs_sample_fallback(self, parameter_index, center, reported_error, points=None):

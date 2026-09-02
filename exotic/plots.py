@@ -875,6 +875,19 @@ def _stellar_variability_comparison_metadata_label(vsp_param):
     return " | ".join(details)
 
 
+def _stellar_variability_row_time(vsp_param):
+    """Return the JD used by stellar-variability AAVSO output.
+
+    Current variability rows retain both the BJD_TDB model time (``time``)
+    and the original geocentric JD (``jd_time``).  Keep the historical
+    ``time`` fallback for older callers that do not yet carry both values.
+    """
+    jd_time = _finite_plot_float(vsp_param.get('jd_time'))
+    if jd_time is not None:
+        return jd_time
+    return _finite_plot_float(vsp_param.get('time'))
+
+
 def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     if not vsp_params:
         return
@@ -884,8 +897,11 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     for vsp_p in vsp_params:
         if not is_usable_apparent_magnitude(vsp_p.get('mag')):
             continue
+        plot_time = _stellar_variability_row_time(vsp_p)
+        if plot_time is None:
+            continue
         mag_err = normalized_magnitude_error(vsp_p.get('mag_err'))
-        ax.errorbar(vsp_p['time'], vsp_p['mag'], yerr=mag_err, color="tomato", fmt='.')
+        ax.errorbar(plot_time, vsp_p['mag'], yerr=mag_err, color="tomato", fmt='.')
         plotted_points += 1
 
     if plotted_points == 0:
@@ -904,7 +920,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
     ax.set_title("\n".join(title_lines), fontsize=11)
     ax.set_ylabel(f"Magnitude ({band})")
     ax.invert_yaxis()
-    ax.set_xlabel("Time [BJD_TDB]")
+    ax.set_xlabel("Time [JD]")
     fig.tight_layout()
     output_dir = _working_artifacts_dir(save)
     output_path = Path(save) / "Stellar_Variability.png"
@@ -916,7 +932,7 @@ def plot_stellar_variability(vsp_params, save, s_name, vsp_auid_comp):
 def _stellar_variability_magnitude_series(vsp_params):
     rows = []
     for vsp_p in vsp_params or []:
-        time_value = _finite_plot_float(vsp_p.get('time'))
+        time_value = _stellar_variability_row_time(vsp_p)
         mag_value = _finite_plot_float(vsp_p.get('mag'))
         mag_err = normalized_magnitude_error(vsp_p.get('mag_err'))
         if (
@@ -936,6 +952,22 @@ def _stellar_variability_magnitude_series(vsp_params):
     magnitudes = np.array([row[1] for row in rows], dtype=float)
     magnitude_errors = np.array([row[2] for row in rows], dtype=float)
     return times, magnitudes, magnitude_errors, rows[0][3]
+
+
+def _stellar_variability_fit_jd_times(fit, series):
+    """Return fit JD values aligned to a filtered differential series."""
+    source_mask = np.asarray(series.get('source_mask', []), dtype=bool).reshape(-1)
+    jd_times = np.asarray(getattr(fit, 'jd_times', []), dtype=float).reshape(-1)
+    if jd_times.shape != source_mask.shape:
+        return np.asarray(series['time'], dtype=float)
+
+    selected_jd_times = jd_times[source_mask]
+    if (
+        selected_jd_times.shape != np.asarray(series['time']).shape
+        or not np.all(np.isfinite(selected_jd_times))
+    ):
+        return np.asarray(series['time'], dtype=float)
+    return selected_jd_times
 
 
 def _stellar_variability_apparent_magnitude_calibration(fit):
@@ -990,11 +1022,21 @@ def plot_differential_magnitude(fit, target_name, save, date, observed_filter=No
     if series is None:
         return None
 
+    stellar_variability_plot = bool(
+        getattr(fit, 'stellar_variability_only', False)
+        or save_stellar_variability_alias
+    )
+    plot_times = (
+        _stellar_variability_fit_jd_times(fit, series)
+        if stellar_variability_plot
+        else series['time']
+    )
+
     fig, ax = plt.subplots(figsize=(8, 5))
     finite_error = np.isfinite(series['magnitude_error']) & (series['magnitude_error'] >= 0)
     if np.any(finite_error):
         ax.errorbar(
-            series['time'][finite_error],
+            plot_times[finite_error],
             series['magnitude'][finite_error],
             yerr=series['magnitude_error'][finite_error],
             color='royalblue',
@@ -1002,7 +1044,7 @@ def plot_differential_magnitude(fit, target_name, save, date, observed_filter=No
         )
     if np.any(~finite_error):
         ax.plot(
-            series['time'][~finite_error],
+            plot_times[~finite_error],
             series['magnitude'][~finite_error],
             '.',
             color='royalblue',
@@ -1019,7 +1061,7 @@ def plot_differential_magnitude(fit, target_name, save, date, observed_filter=No
     band_label = f" ({observed_filter})" if observed_filter else ''
     ax.set_ylabel(f"Differential Magnitude{band_label}")
     ax.invert_yaxis()
-    ax.set_xlabel("Time [BJD_TDB]")
+    ax.set_xlabel("Time [JD]" if stellar_variability_plot else "Time [BJD_TDB]")
     fig.tight_layout()
 
     output_dir = Path(save)
@@ -1527,7 +1569,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
         band = first_param.get('mag_band') or 'V'
         ax_lc.set_ylabel(f"Magnitude ({band})")
         ax_lc.invert_yaxis()
-        ax_lc.set_xlabel("Time [BJD_TDB]")
+        ax_lc.set_xlabel("Time [JD]")
         f.tight_layout()
 
         Path(save).mkdir(parents=True, exist_ok=True)

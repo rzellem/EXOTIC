@@ -95,6 +95,7 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
     fit = SimpleNamespace(
         stellar_variability_only=True,
         time=np.array([2461229.5, 2461229.6, 2461229.8]),
+        jd_times=np.array([2461229.4, 2461229.5, 2461229.7]),
         detrended=np.array([1.0, 1.01, 0.99]),
         detrendederr=np.array([0.001, 0.001, 0.001]),
         time_upsample=np.array([2461229.5, 2461229.8]),
@@ -102,6 +103,7 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
         stellar_variability_params=[
             {
                 "time": 2461229.5,
+                "jd_time": 2461229.4,
                 "mag": 13.738,
                 "mag_err": 0.004,
                 "cmag": 13.739,
@@ -114,6 +116,7 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
             },
             {
                 "time": 2461229.6,
+                "jd_time": 2461229.5,
                 "mag": 13.740,
                 "mag_err": 0.004,
                 "cmag": 13.739,
@@ -126,6 +129,7 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
             },
             {
                 "time": 2461229.8,
+                "jd_time": 2461229.7,
                 "mag": 13.735,
                 "mag_err": 0.004,
                 "cmag": 13.739,
@@ -174,9 +178,9 @@ def test_stellar_variability_final_lightcurve_plots_calibrated_magnitude_by_time
 
     plot_final_lightcurve(fit, np.ones(2), "Target", str(tmp_path), "2026-07-08")
 
-    np.testing.assert_allclose(captured_errorbar_x[-1], np.array([2461229.5, 2461229.6, 2461229.8]))
+    np.testing.assert_allclose(captured_errorbar_x[-1], np.array([2461229.4, 2461229.5, 2461229.7]))
     np.testing.assert_allclose(captured_errorbar_y[-1], np.array([13.738, 13.740, 13.735]))
-    assert captured_xlabels[-1] == "Time [BJD_TDB]"
+    assert captured_xlabels[-1] == "Time [JD]"
     assert captured_xlabels[-1] != "Orbital Phase"
     assert captured_ylabels[-1] == "Magnitude (r)"
     assert len(inverted_axes) == 2
@@ -195,16 +199,31 @@ def test_stellar_variability_differential_plot_survives_without_apparent_magnitu
     from matplotlib.axes import Axes
 
     captured_titles = []
+    captured_errorbar_x = []
+    captured_xlabels = []
     original_set_title = Axes.set_title
+    original_errorbar = Axes.errorbar
+    original_set_xlabel = Axes.set_xlabel
 
     def spy_set_title(self, title, *args, **kwargs):
         captured_titles.append(title)
         return original_set_title(self, title, *args, **kwargs)
 
+    def spy_errorbar(self, x, y, *args, **kwargs):
+        captured_errorbar_x.append(np.asarray(x, dtype=float))
+        return original_errorbar(self, x, y, *args, **kwargs)
+
+    def spy_set_xlabel(self, xlabel, *args, **kwargs):
+        captured_xlabels.append(xlabel)
+        return original_set_xlabel(self, xlabel, *args, **kwargs)
+
     monkeypatch.setattr(Axes, "set_title", spy_set_title)
+    monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
+    monkeypatch.setattr(Axes, "set_xlabel", spy_set_xlabel)
     fit = SimpleNamespace(
         stellar_variability_only=True,
         time=np.array([2461229.5, 2461229.6, 2461229.8]),
+        jd_times=np.array([2461229.4, 2461229.5, 2461229.7]),
         data=np.ones(3),
         dataerr=np.full(3, 0.001),
         airmass=np.array([1.1, 1.2, 1.3]),
@@ -231,6 +250,8 @@ def test_stellar_variability_differential_plot_survives_without_apparent_magnitu
         tmp_path / 'working_artifacts' / 'Stellar_Variability_DifferentialMagnitude.png'
     ).exists()
     assert captured_titles[-1] == 'Variable Star'
+    np.testing.assert_allclose(captured_errorbar_x[-1], fit.jd_times)
+    assert captured_xlabels[-1] == "Time [JD]"
 
 
 def test_plot_obs_stats_uses_supplied_background_series(tmp_path, monkeypatch):
@@ -424,10 +445,12 @@ def test_plot_individual_comp_star_calibration_series_masks_rejected_frame_lines
 
 def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeypatch):
     titles = []
+    errorbar_x = []
     xlabels = []
     ylabels = []
     inverted_axes = []
     original_set_title = Axes.set_title
+    original_errorbar = Axes.errorbar
     original_set_xlabel = Axes.set_xlabel
     original_set_ylabel = Axes.set_ylabel
     original_invert_yaxis = Axes.invert_yaxis
@@ -435,6 +458,10 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
     def spy_set_title(self, label, *args, **kwargs):
         titles.append(label)
         return original_set_title(self, label, *args, **kwargs)
+
+    def spy_errorbar(self, x, y, *args, **kwargs):
+        errorbar_x.append(float(x))
+        return original_errorbar(self, x, y, *args, **kwargs)
 
     def spy_set_xlabel(self, label, *args, **kwargs):
         xlabels.append(label)
@@ -449,6 +476,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         return original_invert_yaxis(self, *args, **kwargs)
 
     monkeypatch.setattr(Axes, "set_title", spy_set_title)
+    monkeypatch.setattr(Axes, "errorbar", spy_errorbar)
     monkeypatch.setattr(Axes, "set_xlabel", spy_set_xlabel)
     monkeypatch.setattr(Axes, "set_ylabel", spy_set_ylabel)
     monkeypatch.setattr(Axes, "invert_yaxis", spy_invert_yaxis)
@@ -457,6 +485,7 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         [
             {
                 "time": 2450000.1,
+                "jd_time": 2449999.9,
                 "mag": 12.34,
                 "mag_err": 0.05,
                 "cmag": 12.345,
@@ -480,7 +509,8 @@ def test_plot_stellar_variability_labels_reference_coordinates(tmp_path, monkeyp
         "Original filter: CV | Comparison mag: r=12.3450 +/- 0.0670"
     )
     assert "No airmass correction applied to stellar variability" not in titles[-1]
-    assert xlabels[-1] == "Time [BJD_TDB]"
+    assert errorbar_x == pytest.approx([2449999.9])
+    assert xlabels[-1] == "Time [JD]"
     assert ylabels[-1] == "Magnitude (r)"
     assert len(inverted_axes) == 1
     assert (tmp_path / "working_artifacts" / "Stellar_Variability.png").exists()

@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 import types
 
@@ -1704,6 +1705,62 @@ def test_nested_fit_replaces_prior_width_like_error_with_local_likelihood_width(
     assert fallback["delta_chi2"] <= 1.0
 
 
+def _make_gaussian_nested_fit(elca, sigmas, seed=1401, count=4000):
+    """A healthy d-dimensional Gaussian posterior as UltraNest would report it:
+    weighted_samples drawn from the posterior, logl = -chi2/2, stdev = the true sigmas."""
+    keys = ["tmid", "rprs", "ars", "b"][: len(sigmas)]
+    sigmas = np.asarray(sigmas, dtype=float)
+    rng = np.random.default_rng(seed)
+    z = rng.standard_normal((count, sigmas.size))
+    points = z * sigmas
+    logl = -0.5 * np.sum(z ** 2, axis=1)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = make_prior()
+    fit.bounds = {key: [-10.0 * sigma, 10.0 * sigma] for key, sigma in zip(keys, sigmas)}
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.fixed_parameter_errors = {}
+    fit.results = {
+        "maximum_likelihood": {"point": np.zeros(sigmas.size)},
+        "posterior": {
+            "stdev": sigmas.copy(),
+            "errlo": -sigmas.copy(),
+            "errup": sigmas.copy(),
+        },
+        "weighted_samples": {"points": points, "logl": logl},
+        "samples": points.copy(),
+    }
+    return fit, keys, sigmas
+
+
+def test_loglike_neighborhood_uncertainty_recovers_marginal_sigma_in_four_dimensions(monkeypatch, tmp_path):
+    # Issue #1401: the std of the delta-chi2<=1 points is ~sigma/sqrt(d+2) in d
+    # dimensions, so it under-reported a healthy 4-parameter Tmid bar by ~3x. The
+    # profile half-range is the marginal sigma of a Gaussian posterior.
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit, keys, sigmas = _make_gaussian_nested_fit(elca, [0.005, 0.02, 1.0, 0.25])
+    for index, sigma in enumerate(sigmas):
+        local = fit._loglike_neighborhood_uncertainty(index, 0.0)
+        assert local is not None
+        assert local["delta_chi2"] <= 1.0
+        assert local["interior_std"] < 0.6 * sigma  # the old reference, documented bias
+        assert 0.6 * sigma < local["error"] < 1.3 * sigma  # the new reference
+
+
+def test_nested_fit_keeps_healthy_posterior_summary_in_four_dimensions(monkeypatch, tmp_path):
+    # With the biased reference and factor 3.0 this fired on real runs (Tmid 0.0056 -> 0.0018).
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit, keys, sigmas = _make_gaussian_nested_fit(elca, [0.005, 0.02, 1.0, 0.25])
+    fit._finalize_ultranest_fit_results(
+        keys,
+        keys,
+        lambda point: {key: float(value) for key, value in zip(keys, point)},
+    )
+    assert fit.ultranest_error_fallbacks == {}
+    for key, sigma in zip(keys, sigmas):
+        assert fit.errors[key] == pytest.approx(sigma)
+
+
 def test_nested_fit_duration_prior_penalizes_wrong_transit_length(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
@@ -2654,3 +2711,43 @@ def test_triangle_geometry_overlay_reuses_shared_title_and_label_kwargs(monkeypa
             reference_offsets.append(float(xdata[0]))
     assert sorted(reference_offsets) == pytest.approx([-0.18, -0.08, 0.08, 0.18])
     plt.close(fig)
+
+
+def test_nested_fit_keeps_posterior_summary_on_real_ultranest_dead_points(monkeypatch, tmp_path):
+    # Real UltraNest output from the WBoM final fit of an 83-point CoRoT-2 b light curve
+    # (MicroObservatory, 2026-08-08; issue #1401), sampled keys ars, b, rprs, tmid, with
+    # tmid stored relative to 2461261.8 BJD_TDB. The posterior stdev for tmid is 0.0056 d;
+    # the previous guard (interior std, factor 3.0) replaced it with 0.0018 d while rprs,
+    # at ratio 2.96, escaped. Neither may be replaced: the posterior is healthy.
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fixture = np.load(os.path.join(os.path.dirname(__file__), "data", "ultranest_dead_points_corot2_2026-08-08.npz"))
+    keys = [str(key) for key in fixture["keys"]]
+    points = np.asarray(fixture["points"], dtype=float)
+    stdev = np.asarray(fixture["stdev"], dtype=float)
+    ml = np.asarray(fixture["ml"], dtype=float)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = make_prior()
+    fit.bounds = {key: [float(points[:, index].min()), float(points[:, index].max())] for index, key in enumerate(keys)}
+    fit.mode = "ns"
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.fixed_parameter_errors = {}
+    fit.results = {
+        "maximum_likelihood": {"point": ml},
+        "posterior": {"stdev": stdev, "errlo": ml - stdev, "errup": ml + stdev},
+        "weighted_samples": {"points": points, "logl": np.asarray(fixture["logl"], dtype=float)},
+        "samples": points.copy(),
+    }
+
+    fit._finalize_ultranest_fit_results(
+        keys,
+        keys,
+        lambda point: {key: float(value) for key, value in zip(keys, point)},
+    )
+    tmid_index = keys.index("tmid")
+    assert fit.ultranest_error_fallbacks == {}
+    assert fit.errors["tmid"] == pytest.approx(stdev[tmid_index])
+    assert fit.errors["rprs"] == pytest.approx(stdev[keys.index("rprs")])
+
+    local = fit._loglike_neighborhood_uncertainty(tmid_index, ml[tmid_index])
+    assert local["interior_std"] < 0.4 * stdev[tmid_index]  # what used to be quoted
+    assert local["error"] > 0.5 * stdev[tmid_index]

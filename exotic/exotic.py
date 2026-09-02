@@ -27240,11 +27240,25 @@ def log_lightcurve_fit_assessment_lines(fit, indent="    "):
     if assessment.get('nested_tmid_refinement_note'):
         log_info(f"{indent}Nested Tmid refinement note: {assessment['nested_tmid_refinement_note']}")
     if assessment.get('ultranest_error_fallbacks'):
-        fallback_keys = ", ".join(sorted(assessment['ultranest_error_fallbacks']))
+        fallbacks = assessment['ultranest_error_fallbacks']
+        fallback_keys = ", ".join(sorted(fallbacks))
         log_info(
             f"{indent}UltraNest uncertainty fallback note: replaced posterior summary "
             f"error(s) for {fallback_keys} using the sampled log-likelihood neighborhood."
         )
+        for key in sorted(fallbacks):
+            fallback = fallbacks[key] if isinstance(fallbacks[key], dict) else {}
+            reason = fallback.get('reason', 'unknown')
+            reported = fallback.get('reported_error')
+            replaced = fallback.get('error')
+            detail = f"{indent}  {key}: reason={reason}"
+            if isinstance(replaced, (int, float)) and np.isfinite(replaced):
+                detail += f", quoted={replaced:.3g}"
+            if isinstance(reported, (int, float)) and np.isfinite(reported):
+                detail += f", posterior summary was={reported:.3g}"
+            if 'delta_chi2' in fallback and 'sample_count' in fallback:
+                detail += f", from {fallback['sample_count']} points within delta-chi2<={fallback['delta_chi2']:g}"
+            log_info(detail)
 
 
 def log_comparison_candidate_evaluation_start(comp_summary, rank, ranked_count, method_label, fit_diagnostics):

@@ -23645,6 +23645,20 @@ def process_flat_frames(
 def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
     global _BJD_FALLBACK_WARNING_LOGGED
 
+    # Coerce sexagesimal-string coordinates to numeric degrees before any
+    # conversion. If a caller path delivers RA as "HH:MM:SS.ss" (the -ov -nea
+    # flag combination did exactly this, see issue), barycorrpy raises a
+    # TypeError and the astropy fallback below would silently parse the RA
+    # string as DEGREES (19:27:06 -> 19.45 deg instead of 291.78 deg),
+    # computing the barycentric correction for a point far away on the sky
+    # and shifting BJD_TDB by hundreds of seconds.
+    p_dict = dict(p_dict)
+    if isinstance(p_dict.get('ra'), str) or isinstance(p_dict.get('dec'), str):
+        p_dict['ra'], p_dict['dec'] = radec_hours_to_degree(
+            p_dict.get('ra'), p_dict.get('dec'), non_interactive_run=True,
+            target_name=p_dict.get('pName'),
+        )
+
     try:
         goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
                                     longi=info_dict['long'], alt=info_dict['elev'])[0]
@@ -34819,7 +34833,11 @@ def _main_impl():
             CandidatePlanetBool = False
 
         if file_cmd_opt == 2:
-            if args.nasaexoarch:
+            # -nea combined with -ov: the override wins the data choice above
+            # (pDict = userpDict, sexagesimal strings), so the coordinate
+            # conversion must still run or string RA/Dec reach the time
+            # conversion and airmass code unconverted.
+            if args.nasaexoarch and not args.override:
                 pass
             elif args.override:
                 try:

@@ -90,3 +90,24 @@ def test_required_ephemeris_reports_archive_lookup_failure():
             {'pName': 'Example b', 'pPer': None, 'midT': 2460000.25},
             archive_lookup=archive_lookup,
         )
+
+
+def test_elca_transit_duration_matches_model_for_eccentric_orbits():
+    """Regression for the fourth site of issue #1383: elca.transit_duration
+    retained the inverted-eccentricity formula after PR #1384 fixed the three
+    copies in exotic.py. The analytic duration must match the transit model's
+    own first-to-fourth-contact duration for eccentric geometries (it was off
+    by 1.95x at e=0.3/omega=90 and 3.48x at e=0.5/omega=90)."""
+    import numpy as np
+    from exotic.api.elca import transit, transit_duration
+
+    for ecc, omega in [(0.0, 90.0), (0.3, 90.0), (0.3, 270.0), (0.5, 90.0)]:
+        values = dict(u0=0.5, u1=0.1, u2=0.3, u3=-0.1, rprs=0.1, per=3.0,
+                      ars=8.0, tmid=1.0, ecc=ecc, omega=omega, inc=88.0)
+        times = 1.0 + np.linspace(-0.35, 0.35, 300001)
+        flux = transit(times, values)
+        in_transit = np.flatnonzero(flux < 1 - 1e-9)
+        measured = times[in_transit[-1]] - times[in_transit[0]]
+        analytic = transit_duration(values)
+        assert analytic == pytest.approx(measured, rel=0.01), (
+            f"e={ecc} omega={omega}: analytic {analytic*24:.4f} h vs model {measured*24:.4f} h")

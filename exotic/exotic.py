@@ -311,6 +311,15 @@ COMPARISON_STAR_MIN_COVERAGE_FRACTION = 0.8
 COMPARISON_STAR_MIN_VALID_FRAMES = 5
 COMPARISON_STAR_COVERAGE_SIGMA = 3.0  # Legacy constant; coverage rejection is fraction-based.
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
+# A comparison star that is off the frame in more than this fraction of the
+# series is dropped as a reference. "Off the frame" per frame means either the
+# centroid could not be placed inside the image at all (the PlateStatus
+# out-of-frame flag) or the widest science aperture the pipeline would try
+# (APERTURE_SIGMA_MAX * sigma) crosses an image edge, which truncates the
+# aperture sum silently. Pointing drift of ~70-150 px per night is routine on
+# MicroObservatory, so an edge comp can be measurable for most of a series and
+# still walk out of the frame for the tail of it.
+COMPARISON_STAR_MAX_OFF_FRAME_FRACTION = 0.10
 COMPARISON_STAR_SUITABILITY_OUTLIER_SIGMA = 4.25
 COMPARISON_STAR_SUITABILITY_MIN_CANDIDATES = 5
 COMPARISON_STAR_SUITABILITY_MAX_ITERS = 10
@@ -10018,15 +10027,38 @@ def psf_quality_rows_for_key(psf_data, key, psf_flux_data=None):
     return None
 
 
+def comparison_star_off_frame_key(key):
+    return f"{key}_off_frame"
+
+
+def comparison_star_off_frame_frames(psf_data, key, frame_count):
+    """Per-frame True where the star was recorded as off the frame (or its
+    whole series was rejected for drift); all False when nothing is recorded."""
+    frame_count = int(frame_count)
+    if not isinstance(psf_data, dict):
+        return np.zeros(frame_count, dtype=bool)
+    stored = psf_data.get(comparison_star_off_frame_key(key))
+    if stored is None:
+        return np.zeros(frame_count, dtype=bool)
+    try:
+        stored = np.asarray(stored, dtype=bool).reshape(-1)
+    except (TypeError, ValueError):
+        return np.zeros(frame_count, dtype=bool)
+    if stored.shape[0] != frame_count:
+        return np.zeros(frame_count, dtype=bool)
+    return stored
+
+
 def psf_quality_mask_for_key(psf_data, key, frame_count, psf_flux_data=None):
+    off_frame = comparison_star_off_frame_frames(psf_data, key, frame_count)
     rows = psf_quality_rows_for_key(psf_data, key, psf_flux_data=psf_flux_data)
     if rows is None:
-        return np.ones(int(frame_count), dtype=bool)
+        return ~off_frame
 
     mask = psf_frame_quality_mask(rows)
     if mask.shape[0] != int(frame_count):
-        return np.ones(int(frame_count), dtype=bool)
-    return mask
+        return ~off_frame
+    return mask & ~off_frame
 
 
 def target_psf_quality_rows(psf_data, psf_flux_data=None):
@@ -28595,6 +28627,168 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
     }
 
 
+def comparison_star_off_frame_mask(psf_rows, image_shape, fallback_sigma=np.nan, flagged_frames=None):
+    """Per-frame True when a comparison star was off the frame.
+
+    A frame counts as off the frame when the PlateStatus out-of-frame flag was
+    raised for it (the centroid seed fell outside the image, so no PSF row
+    exists) or when the fitted centroid sits closer to an edge than the widest
+    science aperture (APERTURE_SIGMA_MAX * sigma), where photutils truncates
+    the aperture sum silently. Frames whose PSF fit failed for other reasons
+    (clouds, low flux) are not counted; those already fall out through the
+    quality mask and the coverage rule."""
+    rows = np.asarray(psf_rows, dtype=float)
+    frame_count = 0 if rows.ndim == 0 else int(rows.shape[0])
+    off_frame = np.zeros(frame_count, dtype=bool)
+    if flagged_frames is not None:
+        try:
+            flagged = np.asarray(flagged_frames, dtype=bool).reshape(-1)
+        except (TypeError, ValueError):
+            flagged = np.zeros(0, dtype=bool)
+        if flagged.shape[0] == frame_count:
+            off_frame |= flagged
+    if rows.ndim != 2 or rows.shape[1] < 2 or image_shape is None:
+        return off_frame
+    try:
+        height, width = int(image_shape[0]), int(image_shape[1])
+    except (TypeError, ValueError, IndexError):
+        return off_frame
+    if height <= 0 or width <= 0:
+        return off_frame
+
+    for index in range(frame_count):
+        row = rows[index]
+        x_centroid, y_centroid = row[0], row[1]
+        if not (np.isfinite(x_centroid) and np.isfinite(y_centroid)):
+            continue
+        margin = overexposure_aperture_radius_from_psf_row(row, fallback_sigma=fallback_sigma)
+        if not pixel_within_image(x_centroid, y_centroid, (height, width), margin=margin):
+            off_frame[index] = True
+    return off_frame
+
+
+def comparison_star_off_frame_summary(psf_data, comp_keys, image_shape,
+                                      fallback_sigma=np.nan,
+                                      flagged_frame_map=None,
+                                      max_fraction=COMPARISON_STAR_MAX_OFF_FRAME_FRACTION,
+                                      skip_rejection=False):
+    """Count off-frame frames per comparison star and decide which to drop.
+
+    Returns {key: {'off_frame_mask', 'off_frame_count', 'total_frame_count',
+    'off_frame_fraction', 'max_fraction', 'rejected'}}. A star is rejected when
+    its off-frame fraction exceeds max_fraction, unless that would leave no
+    comparison star at all; then the least-affected star is kept so the run
+    can continue and the later coverage and stability checks judge it."""
+    summary = {}
+    flagged_frame_map = flagged_frame_map if isinstance(flagged_frame_map, dict) else {}
+    for key in comp_keys:
+        rows = psf_data.get(key) if isinstance(psf_data, dict) else None
+        if rows is None:
+            continue
+        mask = comparison_star_off_frame_mask(
+            rows,
+            image_shape,
+            fallback_sigma=fallback_sigma,
+            flagged_frames=flagged_frame_map.get(key),
+        )
+        total = int(mask.shape[0])
+        count = int(np.count_nonzero(mask))
+        fraction = (count / total) if total > 0 else 0.0
+        summary[key] = {
+            'off_frame_mask': mask,
+            'off_frame_count': count,
+            'total_frame_count': total,
+            'off_frame_fraction': float(fraction),
+            'max_fraction': float(max_fraction),
+            'rejected': False,
+        }
+
+    if skip_rejection or not summary:
+        return summary
+
+    over_limit = [key for key, entry in summary.items() if entry['off_frame_fraction'] > float(max_fraction)]
+    if over_limit and len(over_limit) == len(summary):
+        keep = min(summary, key=lambda key: (summary[key]['off_frame_fraction'], key))
+        over_limit = [key for key in over_limit if key != keep]
+        summary[keep]['kept_as_last_comparison'] = True
+    for key in over_limit:
+        summary[key]['rejected'] = True
+    return summary
+
+
+def apply_comparison_star_off_frame_summary(psf_data, summary):
+    """Record the per-frame off-frame masks in psf_data so every downstream
+    quality mask excludes those frames; a rejected star has every frame
+    excluded, which removes it from the comparison pool."""
+    if not isinstance(psf_data, dict):
+        return
+    for key, entry in summary.items():
+        mask = np.asarray(entry['off_frame_mask'], dtype=bool).copy()
+        if entry.get('rejected'):
+            mask[:] = True
+        psf_data[comparison_star_off_frame_key(key)] = mask
+
+
+def format_comp_star_off_frame_text(entry):
+    return (
+        f"off the frame in {entry['off_frame_count']} of {entry['total_frame_count']} frame(s) "
+        f"({100.0 * entry['off_frame_fraction']:.1f}%; limit {100.0 * entry['max_fraction']:.1f}%)"
+    )
+
+
+def log_comparison_star_off_frame_summary(summary, labels=None):
+    labels = labels if isinstance(labels, dict) else {}
+    if summary and all(entry['off_frame_count'] == 0 for entry in summary.values()):
+        sample = next(iter(summary.values()))
+        log_info(
+            f"Comparison-star drift check: no comparison star left the frame in any of "
+            f"{sample['total_frame_count']} frame(s) (limit {100.0 * sample['max_fraction']:.1f}%)."
+        )
+        return
+    for key in summary:
+        entry = summary[key]
+        if entry['off_frame_count'] == 0:
+            continue
+        default_label = f"Comparison star #{key[4:]}" if key.startswith('comp') else key
+        label = labels.get(key) or default_label
+        if entry.get('rejected'):
+            log_info(
+                f"{label} rejected as a comparison star: {format_comp_star_off_frame_text(entry)}. "
+                "Its photometry will not be used as a reference.",
+                warn=True,
+            )
+        elif entry.get('kept_as_last_comparison'):
+            log_info(
+                f"{label} is {format_comp_star_off_frame_text(entry)} but is kept because every "
+                "comparison star exceeded the limit; those frames are excluded from its photometry.",
+                warn=True,
+            )
+        else:
+            log_info(
+                f"{label}: {format_comp_star_off_frame_text(entry)}; those frames are excluded "
+                "from its photometry."
+            )
+
+
+def comparison_star_out_of_frame_flags(plate_status, filenames, comp_keys):
+    """Per-comparison-star bool arrays of the PlateStatus out-of-frame flags,
+    in the order of the reduced filenames."""
+    status_by_filename = getattr(plate_status, 'statusByFilename', None)
+    if not isinstance(status_by_filename, dict):
+        return {}
+    filenames = [str(name) for name in filenames]
+    flags = {}
+    for key in comp_keys:
+        if not (key.startswith('comp') and key[4:].isdigit()):
+            continue
+        errorcode = f"outofframe_{key}"
+        flags[key] = np.array(
+            [bool(status_by_filename.get(name, {}).get(errorcode, False)) for name in filenames],
+            dtype=bool,
+        )
+    return flags
+
+
 def comparison_star_coverage_summary(comp_flux_map,
                                      min_fraction=COMPARISON_STAR_MIN_COVERAGE_FRACTION,
                                      min_points=COMPARISON_STAR_MIN_VALID_FRAMES,
@@ -36172,6 +36366,7 @@ def _main_impl():
                 # x-cent, y-cent, amplitude, sigma-x, sigma-y, rotation, offset
                 'target': np.zeros((len(inputfiles), 7)),  # PSF fit
             }
+            science_frame_shape = None
             psf_flux_data = {
                 'target': np.zeros((len(inputfiles), 7)),
             }
@@ -36795,6 +36990,8 @@ def _main_impl():
 
                 if i == 0 and multiprocess_alignment_results is None:
                     firstImage = np.copy(imageData)
+                if i == 0:
+                    science_frame_shape = tuple(int(axis) for axis in np.shape(imageData)[:2])
 
                 if multiprocess_alignment_results is not None:
                     if not multiprocess_alignment_results_applied:
@@ -37247,6 +37444,27 @@ def _main_impl():
                 f"{perf_counter() - initial_photometry_start:.2f}s."
             )
             plateStatus.logAggregatedWarningSummary()
+
+            # Comparison stars that drifted off the frame. VSX targets tracked
+            # through comp keys are measured, not used as references, so they
+            # are left out of the pool that can be rejected.
+            reference_comp_keys = [
+                comp_key for comp_key in comp_alignment_keys
+                if comp_key not in tracked_vsx_labels
+            ]
+            comp_off_frame_summary = comparison_star_off_frame_summary(
+                psf_data,
+                reference_comp_keys,
+                science_frame_shape,
+                fallback_sigma=sigma,
+                flagged_frame_map=comparison_star_out_of_frame_flags(
+                    plateStatus, inputfiles, reference_comp_keys,
+                ),
+                skip_rejection=use_exactly_the_comps_provided,
+            )
+            apply_comparison_star_off_frame_summary(psf_data, comp_off_frame_summary)
+            log_comparison_star_off_frame_summary(comp_off_frame_summary)
+
             timing_mode_label = 'Quick Look' if quick_look_mode else 'full reduction'
             log_transform_timing_stats(f'Transformation timing summary ({timing_mode_label})')
             log_photometry_timing_stats(f'Photometry timing summary ({timing_mode_label})')

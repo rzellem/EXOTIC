@@ -72,13 +72,14 @@ if not _module_available("ldtk.ldmodel"):
 if not _module_available("lmfit"):
     _install_stub_module("lmfit")
 
-_install_stub_module(
-    "exotic.api.elca",
-    lc_fitter=lambda *args, **kwargs: None,
-    binner=lambda *args, **kwargs: None,
-    transit=lambda *args, **kwargs: None,
-    get_phase=lambda *args, **kwargs: None,
-)
+if not _module_available("exotic.api.elca"):
+    _install_stub_module(
+        "exotic.api.elca",
+        lc_fitter=lambda *args, **kwargs: None,
+        binner=lambda *args, **kwargs: None,
+        transit=lambda *args, **kwargs: None,
+        get_phase=lambda *args, **kwargs: None,
+    )
 
 from exotic import exotic as exotic_module
 

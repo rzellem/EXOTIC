@@ -12,6 +12,8 @@ import pytest
 
 
 def load_elca_with_stubs(monkeypatch, tmp_path):
+    import exotic.api as exotic_api
+
     root = tmp_path / "stubdeps"
     package_dir = root / "pylightcurve"
     model_dir = package_dir / "models"
@@ -29,9 +31,13 @@ def load_elca_with_stubs(monkeypatch, tmp_path):
 
     monkeypatch.syspath_prepend(str(root))
 
+    # Track both import caches with monkeypatch so the real ELCA/PyLightCurve
+    # modules are restored after each test.  A raw sys.modules.pop() leaves the
+    # stubbed ELCA module behind and contaminates tests collected after this file.
+    monkeypatch.delattr(exotic_api, "elca", raising=False)
     for name in list(sys.modules):
         if name == "exotic.api.elca" or name.startswith("pylightcurve"):
-            sys.modules.pop(name, None)
+            monkeypatch.delitem(sys.modules, name, raising=False)
 
     fake_ultranest = types.ModuleType("ultranest")
     fake_ultranest.ReactiveNestedSampler = type("ReactiveNestedSampler", (), {})

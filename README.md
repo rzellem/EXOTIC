@@ -236,6 +236,23 @@ For fortuitous VSX variables found during a transit reduction, `"photometer_fort
 
 `use_nextastro_vsx_cache_first` defaults to `false`. When enabled, fortuitous-variable discovery queries `https://photometry.nextastro.org/vsx_query` first. EXOTIC falls back to AAVSO when the cache fails or returns no objects. Full-schema cache responses supply period and amplitude directly; legacy cache responses are enriched from AAVSO for optimal/normal classification.
 
+## Third-Party GUI Launchers
+
+### TransitLab
+[TransitLab](https://github.com/ArtTrail/TransitLab) is a cross-platform desktop GUI launcher and workflow assistant for EXOTIC, available for Windows, macOS (Apple Silicon), and Linux. It guides observers through every step of a reduction run: loading FITS frames, image analysis, target parameter lookup via the NASA Exoplanet Archive, running EXOTIC, and submitting results to AAVSO, all from a single tabbed interface.
+
+**Features include:**
+- Automatic plate solving (astrometry.net or ASTAP)
+- NASA Exoplanet Archive integration for automatic target parameter lookup
+- AAVSO comparison star selection
+- Transit geometry visualizer with real-time animated light curve preview
+- Session history browser
+- Automation mode for unattended reductions
+- Built-in Python & EXOTIC setup wizard (install, upgrade, uninstall without the command line)
+- AAVSO submission directly from the app
+
+[Download the latest release](https://github.com/ArtTrail/TransitLab/releases/latest) | [Source code](https://github.com/ArtTrail/TransitLab)
+
 ## Features and Pipeline Architecture
 
 - Automatic Plate Solution from http://nova.astrometry.net

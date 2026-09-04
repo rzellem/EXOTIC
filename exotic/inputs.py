@@ -35,6 +35,7 @@ log.addHandler(consoleHandler)
 
 PHOT_COMP_STAR_KEYS = ("ra", "dec", "x", "y")
 AAVSO_OBSDATE_HEADER_KEYS = ('OBSDATE',)
+ELEVATION_HEADER_KEYS = ('HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV')
 AAVSO_LOCATION_HEADER_KEYS = {
     'lat': ('OBSLAT', 'LATITUDE', 'OBS_LATITUDE', 'LAT'),
     'long': ('OBSLON', 'OBSLONG', 'LONGITUDE', 'OBS_LONGITUDE', 'LONG'),
@@ -1206,25 +1207,30 @@ def elevation(elev, lat, long, hdr=None, required=True):
             if is_blank_value(elev):
                 elev = None
             else:
-                elev = typecast_check(type_=float, val=elev)
-                if elev is False:
+                elev = coerce_finite_float(elev)
+                if elev is None:
                     raise ValueError
 
             if elev is None:
                 if hdr:
-                    elev = find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'])
-                    if not is_blank_value(elev):
-                        return float(elev)
+                    for key in ELEVATION_HEADER_KEYS:
+                        header_elevation = coerce_finite_float(find(hdr, [key]))
+                        if header_elevation is not None:
+                            return header_elevation
                 if not required:
                     return None
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
                 animate_toggle(True)
-                elev = open_elevation(lat, long)
-                animate_toggle()
-                if elev is False:
+                try:
+                    elev = open_elevation(lat, long)
+                finally:
+                    animate_toggle()
+                if elev is False or coerce_finite_float(elev) is None:
                     log_info("\nWarning: EXOTIC could not retrieve elevation.", warn=True)
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
+                else:
+                    elev = coerce_finite_float(elev)
             return elev
         except ValueError:
             log_info("Error: The entered elevation is incorrect.", error=True)

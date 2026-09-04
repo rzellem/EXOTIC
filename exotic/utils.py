@@ -8,9 +8,9 @@ from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
 try:
-    from api.plate_solution import is_false, result_if_max_retry_count
+    from api.plate_solution import is_false
 except ImportError:
-    from .api.plate_solution import is_false, result_if_max_retry_count
+    from .api.plate_solution import is_false
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ MINIMUM_MAGNITUDE_ERROR = 0.001
 AAVSO_OUTPUT_FOLDER_NAME = 'AAVSO_Files'
 BOOLEAN_CONFIG_TRUE_STRINGS = frozenset(('y', 'yes', 'true', '1', 'on'))
 BOOLEAN_CONFIG_FALSE_STRINGS = frozenset(('n', 'no', 'false', '0', 'off', ''))
+OPEN_ELEVATION_URL = 'https://api.open-elevation.com/api/v1/lookup'
+OPEN_ELEVATION_TIMEOUT = 30
 
 
 def coerce_boolean_config_value(value):
@@ -620,13 +622,31 @@ def find(hdr, ks, obs=None):
     return val
 
 
+def _return_false_after_retries(retry_state):
+    return False
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
        retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
-       retry_error_callback=result_if_max_retry_count)
+       retry_error_callback=_return_false_after_retries)
 def open_elevation(lat, long):
-    query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
     try:
-        r = requests.get(query).json()
-        return r['results'][0]['elevation']
-    except requests.exceptions.RequestException:
+        latitude = float(lat)
+        longitude = float(long)
+        if not isfinite(latitude) or not isfinite(longitude):
+            return False
+        if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0:
+            return False
+
+        response = requests.get(
+            OPEN_ELEVATION_URL,
+            params={'locations': f'{latitude},{longitude}'},
+            timeout=OPEN_ELEVATION_TIMEOUT,
+        )
+        response.raise_for_status()
+        result = response.json()['results'][0]['elevation']
+        result = float(result)
+        return result if isfinite(result) else False
+    except (requests.exceptions.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
+        log.debug("Open-Elevation lookup failed: %s", exc)
         return False

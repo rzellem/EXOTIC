@@ -572,6 +572,48 @@ class TestProcessLatLong:
         assert result is None
 
 
+class OpenElevationResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+@patch("exotic.utils.requests.get")
+def test_open_elevation_uses_encoded_parameters_timeout_and_numeric_result(mock_get):
+    mock_get.return_value = OpenElevationResponse({
+        "results": [{"latitude": 32.5, "longitude": 151.2, "elevation": 87.0}],
+    })
+
+    assert open_elevation("+32.5", "+151.2") == pytest.approx(87.0)
+    mock_get.assert_called_once_with(
+        OPEN_ELEVATION_URL,
+        params={"locations": "32.5,151.2"},
+        timeout=OPEN_ELEVATION_TIMEOUT,
+    )
+
+
+@patch("exotic.utils.requests.get")
+def test_open_elevation_treats_invalid_response_as_failed_lookup(mock_get):
+    mock_get.return_value = OpenElevationResponse({"results": []})
+
+    lookup_without_wait = open_elevation.retry_with(wait=lambda retry_state: 0)
+
+    assert lookup_without_wait(-33.86, 151.21) is False
+    assert mock_get.call_count == 3
+
+
+@patch("exotic.utils.requests.get")
+def test_open_elevation_treats_nonfinite_elevation_as_failed_lookup(mock_get):
+    mock_get.return_value = OpenElevationResponse({"results": [{"elevation": "nan"}]})
+
+    assert open_elevation.__wrapped__(-33.86, 151.21) is False
+
+
 class TestFind:
     """tests the find() function"""
 

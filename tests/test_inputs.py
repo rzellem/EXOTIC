@@ -23,6 +23,76 @@ def test_camera_keeps_dslr_as_dslr():
     assert camera("canon dslr") == "DSLR"
 
 
+def test_elevation_uses_explicit_inits_value_without_header_or_online_lookup(monkeypatch):
+    def fail_online_lookup(*args, **kwargs):
+        raise AssertionError("Open-Elevation must not be called for an explicit inits value")
+
+    monkeypatch.setattr(inputs_module, "open_elevation", fail_online_lookup)
+
+    assert inputs_module.elevation("275.5", -33.8, 151.2, hdr={"HEIGHT": 999}) == pytest.approx(275.5)
+
+
+@pytest.mark.parametrize(
+    "header_key",
+    ("HEIGHT", "ELEVATION", "ELE", "EL", "OBSGEO-H", "ALT-OBS", "SITEELEV"),
+)
+def test_elevation_uses_each_supported_fits_header_before_online_lookup(monkeypatch, header_key):
+    def fail_online_lookup(*args, **kwargs):
+        raise AssertionError("Open-Elevation must not be called when the FITS header has an elevation")
+
+    monkeypatch.setattr(inputs_module, "open_elevation", fail_online_lookup)
+
+    assert inputs_module.elevation("", -33.8, 151.2, hdr={header_key: "432.1"}) == pytest.approx(432.1)
+
+
+def test_elevation_calls_open_elevation_when_inits_and_fits_values_are_blank(monkeypatch):
+    calls = []
+    monkeypatch.setattr(inputs_module, "open_elevation", lambda lat, long: calls.append((lat, long)) or 81.0)
+    monkeypatch.setattr(inputs_module, "animate_toggle", lambda *args: None)
+
+    result = inputs_module.elevation("", -33.8, 151.2, hdr={"HEIGHT": "", "SITEELEV": "N/A"})
+
+    assert result == pytest.approx(81.0)
+    assert calls == [(-33.8, 151.2)]
+
+
+@pytest.mark.parametrize("invalid_inits_value", ("not-a-number", "nan", "inf"))
+def test_elevation_treats_invalid_inits_value_as_missing(monkeypatch, invalid_inits_value):
+    monkeypatch.setattr(inputs_module, "open_elevation", lambda lat, long: 81.0)
+    monkeypatch.setattr(inputs_module, "animate_toggle", lambda *args: None)
+
+    result = inputs_module.elevation(invalid_inits_value, -33.8, 151.2, hdr={})
+
+    assert result == pytest.approx(81.0)
+
+
+def test_elevation_prompts_when_open_elevation_exhausts_its_retries(monkeypatch):
+    prompts = []
+    monkeypatch.setattr(inputs_module, "open_elevation", lambda lat, long: None)
+    monkeypatch.setattr(inputs_module, "animate_toggle", lambda *args: None)
+    monkeypatch.setattr(
+        inputs_module,
+        "user_input",
+        lambda prompt, type_: prompts.append(prompt) or 123.0,
+    )
+
+    result = inputs_module.elevation("", -33.8, 151.2, hdr={})
+
+    assert result == pytest.approx(123.0)
+    assert prompts == ["Enter the elevation (in meters) of where you observed: "]
+
+
+def test_elevation_skips_invalid_header_alias_and_uses_later_valid_alias(monkeypatch):
+    def fail_online_lookup(*args, **kwargs):
+        raise AssertionError("Open-Elevation must not be called when another FITS alias has an elevation")
+
+    monkeypatch.setattr(inputs_module, "open_elevation", fail_online_lookup)
+
+    result = inputs_module.elevation("", -33.8, 151.2, hdr={"HEIGHT": "unknown", "OBSGEO-H": 612})
+
+    assert result == pytest.approx(612.0)
+
+
 def test_imaging_directory_ignores_canonical_calibration_masters(tmp_path):
     science_file = tmp_path / "science_001.fits"
     fits.writeto(science_file, np.ones((2, 2)), overwrite=True)

@@ -236,7 +236,7 @@ def convert_Mobs_to_utc(datestamp, latitude, longitude, height):
 def find (hdr, ks, obs):
   # Special stuff for MObs and Boyce-Astro Observatories
   boyce = {"FILTER": "ip", "LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405 }
-  mobs = {"FILTER": "V", "LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606 }
+  mobs = {"FILTER": "CV", "LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
 
   if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
     obs = "MObs"
@@ -311,6 +311,30 @@ def look_for_calibration(image_dir):
 # Writes a new inits file into the directory with the output plots.  This prompts
 # for needed information that it cannot find in the fits header of the first image.
 
+def pixel_binning_from_header(hdr, default="1x1"):
+  """Return the "NxM" binning string from the frame's header, else the default.
+
+  MicroObservatory frames are 2x2 binned and say so (XBINNING/YBINNING); other
+  observatories' frames carry their own values, so read them rather than
+  hardcoding one observatory's binning into the template.
+  """
+  for x_key, y_key in (("XBINNING", "YBINNING"), ("CCDXBIN", "CCDYBIN"), ("XBIN", "YBIN")):
+    x_bin = hdr.get(x_key)
+    if x_bin is None:
+      continue
+    y_bin = hdr.get(y_key, x_bin)
+    try:
+      x_bin, y_bin = int(float(x_bin)), int(float(y_bin))
+    except (TypeError, ValueError):
+      continue
+    if x_bin > 0 and y_bin > 0:
+      return f"{x_bin}x{y_bin}"
+  binning = hdr.get("BINNING")
+  if isinstance(binning, str) and re.fullmatch(r"\s*\d+\s*[xX]\s*\d+\s*", binning):
+    return binning.strip().lower()
+  return default
+
+
 def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_coords, comp_coords, obs, aavso_obs_code, sec_obs_code, sample_data):
   inits_file_path = output_dir+"inits.json"
   hdul = fits.open(first_image)
@@ -342,6 +366,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
   longitude = find(hdr,['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'],obs)
   latitude = find(hdr,['LATITUDE', 'LAT', 'SITELAT'],obs)
   height = float(find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'], obs))
+  pixel_binning = pixel_binning_from_header(hdr)
   obs_notes = "N/A"
 
   mobs_data = False
@@ -382,7 +407,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "Obs. Longitude": "%s",
             "Obs. Elevation (meters)": %d,
             "Camera Type (CCD or DSLR)": "CCD",
-            "Pixel Binning": "1x1",
+            "Pixel Binning": "%s",
             "Filter Name (aavso.org/filters)": "%s",
             "Observing Notes": "%s",
 
@@ -423,7 +448,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
     }
 }
 """ % (planetary_params, image_dir, output_dir, flats_dir, darks_dir, biases_dir, 
-       aavso_obs_code, sec_obs_code, obs_date, latitude, longitude, height, filter, 
+       aavso_obs_code, sec_obs_code, obs_date, latitude, longitude, height, pixel_binning, filter, 
        obs_notes, targ_coords, comp_coords, min, max))
 
   display(HTML('<p class="output"><b>Initialization File Created.</b></p>'))

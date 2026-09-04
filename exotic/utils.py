@@ -595,7 +595,9 @@ def find(hdr, ks, obs=None):
     """
     # Special stuff for MObs and Boyce-Astro Observatories
     boyce = {"LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405}
-    mobs = {"LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606}
+    # MicroObservatory telescopes sit at the Whipple Observatory base camp
+    # (Amado, AZ), not on the Mount Hopkins summit (2606 m). See PR #1382.
+    mobs = {"LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
 
     if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
         obs = "MObs"

@@ -625,21 +625,21 @@ class TestFind:
 
         # these search keys are copied from the implementation code
         search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
-        whipple_observatory_longitude = "-110.73"
+        whipple_observatory_longitude = "-110.951376"
         result = find(hdr, search_keys)
 
         assert result == whipple_observatory_longitude
 
         # these search keys are copied from the implementation code
         search_keys = ['LATITUDE', 'LAT', 'SITELAT']
-        whipple_observatory_latitude = "+37.04"
+        whipple_observatory_latitude = "+31.675467"
         result = find(hdr, search_keys)
 
         assert result == whipple_observatory_latitude
 
         # these search keys are copied from the implementation code
         search_keys = ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV']
-        whipple_observatory_height = 2606
+        whipple_observatory_height = 1268
         result = find(hdr, search_keys)
 
         assert result == whipple_observatory_height
@@ -671,12 +671,12 @@ class TestFind:
         search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
         result = find(hdr, search_keys, obs="MObs")
 
-        assert result == "-110.73"  # this value is hard coded in the function
+        assert result == "-110.951376"  # this value is hard coded in the function
 
         search_keys = ['LATITUDE', 'LAT', 'SITELAT']
         result = find(hdr, search_keys, obs="MObs")
 
-        assert result == "+37.04"  # this value is hard coded in the function
+        assert result == "+31.675467"  # this value is hard coded in the function
 
     @patch("exotic.utils.process_lat_long")
     def test_generic_hdr(self, mock_pll):
@@ -736,3 +736,22 @@ class TestFind:
         mock_get_val.assert_called_once()
         assert result == get_val_returns
         assert type(result) == int
+
+
+def test_find_uses_corrected_microobservatory_site_for_whipple_headers():
+    """The command-line path: a MicroObservatory header (OBSERVAT = Whipple
+    Observatory) must resolve to the base-camp site, not the old summit
+    constants that were ~600 km off (PR #1382 fixed the Colab copy only)."""
+    from astropy.io import fits
+
+    from exotic.utils import find
+
+    hdr = fits.Header()
+    hdr["OBSERVAT"] = "Whipple Observatory"
+    hdr["LATITUDE"] = 31.68
+    hdr["LONGITUD"] = -110.88
+    hdr["HEIGHT"] = 1268.0
+
+    assert find(hdr, ["LATITUDE", "LAT", "SITELAT"]) == "+31.675467"
+    assert find(hdr, ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]) == "-110.951376"
+    assert find(hdr, ["HEIGHT", "ELEVATION", "ELE", "EL", "OBSGEO-H", "ALT-OBS", "SITEELEV"]) == 1268

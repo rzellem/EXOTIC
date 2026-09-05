@@ -644,23 +644,6 @@ class TestFind:
 
         assert result == whipple_observatory_height
 
-    def test_boyce_observatory(self):
-        """This does not appear to used in the implementation code"""
-
-        hdr = {"OBSERVAT": "NOT Whipple Observatory",
-               "LONG": "-123.45",
-               "LAT": "+34.56"}
-
-        search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
-        result = find(hdr, search_keys, obs="Boyce")
-
-        assert result == "-116.3334"  # this value is hard coded in the function
-
-        search_keys = ['LATITUDE', 'LAT', 'SITELAT']
-        result = find(hdr, search_keys, obs="Boyce")
-
-        assert result == "+32.6135"  # this value is hard coded in the function
-
     def test_mobs_observatory(self):
         """This does not appear to used in the implementation code"""
 

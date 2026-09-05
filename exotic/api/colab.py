@@ -234,20 +234,12 @@ def convert_Mobs_to_utc(datestamp, latitude, longitude, height):
 #########################################################
 
 def find (hdr, ks, obs):
-  # Special stuff for MObs and Boyce-Astro Observatories
-  boyce = {"FILTER": "ip", "LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405 }
+  # Special stuff for MicroObservatory (MObs)
   mobs = {"FILTER": "CV", "LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
 
   if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
     obs = "MObs"
 
-#  if "USERID" in hdr.keys() and hdr["USERID"] == 'PatBoyce':
-#    obs = "Boyce"
-
-  if obs == "Boyce":
-    boyce_val = get_val(boyce, ks)
-    if (boyce_val != ""):
-      return(boyce_val)
   if obs == "MObs":
     mobs_val = get_val(mobs, ks)
     if (mobs_val != ""):

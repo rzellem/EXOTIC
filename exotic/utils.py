@@ -584,8 +584,9 @@ def find(hdr, ks, obs=None):
     ks : list[str]
         a list of known values that astronomers use for a piece of information.
     obs : string
-        A specific observatory. Should be one of 'Boyce' or 'MObs' (no quotes).
-        Other values are ignored.
+        A specific observatory. 'MObs' selects the MicroObservatory site
+        constants; it is also set automatically when the header's OBSERVAT is
+        'Whipple Observatory'. Other values are ignored.
 
     Returns
     -------
@@ -593,8 +594,7 @@ def find(hdr, ks, obs=None):
         Most often returns a string but can return anything. Designed to return
         the latitude or longitude of an observation as a string.
     """
-    # Special stuff for MObs and Boyce-Astro Observatories
-    boyce = {"LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405}
+    # Special stuff for MicroObservatory (MObs)
     # MicroObservatory telescopes sit at the Whipple Observatory base camp
     # (Amado, AZ), not on the Mount Hopkins summit (2606 m). See PR #1382.
     mobs = {"LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
@@ -602,13 +602,6 @@ def find(hdr, ks, obs=None):
     if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
         obs = "MObs"
 
-    #  if "USERID" in hdr.keys() and hdr["USERID"] == 'PatBoyce':
-    #    obs = "Boyce"
-
-    if obs == "Boyce":
-        boyce_val = get_val(boyce, ks)
-        if boyce_val:
-            return boyce_val
     if obs == "MObs":
         mobs_val = get_val(mobs, ks)
         if mobs_val:

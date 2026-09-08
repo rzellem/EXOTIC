@@ -695,29 +695,28 @@ def time_bin(time, flux, dt=1. / (60 * 24)):
 
 
 def _pointwise_plot_uncertainties(values, errors, residuals=None, reference=None):
-    """Return per-point flux uncertainties, with a scatter fallback."""
+    """Require a finite, positive uncertainty for every plotted measurement.
+
+    The legacy residual/reference arguments are accepted for compatibility only;
+    residual scatter must never substitute for a measurement uncertainty.
+    """
     values = np.asarray(values, dtype=float).reshape(-1)
-    errors = np.asarray(errors, dtype=float).reshape(-1)
-    if reference is None:
-        reference = values
-    reference = np.asarray(reference, dtype=float).reshape(-1)
-
-    fallback = np.nan
-    if residuals is not None:
-        residuals = np.asarray(residuals, dtype=float).reshape(-1)
-        finite_residuals = residuals[np.isfinite(residuals)]
-        finite_reference = reference[np.isfinite(reference)]
-        if finite_residuals.size and finite_reference.size:
-            reference_median = float(np.nanmedian(finite_reference))
-            if np.isfinite(reference_median) and reference_median != 0:
-                fallback = float(np.nanstd(finite_residuals) / abs(reference_median))
-    if not np.isfinite(fallback) or fallback < 0:
-        fallback = 0.0
-
+    try:
+        errors = np.asarray(errors, dtype=float).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Cannot plot light curve: measurement uncertainties must be numeric.") from exc
     if errors.shape != values.shape:
-        return np.full(values.shape, fallback, dtype=float)
-    valid = np.isfinite(errors) & (errors >= 0)
-    return np.where(valid, np.abs(errors), fallback)
+        raise ValueError(
+            f"Cannot plot light curve: {values.size} measurements but {errors.size} uncertainties; "
+            "one finite, positive uncertainty is required per measurement."
+        )
+    invalid = ~np.isfinite(errors) | (errors <= 0)
+    if np.any(invalid):
+        raise ValueError(
+            f"Cannot plot light curve: {np.count_nonzero(invalid)} measurement uncertainties "
+            "are missing, non-finite, or non-positive; no scatter fallback is allowed."
+        )
+    return errors
 
 
 # Function that bins an array

@@ -12985,20 +12985,11 @@ def prepare_final_fit_lightcurve_series(
             normalized_unc *= observed_scatter / predicted_unc
 
     valid_normalized_unc = np.isfinite(normalized_unc) & (normalized_unc > 0)
-    if not np.any(valid_normalized_unc):
-        fallback_unc = baseline_scatter / baseline_level
-        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
-            fallback_unc = np.nanstd(normalized_flux[baseline_mask])
-        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
-            fallback_unc = np.finfo(float).eps
-        normalized_unc = np.full(times.shape, fallback_unc, dtype=float)
-    else:
-        fallback_unc = np.nanmedian(normalized_unc[valid_normalized_unc])
-        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
-            fallback_unc = np.nanstd(normalized_flux[baseline_mask])
-        if not np.isfinite(fallback_unc) or fallback_unc <= 0:
-            fallback_unc = np.finfo(float).eps
-        normalized_unc[~valid_normalized_unc] = fallback_unc
+    if not np.all(valid_normalized_unc):
+        raise ValueError(
+            "Cannot prepare final-fit light curve: every measurement requires a finite, "
+            "positive uncertainty; missing errors cannot be replaced by scatter or a median."
+        )
 
     if used_two_sided_oot:
         note = (

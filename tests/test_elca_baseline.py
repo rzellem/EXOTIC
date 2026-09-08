@@ -641,6 +641,18 @@ def test_plot_bestfit_can_draw_transit_model_uncertainty_band(monkeypatch, tmp_p
     plt.close(fig)
 
 
+@pytest.mark.parametrize("errors", [None, [0.01], [0.01, np.nan, 0.02],
+                                    [0.01, np.inf, 0.02], [0.01, 0, 0.02],
+                                    [0.01, -0.02, 0.02], [np.nan] * 3])
+def test_plot_uncertainties_never_substitute_residual_scatter(monkeypatch, tmp_path, errors):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    with pytest.raises(ValueError, match="Cannot plot light curve"):
+        elca._pointwise_plot_uncertainties(
+            [1.0, 0.99, 1.01], errors,
+            residuals=[0.001, -0.002, 0.003], reference=[1.0] * 3,
+        )
+
+
 def test_plot_bestfit_draws_unbinned_points_black_with_grey_errorbars(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()

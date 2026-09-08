@@ -446,6 +446,21 @@ def test_update_coordinates_accepts_numeric_strings():
     assert isinstance(updated_dec, float)
 
 
+@pytest.mark.parametrize("errors", [None, [0.01], [np.nan] * 9,
+                                    [0.01] * 8 + [np.nan],
+                                    [0.01] * 8 + [0.0],
+                                    [0.01] * 8 + [-0.01]])
+def test_prepare_final_fit_requires_measurement_uncertainties(errors):
+    flux = np.array([1.0, 1.001, 1.0, 0.99, 0.98, 0.99, 1.0, 0.999, 1.0])
+    fit = types.SimpleNamespace(
+        time=np.linspace(-0.04, 0.04, 9),
+        data=flux, detrended=flux, dataerr=errors, detrendederr=errors,
+        airmass_model=np.ones(9), transit=flux, parameters={"tmid": 0.0},
+    )
+    with pytest.raises(ValueError, match="every measurement requires"):
+        prepare_final_fit_lightcurve_series(fit)
+
+
 def test_prepare_final_fit_lightcurve_series_uses_two_sided_modeled_oot():
     times = np.linspace(-0.04, 0.04, 9)
     detrended = np.array([1.0, 1.0, 1.0, 0.99, 0.98, 0.99, 1.0, 1.0, 1.0], dtype=float)

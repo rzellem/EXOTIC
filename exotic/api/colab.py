@@ -53,27 +53,21 @@
 #########################################################
 from astropy.io import fits
 from astropy.time import Time
-from barycorrpy import utc_tdb
 # import bokeh.io
 # from bokeh.io import output_notebook
-from bokeh.palettes import Viridis256
-from bokeh.plotting import figure, output_file, show
-from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LinearColorMapper, LogColorMapper, \
+from bokeh.plotting import figure, show
+from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LogColorMapper, \
   LogTicker, PanTool, ResetTool, WheelZoomTool
 # import copy
-from io import BytesIO
 from IPython.display import display, HTML
 # from IPython.display import Image
 # from ipywidgets import widgets, HBox
 import json
 import numpy as np
 import os
-from pprint import pprint
 import re
-from scipy.ndimage import label
-from skimage.transform import rescale, resize, downscale_local_mean
+from skimage.transform import downscale_local_mean
 # import subprocess
-import time
 
 
 def display_image(filename):
@@ -188,20 +182,42 @@ def get_val(hdr, ks):
 #########################################################
 
 def process_lat_long(val, key):
-  m = re.search(r"\'?([+-]?\d+)[\s\:](\d+)[\s\:](\d+\.?\d*)", val)
-  if m:
-    deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
-    if deg < 0:
-      v = deg - (((60*min) + sec)/3600)
-    else:
-      v = deg + (((60*min) + sec)/3600)
-    return(add_sign(v))
-  m = re.search("^\'?([+-]?\d+\.\d+)", val)
-  if m:
-    v = float(m.group(1))
-    return(add_sign(v))
-  else:
+  text = str(val).strip()
+  coordinate_type = str(key).strip().lower()
+  valid_hemispheres = {
+      "latitude": {"N", "S"},
+      "longitude": {"E", "W"},
+  }.get(coordinate_type)
+  hemisphere = None
+  trailing_hemisphere = re.search(r"([NSEW])\s*$", text)
+  leading_hemisphere = re.match(r"\s*([NSEW])(?=\s|[+-]?\d)", text)
+  hemisphere_match = trailing_hemisphere or leading_hemisphere
+  if hemisphere_match:
+    hemisphere = hemisphere_match.group(1)
+    if valid_hemispheres is not None and hemisphere not in valid_hemispheres:
+      print(f"Cannot match value {val}, which is meant to be {key}.")
+      return None
+    start, end = hemisphere_match.span(1)
+    text = f"{text[:start]}{text[end:]}".strip()
+
+  number_tokens = re.findall(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", text)
+  if not 1 <= len(number_tokens) <= 3:
     print(f"Cannot match value {val}, which is meant to be {key}.")
+    return None
+  if (len(number_tokens) == 1 and hemisphere is None and
+      "." not in number_tokens[0] and number_tokens[0][0] not in "+-"):
+    print(f"Cannot match value {val}, which is meant to be {key}.")
+    return None
+
+  degrees = float(number_tokens[0])
+  minutes = abs(float(number_tokens[1])) if len(number_tokens) >= 2 else 0.0
+  seconds = abs(float(number_tokens[2])) if len(number_tokens) >= 3 else 0.0
+  magnitude = abs(degrees) + minutes / 60.0 + seconds / 3600.0
+  if hemisphere:
+    sign = -1.0 if hemisphere in {"S", "W"} else 1.0
+  else:
+    sign = -1.0 if number_tokens[0].startswith("-") else 1.0
+  return(add_sign(sign * magnitude))
 
 #########################################################
 
@@ -218,20 +234,12 @@ def convert_Mobs_to_utc(datestamp, latitude, longitude, height):
 #########################################################
 
 def find (hdr, ks, obs):
-  # Special stuff for MObs and Boyce-Astro Observatories
-  boyce = {"FILTER": "ip", "LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405 }
-  mobs = {"FILTER": "V", "LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606 }
+  # Special stuff for MicroObservatory (MObs)
+  mobs = {"FILTER": "CV", "LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
 
   if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
     obs = "MObs"
 
-#  if "USERID" in hdr.keys() and hdr["USERID"] == 'PatBoyce':
-#    obs = "Boyce"
-
-  if obs == "Boyce":
-    boyce_val = get_val(boyce, ks)
-    if (boyce_val != ""):
-      return(boyce_val)
   if obs == "MObs":
     mobs_val = get_val(mobs, ks)
     if (mobs_val != ""):
@@ -295,6 +303,30 @@ def look_for_calibration(image_dir):
 # Writes a new inits file into the directory with the output plots.  This prompts
 # for needed information that it cannot find in the fits header of the first image.
 
+def pixel_binning_from_header(hdr, default="1x1"):
+  """Return the "NxM" binning string from the frame's header, else the default.
+
+  MicroObservatory frames are 2x2 binned and say so (XBINNING/YBINNING); other
+  observatories' frames carry their own values, so read them rather than
+  hardcoding one observatory's binning into the template.
+  """
+  for x_key, y_key in (("XBINNING", "YBINNING"), ("CCDXBIN", "CCDYBIN"), ("XBIN", "YBIN")):
+    x_bin = hdr.get(x_key)
+    if x_bin is None:
+      continue
+    y_bin = hdr.get(y_key, x_bin)
+    try:
+      x_bin, y_bin = int(float(x_bin)), int(float(y_bin))
+    except (TypeError, ValueError):
+      continue
+    if x_bin > 0 and y_bin > 0:
+      return f"{x_bin}x{y_bin}"
+  binning = hdr.get("BINNING")
+  if isinstance(binning, str) and re.fullmatch(r"\s*\d+\s*[xX]\s*\d+\s*", binning):
+    return binning.strip().lower()
+  return default
+
+
 def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_coords, comp_coords, obs, aavso_obs_code, sec_obs_code, sample_data):
   inits_file_path = output_dir+"inits.json"
   hdul = fits.open(first_image)
@@ -326,6 +358,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
   longitude = find(hdr,['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'],obs)
   latitude = find(hdr,['LATITUDE', 'LAT', 'SITELAT'],obs)
   height = float(find(hdr, ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV'], obs))
+  pixel_binning = pixel_binning_from_header(hdr)
   obs_notes = "N/A"
 
   mobs_data = False
@@ -359,21 +392,23 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
 
             "AAVSO Observer Code (N/A if none)": "%s",
             "Secondary Observer Codes (N/A if none)": "%s",
+            "Observatory Full Title": "",
 
             "Observation date": "%s",
             "Obs. Latitude": "%s",
             "Obs. Longitude": "%s",
             "Obs. Elevation (meters)": %d,
             "Camera Type (CCD or DSLR)": "CCD",
-            "Pixel Binning": "1x1",
+            "Pixel Binning": "%s",
             "Filter Name (aavso.org/filters)": "%s",
             "Observing Notes": "%s",
 
             "Plate Solution? (y/n)": "y",
-            "Add Comparison Stars from AAVSO? (y/n)": "y",
+            "Add Comparison Stars from AAVSO? (y/n)": "n",
 
             "Target Star X & Y Pixel": %s,
             "Comparison Star(s) X & Y Pixel": %s,
+            "Comparison Star(s) RA & Dec": null,
             
             "Demosaic Format": null,
             "Demosaic Output": null
@@ -381,11 +416,31 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
     "optional_info": {
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
             "Filter Minimum Wavelength (nm)": %s,
-            "Filter Maximum Wavelength (nm)": %s
+            "Filter Maximum Wavelength (nm)": %s,
+            "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+            "allow_pixel_alignment_fallback": true,
+            "bad_wcs_threshold_percent": 3.0,
+            "detrend_on_outoftransit_baseline": true,
+            "restrict_baseline_to_an_hour": true,
+            "use_eebls_to_initialize_tmid_and_bounds": "y",
+            "pick_comparison_by_eebls_snr": "y",
+            "use_impactparameter_rather_than_inclination_to_fit": "y",
+            "maximum_number_of_ensemble_comparisons_for_transit": 5,
+            "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
+            "require_apparent_magnitudes": true,
+            "use_exactly_the_comps_provided": false,
+            "use_adaptive_apertures": false,
+            "gain_electrons_per_adu": null,
+            "read_noise_electrons": null,
+            "dark_current_electrons_per_second_per_pixel": null,
+            "flat_field_fractional_error": null,
+            "telescope_aperture_m": null,
+            "scintillation_coefficient": null,
+            "require_comp_star": "y"
     }
 }
 """ % (planetary_params, image_dir, output_dir, flats_dir, darks_dir, biases_dir, 
-       aavso_obs_code, sec_obs_code, obs_date, latitude, longitude, height, filter, 
+       aavso_obs_code, sec_obs_code, obs_date, latitude, longitude, height, pixel_binning, filter, 
        obs_notes, targ_coords, comp_coords, min, max))
 
   display(HTML('<p class="output"><b>Initialization File Created.</b></p>'))

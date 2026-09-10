@@ -27,7 +27,13 @@ import lightkurve as lk
 from wotan import flatten
 from exotic.api.elca import transit, lc_fitter
 from exotic.api.output_aavso import OutputFiles
+from exotic.utils import safe_output_filename
 from transitleastsquares import transitleastsquares
+
+
+def output_file_path(output_dir, prefix, *parts, extension):
+    return os.path.join(output_dir, safe_output_filename(prefix, *parts, extension=extension))
+
 
 def tap_query(base_url, query, dataframe=True):
     # Table Access Protocol (TAP) query
@@ -222,7 +228,7 @@ if __name__ == "__main__":
 
         # aperture plot
         tpf.plot(aperture_mask=aper_final)
-        plt.savefig(os.path.join(planetdir, planetname + f"_sector_{sector}_aperture.png"))
+        plt.savefig(output_file_path(planetdir, planetname, f"sector_{sector}", "aperture", extension="png"))
         plt.close()
 
         # remove first ~30 min of data after any big gaps
@@ -285,7 +291,7 @@ if __name__ == "__main__":
         ax.set_xlabel("Time [TBJD]")
         ax.set_ylim([np.percentile(flux, 0.1), np.percentile(flux, 99.9)])
         plt.tight_layout()
-        plt.savefig(os.path.join(planetdir, planetname + f"_sector_{sector}_trend.png"))
+        plt.savefig(output_file_path(planetdir, planetname, f"sector_{sector}", "trend", extension="png"))
         plt.close()
 
     # combine all sectors
@@ -305,7 +311,7 @@ if __name__ == "__main__":
 
     # create dataframe for entire light curve
     df = pd.DataFrame({'time': time, 'flux': flux * trend, 'flux_err': flux_err * trend, 'sector': alls})
-    df.to_csv(os.path.join(planetdir, planetname + "_lightcurve.csv"), index=False)
+    df.to_csv(output_file_path(planetdir, planetname, "lightcurve", extension="csv"), index=False)
 
     # fit transit for each epoch
     period = prior['pl_orbper']
@@ -391,11 +397,11 @@ if __name__ == "__main__":
     # create plots
     fig, ax = myfit.plot_bestfit(title=f"{prior['pl_name']} Global Fit")
     ax[0].set_ylim([np.percentile(flux, 1) * 0.99, np.percentile(flux, 99) * 1.01])
-    plt.savefig(os.path.join(planetdir, planetname + "_global_fit.png"))
+    plt.savefig(output_file_path(planetdir, planetname, "global_fit", extension="png"))
     plt.close()
 
     myfit.plot_triangle()
-    plt.savefig(os.path.join(planetdir, planetname + "_global_triangle.png"))
+    plt.savefig(output_file_path(planetdir, planetname, "global_triangle", extension="png"))
     plt.close()
 
     # update priors from best fit
@@ -412,7 +418,7 @@ if __name__ == "__main__":
         prior['pl_orbinclerr2'] = -myfit.errors['inc']
 
     # save prior to disk
-    with open(os.path.join(planetdir, planetname + "_prior.json"), 'w', encoding='utf8') as json_file:
+    with open(output_file_path(planetdir, planetname, "prior", extension="json"), 'w', encoding='utf8') as json_file:
         json.dump(prior, json_file, indent=4)
 
     # save results to state vector
@@ -444,7 +450,7 @@ if __name__ == "__main__":
         plt.xlabel('Period (days)')
         plt.plot(results.periods, results.power, color='black', lw=0.5)
         plt.xlim(0, max(results.periods))
-        plt.savefig(os.path.join(planetdir, planetname + "_periodogram.png"))
+        plt.savefig(output_file_path(planetdir, planetname, "periodogram", extension="png"))
         plt.close()
 
     # save global fit data if above certain SNR
@@ -455,7 +461,7 @@ if __name__ == "__main__":
     if snr < 1:
         with open("notes.txt", 'w') as f:
             f.write(f"Skipping individual light curve fits b.c SNR = {snr:.2f}")
-        pickle.dump(sv, open(os.path.join(planetdir, planetname + "_data.pkl"), "wb"))
+        pickle.dump(sv, open(output_file_path(planetdir, planetname, "data", extension="pkl"), "wb"))
         raise(Exception(f"Skipping individual light curve fits b.c SNR = {snr:.2f}"))
 
     period = myfit.parameters['per']
@@ -536,15 +542,15 @@ if __name__ == "__main__":
         tmidstr = str(np.round(myfit.parameters['tmid'], 2)).replace('.', '_')
 
         fig, ax = myfit.plot_bestfit(title=f"{prior['pl_name']} - Sector {lcdata['sector']}", bin_dt=0.5 / 24.)
-        plt.savefig(os.path.join(planetdir, f"{tmidstr}_" + planetname + "_lightcurve.png"))
+        plt.savefig(output_file_path(planetdir, tmidstr, planetname, "lightcurve", extension="png"))
         plt.close()
 
         fig = myfit.plot_triangle()
-        plt.savefig(os.path.join(planetdir, f"{tmidstr}_" + planetname + "_posterior.png"))
+        plt.savefig(output_file_path(planetdir, tmidstr, planetname, "posterior", extension="png"))
         plt.close()
 
         csv_lk = OutputFiles(myfit, prior, infoDict, planetdir)
         csv_lk.aavso_csv(airmass, u0, u1, u2, u3, tmidstr)
         csv_lk.aavso(airmass, u0, u1, u2, u3, tmidstr)
 
-    pickle.dump(sv, open(os.path.join(planetdir, planetname + "_data.pkl"), "wb"))
+    pickle.dump(sv, open(output_file_path(planetdir, planetname, "data", extension="pkl"), "wb"))

@@ -1,6 +1,70 @@
 from exotic.utils import *
 from unittest.mock import patch
 
+import pytest
+
+
+def test_coerce_boolean_config_value_accepts_all_supported_forms():
+    for value in (True, 1, "1", "y", "Y", "yes", "TRUE", "on"):
+        assert coerce_boolean_config_value(value) is True
+
+    for value in (False, 0, "0", "n", "N", "no", "FALSE", "off"):
+        assert coerce_boolean_config_value(value) is False
+
+
+def test_coerce_boolean_config_value_rejects_non_boolean_values():
+    for value in (None, 2, -1, "sometimes", [], {}):
+        assert coerce_boolean_config_value(value) is None
+
+
+def test_filename_date_token_uses_date_only_for_iso_timestamp():
+    assert filename_date_token("2026-05-06T19:51:13.964-0700") == "2026-05-06"
+    assert filename_date_token("20260506T195113") == "2026-05-06"
+    assert filename_date_token("2026/05/06 19:51:13") == "2026-05-06"
+
+
+def test_safe_output_filename_sanitizes_filename_chars():
+    filename = safe_output_filename(
+        "BestFit",
+        "XO-1/b ",
+        filename_date_token("2026-05-06T19:51:13.964-0700"),
+        extension=" png",
+    )
+
+    assert filename == "BestFit_XO-1-b_2026-05-06.png"
+
+
+def test_safe_output_filename_removes_spaces_from_planet_names():
+    filename = safe_output_filename(
+        "FinalLightCurve",
+        "Kepler-12 b",
+        "03-JUN-2026",
+        extension="png",
+    )
+
+    assert filename == "FinalLightCurve_Kepler-12b_03-JUN-2026.png"
+    assert " " not in filename
+
+
+@pytest.mark.parametrize(
+    ("planet_name", "expected"),
+    (
+        ("TOI-4010b", "TOI-4010 b"),
+        ("Kepler-11c", "Kepler-11 c"),
+        ("HD 41004Ag", "HD 41004A g"),
+        ("TOI-4010 b", "TOI-4010 b"),
+        ("Candidate", "Candidate"),
+    ),
+)
+def test_format_aavso_exoplanet_name_separates_planet_suffix(planet_name, expected):
+    assert format_aavso_exoplanet_name(planet_name) == expected
+
+
+def test_sanitize_filename_component_cleans_fallback():
+    filename = sanitize_filename_component("   ", fallback="bad fallback")
+
+    assert filename == "badfallback"
+
 
 class TestUserInput:
     """tests the `user_input()` function"""
@@ -346,6 +410,23 @@ class TestRoundToTwo:
         assert 0.0002 == result
 
 
+class TestFormatValueAndUncertainty:
+    def test_preserves_two_significant_figures_and_matches_value_precision(self):
+        assert format_value_and_uncertainty(0.073, 0.01) == ("0.073", "0.010")
+        assert format_value_and_uncertainty(1.0, 0.00023) == ("1.00000", "0.00023")
+        assert format_value_and_uncertainty(0.0, 0.0031) == ("0.0000", "0.0031")
+
+    def test_formats_uncertainties_above_one_to_two_significant_figures(self):
+        assert format_value_and_uncertainty(89.3511, 2.16) == ("89.4", "2.2")
+        assert format_value_and_uncertainty(1234, 100) == ("1230", "1.0e+02")
+
+    def test_recomputes_precision_when_rounding_crosses_a_decade(self):
+        assert format_value_and_uncertainty(0.0732, 0.00999) == ("0.073", "0.010")
+
+    def test_full_report_text_uses_the_same_precision(self):
+        assert format_value_with_uncertainty(12.0, 0.4) == "12.00 +/- 0.40"
+
+
 class TestGetVal:
     """tests the get_val() function
 
@@ -443,6 +524,23 @@ class TestProcessLatLong:
         assert self._EXPECTED_LONGITUDE_RESULT == process_lat_long("+152:30:36", "longitude")
         assert self._EXPECTED_LATITUDE_RESULT == process_lat_long("+37:2:24", "latitude")
 
+    @pytest.mark.parametrize(
+        ("value", "coordinate_type", "expected"),
+        (
+            ("28 17 58.8 N", "latitude", 28.2996666667),
+            ("28 17 58.8 S", "latitude", -28.2996666667),
+            ("16 30 39.7 E", "longitude", 16.5110277778),
+            ("16 30 39.7 W", "longitude", -16.5110277778),
+            ("-16 30 39.7 W", "longitude", -16.5110277778),
+            ("S28:17:58.8", "latitude", -28.2996666667),
+        ),
+    )
+    def test_process_lat_long_hemisphere_inputs(self, value, coordinate_type, expected):
+        assert float(process_lat_long(value, coordinate_type)) == pytest.approx(expected)
+
+    def test_process_lat_long_rejects_wrong_hemisphere_for_axis(self):
+        assert process_lat_long("28 17 58.8 W", "latitude") is None
+
     @patch("builtins.print")
     def test_bad_inputs(self, mock_print):
         result = process_lat_long("foo", "longitude")
@@ -474,6 +572,48 @@ class TestProcessLatLong:
         assert result is None
 
 
+class OpenElevationResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return self.payload
+
+
+@patch("exotic.utils.requests.get")
+def test_open_elevation_uses_encoded_parameters_timeout_and_numeric_result(mock_get):
+    mock_get.return_value = OpenElevationResponse({
+        "results": [{"latitude": 32.5, "longitude": 151.2, "elevation": 87.0}],
+    })
+
+    assert open_elevation("+32.5", "+151.2") == pytest.approx(87.0)
+    mock_get.assert_called_once_with(
+        OPEN_ELEVATION_URL,
+        params={"locations": "32.5,151.2"},
+        timeout=OPEN_ELEVATION_TIMEOUT,
+    )
+
+
+@patch("exotic.utils.requests.get")
+def test_open_elevation_treats_invalid_response_as_failed_lookup(mock_get):
+    mock_get.return_value = OpenElevationResponse({"results": []})
+
+    lookup_without_wait = open_elevation.retry_with(wait=lambda retry_state: 0)
+
+    assert lookup_without_wait(-33.86, 151.21) is False
+    assert mock_get.call_count == 3
+
+
+@patch("exotic.utils.requests.get")
+def test_open_elevation_treats_nonfinite_elevation_as_failed_lookup(mock_get):
+    mock_get.return_value = OpenElevationResponse({"results": [{"elevation": "nan"}]})
+
+    assert open_elevation.__wrapped__(-33.86, 151.21) is False
+
+
 class TestFind:
     """tests the find() function"""
 
@@ -485,41 +625,24 @@ class TestFind:
 
         # these search keys are copied from the implementation code
         search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
-        whipple_observatory_longitude = "-110.73"
+        whipple_observatory_longitude = "-110.951376"
         result = find(hdr, search_keys)
 
         assert result == whipple_observatory_longitude
 
         # these search keys are copied from the implementation code
         search_keys = ['LATITUDE', 'LAT', 'SITELAT']
-        whipple_observatory_latitude = "+37.04"
+        whipple_observatory_latitude = "+31.675467"
         result = find(hdr, search_keys)
 
         assert result == whipple_observatory_latitude
 
         # these search keys are copied from the implementation code
         search_keys = ['HEIGHT', 'ELEVATION', 'ELE', 'EL', 'OBSGEO-H', 'ALT-OBS', 'SITEELEV']
-        whipple_observatory_height = 2606
+        whipple_observatory_height = 1268
         result = find(hdr, search_keys)
 
         assert result == whipple_observatory_height
-
-    def test_boyce_observatory(self):
-        """This does not appear to used in the implementation code"""
-
-        hdr = {"OBSERVAT": "NOT Whipple Observatory",
-               "LONG": "-123.45",
-               "LAT": "+34.56"}
-
-        search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
-        result = find(hdr, search_keys, obs="Boyce")
-
-        assert result == "-116.3334"  # this value is hard coded in the function
-
-        search_keys = ['LATITUDE', 'LAT', 'SITELAT']
-        result = find(hdr, search_keys, obs="Boyce")
-
-        assert result == "+32.6135"  # this value is hard coded in the function
 
     def test_mobs_observatory(self):
         """This does not appear to used in the implementation code"""
@@ -531,12 +654,12 @@ class TestFind:
         search_keys = ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG']
         result = find(hdr, search_keys, obs="MObs")
 
-        assert result == "-110.73"  # this value is hard coded in the function
+        assert result == "-110.951376"  # this value is hard coded in the function
 
         search_keys = ['LATITUDE', 'LAT', 'SITELAT']
         result = find(hdr, search_keys, obs="MObs")
 
-        assert result == "+37.04"  # this value is hard coded in the function
+        assert result == "+31.675467"  # this value is hard coded in the function
 
     @patch("exotic.utils.process_lat_long")
     def test_generic_hdr(self, mock_pll):
@@ -567,6 +690,18 @@ class TestFind:
         assert result == hdr["LAT"]
         # NOTE: actual return value is "+34.560000" but I mocked this call
 
+    def test_generic_hdr_interprets_coordinate_hemispheres(self):
+        hdr = {
+            "SITELAT": "28 17 58.8 S",
+            "SITELONG": "16 30 39.7 W",
+        }
+
+        latitude_result = find(hdr, ['LATITUDE', 'LAT', 'SITELAT'])
+        longitude_result = find(hdr, ['LONGITUD', 'LONG', 'LONGITUDE', 'SITELONG'])
+
+        assert float(latitude_result) == pytest.approx(-28.2996666667)
+        assert float(longitude_result) == pytest.approx(-16.5110277778)
+
     @patch("exotic.utils.get_val")
     def test_ks_zero_not_expected(self, mock_get_val):
         # NOTE: returns whatever is returned in `val = get_val()`
@@ -584,3 +719,22 @@ class TestFind:
         mock_get_val.assert_called_once()
         assert result == get_val_returns
         assert type(result) == int
+
+
+def test_find_uses_corrected_microobservatory_site_for_whipple_headers():
+    """The command-line path: a MicroObservatory header (OBSERVAT = Whipple
+    Observatory) must resolve to the base-camp site, not the old summit
+    constants that were ~600 km off (PR #1382 fixed the Colab copy only)."""
+    from astropy.io import fits
+
+    from exotic.utils import find
+
+    hdr = fits.Header()
+    hdr["OBSERVAT"] = "Whipple Observatory"
+    hdr["LATITUDE"] = 31.68
+    hdr["LONGITUD"] = -110.88
+    hdr["HEIGHT"] = 1268.0
+
+    assert find(hdr, ["LATITUDE", "LAT", "SITELAT"]) == "+31.675467"
+    assert find(hdr, ["LONGITUD", "LONG", "LONGITUDE", "SITELONG"]) == "-110.951376"
+    assert find(hdr, ["HEIGHT", "ELEVATION", "ELE", "EL", "OBSGEO-H", "ALT-OBS", "SITEELEV"]) == 1268

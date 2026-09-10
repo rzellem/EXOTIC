@@ -9,6 +9,11 @@ __fwhm = {
         "Johnson R": {"name": "RJ", "fwhm": ("590.0", "810.0")},
         "Johnson I": {"name": "IJ", "fwhm": ("780.0", "1020.0")},
 
+        # Photographic
+        "Photographic B": {"name": "PB", "fwhm": ("391.6", "480.6")},
+        "Photographic G": {"name": "PG", "fwhm": ("502.8", "586.8")},
+        "Photographic R": {"name": "PR", "fwhm": ("590.0", "810.0")},
+
         # Cousins
         "Cousins R": {"name": "R", "fwhm": ("561.7", "719.7")},
         "Cousins I": {"name": "I", "fwhm": ("721.0", "875.0")},
@@ -43,11 +48,12 @@ __fwhm = {
         "PanSTARRS Y": {"name": "Y", "fwhm": ("946.4", "1054.4")},
         "PanSTARRS w": {"name": "N/A", "fwhm": ("404.2", "845.8")},
 
-        # MObs Clear Filter; Source(s): Martin Fowler
-        "MObs CV": {"name": "CV", "fwhm": ("350.0", "850.0")},
+        # ClearV filter
+        "CV": {"name": "CV", "fwhm": ("350.0", "1000.0")},
 
-        # Astrodon CBB; Source(s): George Silvis; https://astrodon.com/products/astrodon-exo-planet-filter/
-        "Astrodon ExoPlanet-BB": {"name": "CBB", "fwhm": ("500.0", "1000.0")},
+        # Clear with blue-blocking (CBB); wavelength source:
+        # https://astrodon.com/products/astrodon-exo-planet-filter/
+        "CBB": {"name": "CBB", "fwhm": ("500.0", "1000.0")},
 }
 # expose as fwhm and for convenience set 'desc' field equal to key
 fwhm = {k: v for k, v in __fwhm.items() if (v.update(desc=k),)}
@@ -72,18 +78,59 @@ fwhm_alias = {
         "LCO Pan-STARRS Y": "PanSTARRS Y",
         "LCO Pan-STARRS w": "PanSTARRS w",
 
-        "Clear (unfiltered) reduced to V sequence": "MObs CV",
+        "Clear (unfiltered) reduced to V sequence": "CV",
         "Clear (unfiltered) reduced to R sequence": "Cousins R",
 
-        "Clear with blue-blocking": "Astrodon ExoPlanet-BB",
-        "Exop": "Astrodon ExoPlanet-BB",
+        "Clear with blue-blocking": "CBB",
+        "Astrodon ExoPlanet-BB": "CBB",
+        "Astrodon-Exo": "CBB",
+        "Exop": "CBB",
+
+        # additional short aliases found in FILTER column values
+        "bu": "Johnson U",
+        "bb": "Johnson B",
+        "pb": "Photographic B",
+        "bv": "Johnson V",
+        "G": "Photographic G",
+        "pg": "Photographic G",
+        "br": "Johnson R",
+        "pr": "Photographic R",
+        "bi": "Johnson I",
+        "up": "Sloan u",
+        "gp": "Sloan g",
+        "rp": "Sloan r",
+        "ip": "Sloan i",
+        "zp": "Sloan z",
+        "su": "Stromgren u",
+        "sv": "Stromgren v",
+        "sb": "Stromgren b",
+        "sy": "Stromgren y",
+        "hb": "Stromgren Hbw",
+        "zs": "PanSTARRS z-short",
+        "MObs CV": "CV",
+        "ClearV": "CV",
+        "clearV": "CV",
+        "C": "CV",
+        "clear": "CV",
+        "lum": "CV",
+        "Lum": "CV",
+        "Luminosity": "CV",
+        "luminosity": "CV",
+        "w": "CV",
+        "pl": "CV",
+        "exo": "CBB",
+
+        # OSC split-channel aliases
+        "b1": "Photographic B",
+        "g1": "Photographic G",
+        "g2": "Photographic G",
+        "r1": "Photographic R",
+        "r2": "Photographic R",
 }
 
 # standard filters w/o precisely defined FWHM values
 fwhm_names_nonspecific = {
         'CR': "Clear (unfiltered) reduced to R sequence",
-        'CBB': "Clear with blue-blocking",
-        'CV': "Clear (unfiltered) reduced to V sequence",
         'TB': "DSLR Blue",
         'TG': "DSLR Green",
         'TR': "DSLR Red",

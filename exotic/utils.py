@@ -1,4 +1,6 @@
 import logging
+from math import isfinite
+from pathlib import Path
 import re
 import requests
 from numpy import floor, log10
@@ -6,11 +8,193 @@ from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
 
 try:
-    from api.plate_solution import is_false, result_if_max_retry_count
+    from api.plate_solution import is_false
 except ImportError:
-    from .api.plate_solution import is_false, result_if_max_retry_count
+    from .api.plate_solution import is_false
 
 log = logging.getLogger(__name__)
+
+
+_WINDOWS_RESERVED_FILENAME_STEMS = {
+    'CON',
+    'PRN',
+    'AUX',
+    'NUL',
+    *(f'COM{i}' for i in range(1, 10)),
+    *(f'LPT{i}' for i in range(1, 10)),
+}
+_WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_FILENAME_WHITESPACE_RE = re.compile(r'\s+')
+_COMPACT_EXOPLANET_SUFFIX_RE = re.compile(r'(?<=[0-9A-Z])([b-z])$')
+MAX_APPARENT_MAGNITUDE = 30.0
+MAGNITUDE_DECIMAL_PLACES = 4
+MINIMUM_MAGNITUDE_ERROR = 0.001
+AAVSO_OUTPUT_FOLDER_NAME = 'AAVSO_Files'
+BOOLEAN_CONFIG_TRUE_STRINGS = frozenset(('y', 'yes', 'true', '1', 'on'))
+BOOLEAN_CONFIG_FALSE_STRINGS = frozenset(('n', 'no', 'false', '0', 'off', ''))
+OPEN_ELEVATION_URL = 'https://api.open-elevation.com/api/v1/lookup'
+OPEN_ELEVATION_TIMEOUT = 30
+
+
+def coerce_boolean_config_value(value):
+    """Return a configured boolean, or ``None`` when the value is not boolean-like.
+
+    JSON booleans and numeric 1/0 are accepted directly. String values are
+    case-insensitive and accept y/n, yes/no, true/false, 1/0, and on/off.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if not isfinite(value):
+            return None
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in BOOLEAN_CONFIG_TRUE_STRINGS:
+            return True
+        if normalized in BOOLEAN_CONFIG_FALSE_STRINGS:
+            return False
+    return None
+
+
+def aavso_output_directory(root):
+    """Return the dedicated AAVSO output directory, creating it when needed."""
+
+    output_directory = Path(root) / AAVSO_OUTPUT_FOLDER_NAME
+    output_directory.mkdir(parents=True, exist_ok=True)
+    return output_directory
+
+
+def format_aavso_exoplanet_name(value):
+    """Separate a compact trailing planet letter for the AAVSO header."""
+
+    name = str(value or '').strip()
+    return _COMPACT_EXOPLANET_SUFFIX_RE.sub(r' \1', name)
+
+
+def _clean_filename_text(value):
+    cleaned = _WINDOWS_ILLEGAL_FILENAME_CHARS_RE.sub('-', str(value or ''))
+    cleaned = _FILENAME_WHITESPACE_RE.sub('', cleaned)
+    return cleaned.rstrip(' .')
+
+
+def sanitize_filename_component(value, fallback='output'):
+    """Return one filename component that is safe on Windows, macOS, and Linux."""
+
+    cleaned = _clean_filename_text(value)
+    if cleaned in {'', '.', '..'}:
+        cleaned = _clean_filename_text(fallback)
+        if cleaned in {'', '.', '..'}:
+            cleaned = 'output'
+    device_stem = cleaned.split('.', 1)[0].upper()
+    if device_stem in _WINDOWS_RESERVED_FILENAME_STEMS:
+        cleaned = f'_{cleaned}'
+    return cleaned
+
+
+def filename_date_token(value):
+    """Return YYYY-MM-DD when a filename date includes a time component."""
+
+    text = str(value or '').strip()
+    match = re.match(r'(\d{4})[-/]?(\d{2})[-/]?(\d{2})', text)
+    if match:
+        return f'{match.group(1)}-{match.group(2)}-{match.group(3)}'
+    return text
+
+
+def safe_output_filename(prefix, *parts, extension):
+    """Build a filename from EXOTIC output labels without illegal path characters."""
+
+    stem_parts = [str(prefix), *(str(part) for part in parts)]
+    safe_stem = sanitize_filename_component('_'.join(stem_parts), fallback=str(prefix or 'output'))
+    ext = _FILENAME_WHITESPACE_RE.sub('', str(extension or ''))
+    if ext and not ext.startswith('.'):
+        ext = f'.{ext}'
+    return f'{safe_stem}{ext}'
+
+
+def parse_finite_float(value, default=None):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if isfinite(parsed) else default
+
+
+def is_usable_apparent_magnitude(value, max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    return parsed is not None and parsed <= max_magnitude
+
+
+def format_magnitude(value, default="na", digits=MAGNITUDE_DECIMAL_PLACES,
+                     max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    if parsed is None or parsed > max_magnitude:
+        return default
+    return f"{parsed:.{digits}f}"
+
+
+def rounded_magnitude_value(value, default=None, digits=MAGNITUDE_DECIMAL_PLACES,
+                            max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    if parsed is None or parsed > max_magnitude:
+        return default
+    return round(parsed, digits)
+
+
+def normalized_magnitude_error(value, default=None, minimum=MINIMUM_MAGNITUDE_ERROR,
+                               max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = parse_finite_float(value)
+    if parsed is None:
+        return default
+    parsed = abs(parsed)
+    if parsed > max_magnitude:
+        return default
+    return max(parsed, minimum)
+
+
+def format_magnitude_error(value, default="na", digits=MAGNITUDE_DECIMAL_PLACES,
+                           minimum=MINIMUM_MAGNITUDE_ERROR,
+                           max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = normalized_magnitude_error(
+        value,
+        default=None,
+        minimum=minimum,
+        max_magnitude=max_magnitude,
+    )
+    if parsed is None:
+        return default
+    return f"{parsed:.{digits}f}"
+
+
+def rounded_magnitude_error(value, default=None, digits=MAGNITUDE_DECIMAL_PLACES,
+                            minimum=MINIMUM_MAGNITUDE_ERROR,
+                            max_magnitude=MAX_APPARENT_MAGNITUDE):
+    parsed = normalized_magnitude_error(
+        value,
+        default=None,
+        minimum=minimum,
+        max_magnitude=max_magnitude,
+    )
+    if parsed is None:
+        return default
+    return round(parsed, digits)
+
+
+def magnitude_text(band, magnitude, magnitude_error=None):
+    formatted_mag = format_magnitude(magnitude, default=None)
+    if formatted_mag is None:
+        return None
+
+    formatted_error = format_magnitude_error(magnitude_error, default=None)
+    if formatted_error is None:
+        return f"{band}={formatted_mag}"
+    return f"{band}={formatted_mag} +/- {formatted_error}"
 
 
 def user_input(prompt, type_, values=None, max_tries=1000):
@@ -190,6 +374,68 @@ def round_to_2(*args):
     return round(x, roundval)
 
 
+def _two_significant_figure_decimal_places(uncertainty):
+    """Return the decimal place needed to show an uncertainty with two sig figs."""
+
+    uncertainty = float(uncertainty)
+    if not isfinite(uncertainty) or uncertainty < 0:
+        raise ValueError("uncertainty must be a finite, non-negative number")
+    if uncertainty == 0:
+        return 2
+
+    exponent = int(floor(log10(abs(uncertainty))))
+    decimal_places = 1 - exponent
+
+    # A carry can change the exponent (for example, 0.00999 -> 0.010).
+    rounded_uncertainty = round(uncertainty, decimal_places)
+    if rounded_uncertainty:
+        rounded_exponent = int(floor(log10(abs(rounded_uncertainty))))
+        decimal_places = 1 - rounded_exponent
+    return decimal_places
+
+
+def _format_at_decimal_place(value, decimal_places):
+    """Format a number at a decimal place, including insignificant zeroes."""
+
+    value = float(value)
+    if not isfinite(value):
+        raise ValueError("value must be a finite number")
+    if decimal_places >= 0:
+        return f"{value:.{decimal_places}f}"
+    return f"{round(value, decimal_places):.0f}"
+
+
+def format_value_and_uncertainty(value, uncertainty):
+    """Return value/error text with a two-significant-figure uncertainty.
+
+    Both strings end at the same decimal place. Unlike ``round_to_2``, this is
+    a reporting helper: it deliberately retains trailing zeroes which carry
+    precision information.
+    """
+
+    decimal_places = _two_significant_figure_decimal_places(uncertainty)
+    return (
+        _format_at_decimal_place(value, decimal_places),
+        format_uncertainty(uncertainty),
+    )
+
+
+def format_uncertainty(uncertainty):
+    """Format an uncertainty with exactly two significant figures."""
+
+    decimal_places = _two_significant_figure_decimal_places(uncertainty)
+    if decimal_places < 0:
+        return f"{float(uncertainty):.1e}"
+    return _format_at_decimal_place(uncertainty, decimal_places)
+
+
+def format_value_with_uncertainty(value, uncertainty):
+    """Return ``value +/- uncertainty`` using matched two-sig-fig precision."""
+
+    value_text, uncertainty_text = format_value_and_uncertainty(value, uncertainty)
+    return f"{value_text} +/- {uncertainty_text}"
+
+
 # Credit: Kalee Tock
 def get_val(hdr, ks):
     """
@@ -269,8 +515,9 @@ def process_lat_long(val, key):
     Parameters
     ----------
     val : str
-        either a longitude or latitude coordinate, with a preceding + or -,
-        expressed in _either_ HH:MM:SS or degree values. ex: +152.51 or +37:2:24.
+        Either a longitude or latitude coordinate expressed in HH:MM:SS or
+        decimal degrees. It may use a leading + or - or a FITS-style N/S/E/W
+        hemisphere letter. Examples: +152.51, +37:2:24, or 16 30 39.7 W.
     key : str
         expects "longitude" or "latitude"
 
@@ -280,26 +527,48 @@ def process_lat_long(val, key):
         longitude or latitude expressed in degree coordinates with a preceding
         + or -. Six digits of precision after the decimal. ex: +152.510000
     """
-    m = re.search(r"\'?([+-]?\d+)[\s:](\d+)[\s:](\d+\.?\d*)", val) or \
-        re.search(r"\'?([+-]?\d+)[\s:](\d+\.\d*)", val)
-    if m:
-        try:
-            deg, min, sec = float(m.group(1)), float(m.group(2)), float(m.group(3))
-        except IndexError:
-            deg, min, sec = float(m.group(1)), float(m.group(2)), 0
-        if deg < 0:
-            v = deg - (((60 * min) + sec) / 3600)
-        else:
-            v = deg + (((60 * min) + sec) / 3600)
-        return add_sign(v)
+    text = str(val).strip()
+    coordinate_type = str(key).strip().lower()
+    valid_hemispheres = {
+        "latitude": {"N", "S"},
+        "longitude": {"E", "W"},
+    }.get(coordinate_type)
+    hemisphere = None
 
-    m = re.search("^\'?([+-]?\d+\.\d+)", val)
+    # FITS writers commonly append a hemisphere letter to an otherwise
+    # unsigned decimal or sexagesimal coordinate.  A hemisphere overrides a
+    # redundant leading sign so that ``-16 30 W`` is not double-negated.
+    trailing_hemisphere = re.search(r"([NSEW])\s*$", text)
+    leading_hemisphere = re.match(r"\s*([NSEW])(?=\s|[+-]?\d)", text)
+    hemisphere_match = trailing_hemisphere or leading_hemisphere
+    if hemisphere_match:
+        hemisphere = hemisphere_match.group(1)
+        if valid_hemispheres is not None and hemisphere not in valid_hemispheres:
+            print(f"Cannot match value {val}, which is meant to be {key}.")
+            return None
+        start, end = hemisphere_match.span(1)
+        text = f"{text[:start]}{text[end:]}".strip()
 
-    if m:
-        v = float(m.group(1))
-        return add_sign(v)
-    else:
+    number_tokens = re.findall(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)", text)
+    if not 1 <= len(number_tokens) <= 3:
         print(f"Cannot match value {val}, which is meant to be {key}.")
+        return None
+    if len(number_tokens) == 1 and hemisphere is None \
+            and "." not in number_tokens[0] and number_tokens[0][0] not in "+-":
+        # Preserve the historical rejection of an unsigned integer while
+        # accepting one when a hemisphere supplies the otherwise missing sign.
+        print(f"Cannot match value {val}, which is meant to be {key}.")
+        return None
+
+    degrees = float(number_tokens[0])
+    minutes = abs(float(number_tokens[1])) if len(number_tokens) >= 2 else 0.0
+    seconds = abs(float(number_tokens[2])) if len(number_tokens) >= 3 else 0.0
+    magnitude = abs(degrees) + minutes / 60.0 + seconds / 3600.0
+    if hemisphere:
+        sign = -1.0 if hemisphere in {"S", "W"} else 1.0
+    else:
+        sign = -1.0 if number_tokens[0].startswith("-") else 1.0
+    return add_sign(sign * magnitude)
 
 
 # Credit: Kalee Tock
@@ -315,8 +584,9 @@ def find(hdr, ks, obs=None):
     ks : list[str]
         a list of known values that astronomers use for a piece of information.
     obs : string
-        A specific observatory. Should be one of 'Boyce' or 'MObs' (no quotes).
-        Other values are ignored.
+        A specific observatory. 'MObs' selects the MicroObservatory site
+        constants; it is also set automatically when the header's OBSERVAT is
+        'Whipple Observatory'. Other values are ignored.
 
     Returns
     -------
@@ -324,20 +594,14 @@ def find(hdr, ks, obs=None):
         Most often returns a string but can return anything. Designed to return
         the latitude or longitude of an observation as a string.
     """
-    # Special stuff for MObs and Boyce-Astro Observatories
-    boyce = {"LATITUDE": "+32.6135", "LONGITUD": "-116.3334", "HEIGHT": 1405}
-    mobs = {"LATITUDE": "+37.04", "LONGITUD": "-110.73", "HEIGHT": 2606}
+    # Special stuff for MicroObservatory (MObs)
+    # MicroObservatory telescopes sit at the Whipple Observatory base camp
+    # (Amado, AZ), not on the Mount Hopkins summit (2606 m). See PR #1382.
+    mobs = {"LATITUDE": "+31.675467", "LONGITUD": "-110.951376", "HEIGHT": 1268}
 
     if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
         obs = "MObs"
 
-    #  if "USERID" in hdr.keys() and hdr["USERID"] == 'PatBoyce':
-    #    obs = "Boyce"
-
-    if obs == "Boyce":
-        boyce_val = get_val(boyce, ks)
-        if boyce_val:
-            return boyce_val
     if obs == "MObs":
         mobs_val = get_val(mobs, ks)
         if mobs_val:
@@ -353,13 +617,31 @@ def find(hdr, ks, obs=None):
     return val
 
 
+def _return_false_after_retries(retry_state):
+    return False
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
        retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
-       retry_error_callback=result_if_max_retry_count)
+       retry_error_callback=_return_false_after_retries)
 def open_elevation(lat, long):
-    query = f"https://api.open-elevation.com/api/v1/lookup?locations={lat},{long}"
     try:
-        r = requests.get(query).json()
-        return r['results'][0]['elevation']
-    except requests.exceptions.RequestException:
+        latitude = float(lat)
+        longitude = float(long)
+        if not isfinite(latitude) or not isfinite(longitude):
+            return False
+        if not -90.0 <= latitude <= 90.0 or not -180.0 <= longitude <= 180.0:
+            return False
+
+        response = requests.get(
+            OPEN_ELEVATION_URL,
+            params={'locations': f'{latitude},{longitude}'},
+            timeout=OPEN_ELEVATION_TIMEOUT,
+        )
+        response.raise_for_status()
+        result = response.json()['results'][0]['elevation']
+        result = float(result)
+        return result if isfinite(result) else False
+    except (requests.exceptions.RequestException, KeyError, IndexError, TypeError, ValueError) as exc:
+        log.debug("Open-Elevation lookup failed: %s", exc)
         return False

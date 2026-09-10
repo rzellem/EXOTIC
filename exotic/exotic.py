@@ -140,9 +140,9 @@ try:  # ld
 except ImportError:  # package import
     from api.ld import LimbDarkening, ld_re_punct_p
 try:  # plate solution
-    from .api.plate_solution import NextAstroPlateSolution, PlateSolution
+    from .api.plate_solution import NextAstroPlateSolution, NovaSourceListPlateSolution, PlateSolution
 except ImportError:  # package import
-    from api.plate_solution import NextAstroPlateSolution, PlateSolution
+    from api.plate_solution import NextAstroPlateSolution, NovaSourceListPlateSolution, PlateSolution
 try:
     from .api.ultranest_utils import (
         get_mpi_status,
@@ -16258,7 +16258,7 @@ def should_use_multiprocess_transform_precompute(inputfiles, requested_processes
 
 
 def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=None, pixel_scale=None):
-    astrometry_service = 'NextAstro astrometry server (https://astrometry.nextastro.org/)' if use_nextastro_astrometry else 'nova.astrometry.net'
+    astrometry_service = 'NextAstro astrometry server (https://astrometry.nextastro.org/)' if use_nextastro_astrometry else 'nova.astrometry.net (source list)'
     log_info("\nGetting the plate solution for your imaging file to translate pixel coordinates on the sky. "
              f"\nUsing astrometry service: {astrometry_service}."
              "\nPlease wait....")
@@ -16284,8 +16284,8 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
         else:
             log_info("NextAstro astrometry server did not return a solution; falling back to nova.astrometry.net.")
         print("Communication with nova.astrometry.net")
-        nova_solver = PlateSolution(file=file, directory=directory, ra=ra, dec=dec,
-                                    pixel_scale=pixel_scale, suppress_fail_warning=True)
+        nova_solver = NovaSourceListPlateSolution(file=file, directory=directory, ra=ra, dec=dec,
+                                                  pixel_scale=pixel_scale, suppress_fail_warning=True)
         wcs_file = nova_solver.plate_solution()
         if wcs_file:
             return wcs_file
@@ -16295,8 +16295,8 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
         return PlateSolution.fail(nova_solver.last_error_type or 'plate solution lookup')
 
     animate_toggle(True)
-    nova_solver = PlateSolution(file=file, directory=directory, ra=ra, dec=dec,
-                                pixel_scale=pixel_scale, suppress_fail_warning=True)
+    nova_solver = NovaSourceListPlateSolution(file=file, directory=directory, ra=ra, dec=dec,
+                                              pixel_scale=pixel_scale, suppress_fail_warning=True)
     wcs_file = nova_solver.plate_solution()
     if wcs_file:
         animate_toggle()

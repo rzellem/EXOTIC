@@ -64,6 +64,40 @@ def result_if_max_retry_count(retry_state):
     pass
 
 
+NEA_ALIAS_LOOKUP_URL = "https://exoplanetarchive.ipac.caltech.edu/cgi-bin/Lookup/nph-aliaslookup.py"
+NEA_ALIAS_LOOKUP_TIMEOUT_SECONDS = 30
+
+
+def resolve_planet_alias(name, timeout=NEA_ALIAS_LOOKUP_TIMEOUT_SECONDS, getter=None):
+    """Return the archive's default planet name for an alias, or None.
+
+    The Planetary Systems table only answers to each planet's default name, so
+    a target observed under another designation (HAT-P-10 b is filed as
+    WASP-11 b; TOI and TIC names for confirmed planets) is reported as missing.
+    The archive's alias-lookup service knows every designation. A planet-level
+    alias resolves to that planet; a star-level alias resolves only when the
+    system holds exactly one planet. Any service problem returns None so the
+    caller falls through to its existing not-found handling.
+    """
+    getter = getter or requests.get
+    try:
+        response = getter(NEA_ALIAS_LOOKUP_URL, params={"objname": name}, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+        manifest = data.get("manifest", {})
+        if manifest.get("lookup_status") != "OK":
+            return None
+        resolved = manifest.get("resolved_name")
+        planets = data.get("system", {}).get("objects", {}).get("planet_set", {}).get("planets", {})
+        if resolved in planets:
+            return resolved
+        if len(planets) == 1:
+            return next(iter(planets))
+    except (requests.RequestException, ValueError, AttributeError, TypeError):
+        pass
+    return None
+
+
 def _strip_observation_phase_suffix(name):
     """Remove scheduler phase labels that are not part of a target name."""
     text = str(name or '').strip()
@@ -395,6 +429,12 @@ class NASAExoplanetArchive:
         extra = self._tap_query(uri_ipac_base, uri_ipac_query)
 
         if len(default) == 0:
+            alias = resolve_planet_alias(self.planet)
+            if alias and alias != self.planet:
+                print(f"The NASA Exoplanet Archive lists {self.planet} under the name {alias}. Using that.")
+                self.planet = alias
+                return self._new_scrape(filename=filename)
+
             candidate_reason = self._candidate_name_reason(self.planet)
             if candidate_reason:
                 print(f"Cannot find target ({self.planet}) in NASA Exoplanet Archive."

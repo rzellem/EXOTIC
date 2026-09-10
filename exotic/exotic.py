@@ -126,14 +126,18 @@ try:  # output files
         CALIBRATION_MASTER_FILENAMES,
         Inputs,
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        check_imaging_files,
         comparison_star_coords,
+        target_star_coords,
     )
 except ImportError:  # package import
     from .inputs import (
         CALIBRATION_MASTER_FILENAMES,
         Inputs,
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        check_imaging_files,
         comparison_star_coords,
+        target_star_coords,
     )
 try:  # ld
     from .api.ld import LimbDarkening, ld_re_punct_p
@@ -143,6 +147,10 @@ try:  # plate solution
     from .api.plate_solution import NextAstroPlateSolution, NovaSourceListPlateSolution, PlateSolution
 except ImportError:  # package import
     from api.plate_solution import NextAstroPlateSolution, NovaSourceListPlateSolution, PlateSolution
+try:  # inits pre-flight
+    from .api import preflight as inits_preflight
+except ImportError:  # package import
+    from api import preflight as inits_preflight
 try:
     from .api.ultranest_utils import (
         get_mpi_status,
@@ -16322,6 +16330,168 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
         return False
     return PlateSolution.fail(nextastro_solver.last_error_type or 'plate solution lookup',
                               service_name=f'NextAstro ({nextastro_solver.api_url})')
+
+
+PREFLIGHT_LEADING_FRAMES_TO_SOLVE = 3
+
+
+def _preflight_wcs_for_frame(file_name, save_directory, use_nextastro_astrometry, ra, dec, pixel_scale):
+    """Return (WCS, how) for one frame, or (None, why) without raising.
+
+    Header WCS is used as-is. Otherwise the pipeline's own solver order runs
+    (nova.astrometry.net from a source list first, NextAstro as the fallback, or
+    the reverse under --use-nextastro-astrometry). Neither uploads the image.
+    """
+    try:
+        header_wcs = search_wcs(file_name)
+        if header_wcs.is_celestial:
+            return header_wcs, 'header WCS'
+    except Exception:
+        pass
+
+    Path(Path(save_directory) / "working_artifacts").mkdir(parents=True, exist_ok=True)
+    wcs_file = get_wcs(file_name, save_directory, use_nextastro_astrometry=use_nextastro_astrometry,
+                       ra=ra, dec=dec, pixel_scale=pixel_scale)
+    how = 'plate solution'
+    if not wcs_file:
+        return None, 'did not solve'
+    try:
+        return search_wcs(wcs_file), how
+    except Exception as exc:
+        return None, f'solution unreadable ({exc})'
+
+
+def run_inits_preflight(init_path, use_nextastro_astrometry=False):
+    """Check an initialization file against the archive, the headers and one frame.
+
+    Returns 0 when nothing hard failed, 1 otherwise, so a scripted run can gate on
+    it: ``exotic -pf inits.json && exotic -red inits.json -ov``.
+    """
+    report = inits_preflight.PreflightReport()
+    planet_dict = {key: None for key in ('ra', 'dec', 'pName', 'sName', 'pPer', 'pPerUnc', 'midT', 'midTUnc',
+                                         'rprs', 'rprsUnc', 'aRs', 'aRsUnc', 'inc', 'incUnc', 'omega', 'ecc',
+                                         'teff', 'teffUncPos', 'teffUncNeg', 'met', 'metUncPos', 'metUncNeg',
+                                         'logg', 'loggUncPos', 'loggUncNeg', 'dist', 'pm_ra', 'pm_dec')}
+    inputs_obj = Inputs(init_opt='y')
+    init_path, planet_dict = inputs_obj.search_init(init_path, planet_dict)
+    info = inputs_obj.info_dict
+    planet_name = planet_dict.get('pName')
+
+    log_info("\n**************************************")
+    log_info("Initialization File Pre-flight")
+    log_info("**************************************")
+    log_info(f"{init_path}  ->  {planet_name}")
+
+    # --- frames and observing window ---------------------------------------
+    input_files = check_imaging_files(info.get('images'), 'Imaging', exclude_calibration_masters=True)
+    timed_files = []
+    for file_name in input_files:
+        try:
+            jd = img_time_jd(get_first_image_header(file_name))
+        except Exception:
+            jd = np.nan
+        if np.isfinite(jd):
+            timed_files.append((float(jd), file_name))
+    timed_files.sort()
+    untimed = len(input_files) - len(timed_files)
+    report.passed(bool(timed_files), 'frames with a readable observation time',
+                  f"{len(timed_files)} of {len(input_files)}" + (f" ({untimed} without a usable time header)" if untimed else ''))
+
+    # --- archive ---------------------------------------------------------------
+    archive = None
+    try:
+        _, candidate, archive_parameters = NASAExoplanetArchive(planet=planet_name, non_interactive=True).planet_info()
+        if candidate or not isinstance(archive_parameters, dict):
+            report.skip('NASA Exoplanet Archive comparison', f"{planet_name} is a candidate; nothing to compare against")
+        else:
+            archive = archive_parameters
+            report.passed(True, 'planet found in the NASA Exoplanet Archive', str(archive.get('pName', planet_name)))
+    except Exception as exc:
+        report.passed(False, 'planet found in the NASA Exoplanet Archive', f"{planet_name}: {type(exc).__name__}: {exc}")
+    if archive is not None:
+        inits_preflight.compare_archive_parameters(planet_dict, archive, report)
+
+    # --- timing ----------------------------------------------------------------
+    def value_or_archive(key):
+        value = inits_preflight._finite(planet_dict.get(key))
+        if value is None and archive is not None:
+            value = inits_preflight._finite(archive.get(key))
+        return value
+
+    duration_days = estimate_transit_duration_from_prior_geometry({
+        'per': value_or_archive('pPer'), 'rprs': value_or_archive('rprs'), 'ars': value_or_archive('aRs'),
+        'inc': value_or_archive('inc'), 'ecc': value_or_archive('ecc') or 0.0, 'omega': value_or_archive('omega') or 0.0,
+    })
+    if timed_files:
+        inits_preflight.check_transit_window(timed_files[0][0], timed_files[-1][0], value_or_archive('midT'),
+                                             value_or_archive('pPer'), duration_days, report)
+
+    # --- pointing: is the seed pixel on the target? ----------------------------
+    target_xy = target_star_coords(info.get('tar_coords'), planet_name)
+    ra_deg = inits_preflight._finite(archive.get('ra')) if archive is not None else None
+    dec_deg = inits_preflight._finite(archive.get('dec')) if archive is not None else None
+    if ra_deg is None or dec_deg is None:
+        try:
+            ra_deg, dec_deg = radec_hours_to_degree(planet_dict.get('ra'), planet_dict.get('dec'),
+                                                    non_interactive_run=True, target_name=planet_name)
+        except Exception as exc:
+            report.skip('target RA/Dec', f"unusable in the initialization file and no archive value: {exc}")
+            ra_deg = dec_deg = None
+
+    if timed_files and ra_deg is not None:
+        first_header = get_first_image_header(timed_files[0][1])
+        pixel_scale = info.get('pixel_scale') or first_header.get('IM_SCALE') or first_header.get('PIXSCALE')
+        save_directory = info.get('save')
+        if not save_directory or not Path(save_directory).is_dir():
+            save_directory = tempfile.mkdtemp(prefix='exotic-preflight-')
+        solved = False
+        for index, (_, file_name) in enumerate(timed_files[:PREFLIGHT_LEADING_FRAMES_TO_SOLVE]):
+            wcs, how = _preflight_wcs_for_frame(file_name, save_directory, use_nextastro_astrometry,
+                                                ra_deg, dec_deg, pixel_scale)
+            if wcs is None:
+                report.skip(f"frame {index + 1} ({Path(file_name).name})", how)
+                continue
+            inits_preflight.check_target_pixel(wcs, ra_deg, dec_deg, target_xy, report,
+                                               frame_label=f"frame {index + 1}, {how}")
+            report.look(index == 0, 'seed frame is the first frame',
+                        'EXOTIC seeds from the first frame; the first frame did not solve, so this was checked '
+                        f'on frame {index + 1}' if index else 'first frame solved')
+            solved = True
+            break
+        if not solved:
+            report.skip('target pixel on the target',
+                        f"none of the first {min(PREFLIGHT_LEADING_FRAMES_TO_SOLVE, len(timed_files))} frames "
+                        "gave a WCS; not checked")
+
+    # --- comparison stars on the first frame ----------------------------------
+    if timed_files:
+        first_file = timed_files[0][1]
+        first_header = get_first_image_header(first_file)
+        extension = 0
+        while fits.getheader(first_file, ext=extension).get('NAXIS', 0) == 0:
+            extension += 1
+        image = np.asarray(fits.getdata(first_file, ext=extension), dtype=float)
+        if image.ndim > 2:
+            image = image.squeeze()
+        saturation = saturation_value_from_header(first_header)
+        if saturation is None:
+            saturation = parse_saturation_value(info.get('saturation_value'))
+        fraction = info.get('overexposure_threshold_fraction')
+        try:
+            fraction = float(fraction) if fraction not in (None, '') else OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT
+        except (TypeError, ValueError):
+            fraction = OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT
+        comps = info.get('comp_stars')
+        comps = [c for c in comps if isinstance(c, (list, tuple)) and len(c) == 2] if isinstance(comps, list) else []
+        inits_preflight.check_comparison_stars(image, target_xy, comps, saturation, report,
+                                               overexposure_fraction=fraction)
+
+    log_info("")
+    for line in report.lines():
+        log_info(line, error=line.lstrip().startswith('[FAIL]'), warn=line.lstrip().startswith('[look]'))
+    log_info("")
+    log_info(report.summary(), error=not report.ok)
+    return 0 if report.ok else 1
 
 
 # Getting the right ascension and declination for every pixel in imaging file if there is a plate solution
@@ -34631,6 +34801,13 @@ def parse_args():
                              "least-squares transit inference. FITS inputs use aperture-only photometry. "
                              "Results are preliminary. "
                              "An initialization file (e.g., inits.json) is optional to use with this command.")
+    parser.add_argument('-pf', '--preflight',
+                        nargs='?', default=None, type=str, const='',
+                        help="Checks an initialization file before any reduction: planetary parameters against "
+                             "the NASA Exoplanet Archive, the predicted transit against the observing window in "
+                             "the FITS headers, the target pixel against a plate solution, and comparison stars "
+                             "for being on the frame and unsaturated. Exits 1 on a hard failure, so scripted runs "
+                             "can gate on it: exotic -pf inits.json && exotic -red inits.json -ov")
     parser.add_argument('-ov', '--override',
                         action='store_true',
                         help="Adopts all JSON planetary parameters, which will override the NASA Exoplanet Archive. "
@@ -34679,6 +34856,10 @@ def _main_impl():
     if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits < 1:
         raise ValueError("--multiprocess-lightcurve-fits requires an integer greater than 0.")
     configure_windows_multiprocessing_main_spec()
+    preflight_argument = getattr(args, 'preflight', None)
+    if isinstance(preflight_argument, str):
+        return run_inits_preflight(preflight_argument,
+                                   use_nextastro_astrometry=getattr(args, 'use_nextastro_astrometry', False))
     quick_look_argument = getattr(args, 'quick_look', None)
     explicit_quick_look_mode = isinstance(quick_look_argument, str)
     configured_quick_look_init = next(

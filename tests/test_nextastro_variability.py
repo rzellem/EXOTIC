@@ -2236,7 +2236,7 @@ def test_get_wcs_falls_back_to_nextastro_when_nova_fails(monkeypatch):
             service_calls.append('nextastro')
             return 'nextastro-wcs'
 
-    monkeypatch.setattr(exotic_module, 'PlateSolution', DummyPlateSolution)
+    monkeypatch.setattr(exotic_module, 'NovaSourceListPlateSolution', DummyPlateSolution)
     monkeypatch.setattr(exotic_module, 'NextAstroPlateSolution', DummyNextAstroSolution)
     monkeypatch.setattr(exotic_module, 'animate_toggle', lambda *args, **kwargs: None)
 
@@ -2268,7 +2268,7 @@ def test_get_wcs_logs_nextastro_bad_gateway_before_nova_fallback(monkeypatch):
             service_calls.append('nextastro')
             return False
 
-    monkeypatch.setattr(exotic_module, 'PlateSolution', DummyPlateSolution)
+    monkeypatch.setattr(exotic_module, 'NovaSourceListPlateSolution', DummyPlateSolution)
     monkeypatch.setattr(exotic_module, 'NextAstroPlateSolution', DummyNextAstroSolution)
     monkeypatch.setattr(exotic_module, 'animate_toggle', lambda *args, **kwargs: None)
     monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))
@@ -2302,7 +2302,7 @@ def test_get_wcs_logs_nextastro_bad_gateway_after_both_methods_fail(monkeypatch)
             service_calls.append('nextastro')
             return False
 
-    monkeypatch.setattr(exotic_module, 'PlateSolution', DummyPlateSolution)
+    monkeypatch.setattr(exotic_module, 'NovaSourceListPlateSolution', DummyPlateSolution)
     monkeypatch.setattr(exotic_module, 'NextAstroPlateSolution', DummyNextAstroSolution)
     monkeypatch.setattr(exotic_module, 'animate_toggle', lambda *args, **kwargs: None)
     monkeypatch.setattr(exotic_module, 'log_info', lambda message, warn=False, error=False: logged.append(message))

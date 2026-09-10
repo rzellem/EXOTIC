@@ -16335,14 +16335,12 @@ def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=Non
 PREFLIGHT_LEADING_FRAMES_TO_SOLVE = 3
 
 
-def _preflight_wcs_for_frame(file_name, save_directory, plate_opt, use_nextastro_astrometry, ra, dec, pixel_scale):
+def _preflight_wcs_for_frame(file_name, save_directory, use_nextastro_astrometry, ra, dec, pixel_scale):
     """Return (WCS, how) for one frame, or (None, why) without raising.
 
-    Header WCS is used as-is. Otherwise the initialization file's plate-solution
-    answer decides what may leave the machine: 'y' runs the pipeline's own solver
-    order (nova.astrometry.net first, NextAstro as the fallback, or the reverse
-    under --use-nextastro-astrometry); 'n' sends only a source list to NextAstro,
-    because the user declined to upload an image.
+    Header WCS is used as-is. Otherwise the pipeline's own solver order runs
+    (nova.astrometry.net from a source list first, NextAstro as the fallback, or
+    the reverse under --use-nextastro-astrometry). Neither uploads the image.
     """
     try:
         header_wcs = search_wcs(file_name)
@@ -16352,17 +16350,9 @@ def _preflight_wcs_for_frame(file_name, save_directory, plate_opt, use_nextastro
         pass
 
     Path(Path(save_directory) / "working_artifacts").mkdir(parents=True, exist_ok=True)
-    if plate_opt == 'y':
-        wcs_file = get_wcs(file_name, save_directory, use_nextastro_astrometry=use_nextastro_astrometry,
-                           ra=ra, dec=dec, pixel_scale=pixel_scale)
-        how = 'plate solution'
-    else:
-        log_info("Plate Solution? is 'n' in the initialization file, so no image is uploaded: "
-                 "sending a source list to the NextAstro astrometry server only.")
-        wcs_file = NextAstroPlateSolution(file=file_name, directory=save_directory, ra=ra, dec=dec,
-                                          pixel_scale=pixel_scale, suppress_fail_warning=True,
-                                          message_logger=log.debug).plate_solution()
-        how = 'NextAstro source-list solution'
+    wcs_file = get_wcs(file_name, save_directory, use_nextastro_astrometry=use_nextastro_astrometry,
+                       ra=ra, dec=dec, pixel_scale=pixel_scale)
+    how = 'plate solution'
     if not wcs_file:
         return None, 'did not solve'
     try:
@@ -16454,10 +16444,9 @@ def run_inits_preflight(init_path, use_nextastro_astrometry=False):
         save_directory = info.get('save')
         if not save_directory or not Path(save_directory).is_dir():
             save_directory = tempfile.mkdtemp(prefix='exotic-preflight-')
-        plate_opt = 'y' if coerce_boolean_config_value(info.get('plate_opt')) else 'n'
         solved = False
         for index, (_, file_name) in enumerate(timed_files[:PREFLIGHT_LEADING_FRAMES_TO_SOLVE]):
-            wcs, how = _preflight_wcs_for_frame(file_name, save_directory, plate_opt, use_nextastro_astrometry,
+            wcs, how = _preflight_wcs_for_frame(file_name, save_directory, use_nextastro_astrometry,
                                                 ra_deg, dec_deg, pixel_scale)
             if wcs is None:
                 report.skip(f"frame {index + 1} ({Path(file_name).name})", how)

@@ -1492,6 +1492,14 @@ def _build_final_lightcurve_figure(
         # that wide would be clipped on the square and 16:9 PNGs.
         title = f"{title}\n{coverage_caption.replace('; ', chr(10))}"
     ax_lc.set_title(title)
+    if coverage_caption:
+        # The fitter lays the figure out with top=0.92 for a one-line title;
+        # the presentation PNG renders without bbox trimming, so make room for
+        # the two extra lines or the target name is clipped off the top.
+        try:
+            f.subplots_adjust(top=0.84)
+        except Exception:
+            pass
 
     drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):

@@ -2442,10 +2442,7 @@ def test_aavso_notes_carry_the_coverage_verdict_only_when_the_fit_was_not_expect
             "transit_fraction_observed": 0.0,
         },
     )
-    caption = (
-        "EXOTIC COVERAGE: pre-transit baseline only; 0% of the expected transit window "
-        "observed; fit success VERY LOW"
-    )
+    caption = "EXOTIC COVERAGE 0%: pre-transit baseline only; fit success VERY LOW"
     assert aavso_notes_text("MObs night", uncovered) == f"MObs night | {caption}"
     assert aavso_notes_text("na", uncovered) == caption
     assert aavso_notes_text("", uncovered) == caption

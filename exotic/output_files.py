@@ -3827,10 +3827,7 @@ def transit_coverage_caption(fit):
         observed = f"{100.0 * float(assessment.get('transit_fraction_observed')):.0f}%"
     except (TypeError, ValueError):
         observed = "?%"
-    return (
-        f"COVERAGE: {segment}; {observed} of the expected transit window observed; "
-        f"fit success {str(label).upper()}"
-    )
+    return f"COVERAGE {observed}: {segment}; fit success {str(label).upper()}"
 
 
 def aavso_notes_text(notes, fit):

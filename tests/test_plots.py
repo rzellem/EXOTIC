@@ -1077,10 +1077,10 @@ def test_final_lightcurve_title_carries_low_coverage_verdict():
     plt.close(figure)
 
     assert title.splitlines()[0] == "Target"
-    assert (
-        "COVERAGE: pre-transit baseline only; 0% of the expected transit window observed; "
-        "fit success VERY LOW"
-    ) in title
+    assert title.splitlines()[1:] == [
+        "COVERAGE 0%: pre-transit baseline only",
+        "fit success VERY LOW",
+    ]
 
 
 def test_final_lightcurve_title_is_unchanged_when_coverage_was_expected_to_succeed():

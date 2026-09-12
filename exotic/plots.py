@@ -1488,7 +1488,9 @@ def _build_final_lightcurve_figure(
         title = targ_name
     coverage_caption = transit_coverage_caption(fit)
     if coverage_caption:
-        title = f"{title}\n{coverage_caption}"
+        # Two short lines: the one-line form is for the AAVSO #NOTES; a title
+        # that wide would be clipped on the square and 16:9 PNGs.
+        title = f"{title}\n{coverage_caption.replace('; ', chr(10))}"
     ax_lc.set_title(title)
 
     drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)

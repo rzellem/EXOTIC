@@ -34,6 +34,7 @@ try:
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
         fit_parameter_model_data_uncertainty,
+        transit_coverage_caption,
     )
 except ImportError:
     from .output_files import (
@@ -42,6 +43,7 @@ except ImportError:
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
         fit_parameter_model_data_uncertainty,
+        transit_coverage_caption,
     )
 
 plt.style.use(astropy_mpl_style)
@@ -1484,7 +1486,20 @@ def _build_final_lightcurve_figure(
         title = f"{targ_name}\nFULL DATA / FULL LIGHT CURVE (DIAGNOSTIC)"
     else:
         title = targ_name
+    coverage_caption = transit_coverage_caption(fit)
+    if coverage_caption:
+        # Two short lines: the one-line form is for the AAVSO #NOTES; a title
+        # that wide would be clipped on the square and 16:9 PNGs.
+        title = f"{title}\n{coverage_caption.replace('; ', chr(10))}"
     ax_lc.set_title(title)
+    if coverage_caption:
+        # The fitter lays the figure out with top=0.92 for a one-line title;
+        # the presentation PNG renders without bbox trimming, so make room for
+        # the two extra lines or the target name is clipped off the top.
+        try:
+            f.subplots_adjust(top=0.84)
+        except Exception:
+            pass
 
     drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):

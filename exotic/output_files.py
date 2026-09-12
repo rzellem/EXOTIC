@@ -3344,7 +3344,7 @@ class OutputFiles:
                     f"{gaia_pmra_header}"
                     f"{gaia_pmdec_header}"
                     f"#COMP_STAR-XC={dumps(comp_star)}\n"
-                    f"#NOTES={self.i_dict['notes']}\n"
+                    f"#NOTES={aavso_notes_text(self.i_dict['notes'], self.fit)}\n"
                     "#DETREND_PARAMETERS=AIRMASS, AIRMASS CORRECTION FUNCTION\n"  # fixed
                     "#MEASUREMENT_TYPE=Rnflux\n"  # fixed
                     f"#FILTER={self.i_dict['filter']}\n"
@@ -3796,6 +3796,49 @@ def aavso_dicts(planet_dict, fit, info_dict, durs, ld0, ld1, ld2, ld3):
     })
 
     return priors, filter_type, results
+
+
+
+def transit_coverage_caption(fit):
+    """One line for a fit whose timestamps did not cover the expected transit.
+
+    The pre-UltraNest coverage assessment already says, in the log, when the
+    observed points do not overlap the ephemeris-predicted transit window and
+    the fit is not expected to succeed.  The fit still runs, still draws a
+    model, still writes an AAVSO file, and the observer reads the plot and the
+    file, not the log.  This puts the same verdict where it will be seen.
+
+    Returns None when the assessment was not run, was invalid, or expected the
+    fit to succeed, so covered nights are unchanged.
+    """
+    if fit is None or not getattr(fit, 'pre_ultranest_transit_coverage_valid', False):
+        return None
+    if getattr(fit, 'pre_ultranest_transit_coverage_expected_successful', True):
+        return None
+    assessment = getattr(fit, 'pre_ultranest_transit_coverage', None)
+    assessment = assessment if isinstance(assessment, dict) else {}
+    segment = assessment.get('observed_segment') or 'coverage unknown'
+    label = (
+        getattr(fit, 'pre_ultranest_transit_coverage_status', None)
+        or assessment.get('success_label')
+        or 'unknown'
+    )
+    try:
+        observed = f"{100.0 * float(assessment.get('transit_fraction_observed')):.0f}%"
+    except (TypeError, ValueError):
+        observed = "?%"
+    return f"COVERAGE {observed}: {segment}; fit success {str(label).upper()}"
+
+
+def aavso_notes_text(notes, fit):
+    """The #NOTES value: the observer's notes, plus EXOTIC's own coverage verdict
+    when the observed timestamps did not cover the expected transit window."""
+    caption = transit_coverage_caption(fit)
+    if not caption:
+        return "" if notes is None else str(notes)
+    notes_text = format_aavso_header_value(notes)
+    caption = f"EXOTIC {caption}"
+    return f"{notes_text} | {caption}" if notes_text else caption
 
 
 def format_aavso_header_value(value):

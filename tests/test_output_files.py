@@ -12,6 +12,7 @@ from exotic.output_files import (
     AIDOutputFiles,
     OutputFiles,
     aavso_detrend_model,
+    aavso_notes_text,
     aid_comparison_coordinate_headers,
     aavso_dicts,
     aavso_undetrended_flux_series,
@@ -2429,3 +2430,29 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     assert bad_pixel["enabled"] is True
     assert bad_pixel["bad_pixel_count"] == 3
     assert bad_pixel["counts_path"] == "BadPixelDetectionCounts.fits"
+
+
+def test_aavso_notes_carry_the_coverage_verdict_only_when_the_fit_was_not_expected_to_succeed():
+    uncovered = SimpleNamespace(
+        pre_ultranest_transit_coverage_valid=True,
+        pre_ultranest_transit_coverage_expected_successful=False,
+        pre_ultranest_transit_coverage_status="very low",
+        pre_ultranest_transit_coverage={
+            "observed_segment": "pre-transit baseline only",
+            "transit_fraction_observed": 0.0,
+        },
+    )
+    caption = (
+        "EXOTIC COVERAGE: pre-transit baseline only; 0% of the expected transit window "
+        "observed; fit success VERY LOW"
+    )
+    assert aavso_notes_text("MObs night", uncovered) == f"MObs night | {caption}"
+    assert aavso_notes_text("na", uncovered) == caption
+    assert aavso_notes_text("", uncovered) == caption
+
+    covered = SimpleNamespace(
+        pre_ultranest_transit_coverage_valid=True,
+        pre_ultranest_transit_coverage_expected_successful=True,
+    )
+    assert aavso_notes_text("na", covered) == "na"
+    assert aavso_notes_text("MObs night", DummyFit()) == "MObs night"

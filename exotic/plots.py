@@ -34,6 +34,7 @@ try:
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
         fit_parameter_model_data_uncertainty,
+        transit_coverage_caption,
     )
 except ImportError:
     from .output_files import (
@@ -42,6 +43,7 @@ except ImportError:
         fit_empirical_transit_uncertainty,
         fit_impact_parameter_value_error,
         fit_parameter_model_data_uncertainty,
+        transit_coverage_caption,
     )
 
 plt.style.use(astropy_mpl_style)
@@ -1484,6 +1486,9 @@ def _build_final_lightcurve_figure(
         title = f"{targ_name}\nFULL DATA / FULL LIGHT CURVE (DIAGNOSTIC)"
     else:
         title = targ_name
+    coverage_caption = transit_coverage_caption(fit)
+    if coverage_caption:
+        title = f"{title}\n{coverage_caption}"
     ax_lc.set_title(title)
 
     drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)

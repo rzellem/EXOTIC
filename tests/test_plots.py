@@ -1044,3 +1044,67 @@ def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypat
 
 def test_ktmf_plot_shortens_tmid_posterior_gaussianity_label():
     assert _short_ktmf_label("Tmid Posterior Gaussianity") == "Tmid Gaussianity"
+
+
+def test_final_lightcurve_title_carries_low_coverage_verdict():
+    class DummyFinalFit:
+        def __init__(self):
+            self.phase_upsample = np.linspace(-0.05, 0.05, 5)
+            self.transit_upsample = np.ones(5)
+            self.pre_ultranest_transit_coverage_valid = True
+            self.pre_ultranest_transit_coverage_expected_successful = False
+            self.pre_ultranest_transit_coverage_status = "very low"
+            self.pre_ultranest_transit_coverage = {
+                "valid": True,
+                "observed_segment": "pre-transit baseline only",
+                "transit_fraction_observed": 0.0,
+                "success_label": "very low",
+            }
+
+        def plot_bestfit(self, **kwargs):
+            fig, axes = plt.subplots(2, 1)
+            return fig, axes
+
+    fit = DummyFinalFit()
+    figure = plots_module._build_final_lightcurve_figure(
+        fit,
+        np.ones(5),
+        "Target",
+        show_restricted_baseline_points=False,
+        show_binned_points=False,
+    )
+    title = figure.axes[0].get_title()
+    plt.close(figure)
+
+    assert title.splitlines()[0] == "Target"
+    assert (
+        "COVERAGE: pre-transit baseline only; 0% of the expected transit window observed; "
+        "fit success VERY LOW"
+    ) in title
+
+
+def test_final_lightcurve_title_is_unchanged_when_coverage_was_expected_to_succeed():
+    class DummyFinalFit:
+        def __init__(self):
+            self.phase_upsample = np.linspace(-0.05, 0.05, 5)
+            self.transit_upsample = np.ones(5)
+            self.pre_ultranest_transit_coverage_valid = True
+            self.pre_ultranest_transit_coverage_expected_successful = True
+            self.pre_ultranest_transit_coverage = {"observed_segment": "full transit"}
+
+        def plot_bestfit(self, **kwargs):
+            fig, axes = plt.subplots(2, 1)
+            return fig, axes
+
+    figure = plots_module._build_final_lightcurve_figure(
+        DummyFinalFit(),
+        np.ones(5),
+        "Target",
+        show_restricted_baseline_points=False,
+        show_binned_points=False,
+    )
+    title = figure.axes[0].get_title()
+    plt.close(figure)
+
+    assert title == "Target"
+    assert plots_module.transit_coverage_caption(SimpleNamespace()) is None

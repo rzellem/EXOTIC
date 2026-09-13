@@ -356,7 +356,7 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
     plty = [max(0, min(plotted_y) - picframe), min(np.shape(image)[0], max(plotted_y) + picframe)]
 
     for stretch in [LinearStretch(), SquaredStretch(), SqrtStretch(), LogStretch()]:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(9, 6.5))
 
         # Set color for target and reference outer circles based on opt_method
         if opt_method == "Aperture":
@@ -378,22 +378,21 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
             local_sky_inner_radius = float(sky_inner_radius)
             local_sky_outer_radius = float(sky_outer_radius)
 
-        target_circle = plt.Circle((x_targ, y_targ), abs(aper), color=outer_circle_color, fill=False, ls='-')
-        target_circle_sky_inner = plt.Circle((x_targ, y_targ), local_sky_inner_radius, color=outer_circle_color, fill=False, ls='--')
-        target_circle_sky_outer = plt.Circle((x_targ, y_targ), local_sky_outer_radius, color=outer_circle_color, fill=False, ls='-')
+        target_circle = plt.Circle((x_targ, y_targ), abs(aper), color='cyan', fill=False, ls='-')
+        target_circle_sky_inner = plt.Circle((x_targ, y_targ), local_sky_inner_radius, color='cyan', fill=False, ls='--')
+        target_circle_sky_outer = plt.Circle((x_targ, y_targ), local_sky_outer_radius, color='cyan', fill=False, ls='-')
 
         interval = ZScaleInterval()
         vmin, vmax = interval.get_limits(image)
 
         norm = ImageNormalize(image, interval=interval, stretch=stretch, vmin=vmin, vmax=vmax)
 
-        im = plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
-        fig.colorbar(im)
+        plt.imshow(image, norm=norm, origin='lower', cmap='Greys_r', interpolation=None)
 
         ax.add_artist(target_circle)
         ax.add_artist(target_circle_sky_inner)
         ax.add_artist(target_circle_sky_outer)
-        ax.text(x_targ + local_sky_outer_radius + 5, y_targ, targ_name, color='w', fontsize=10,
+        ax.text(x_targ + local_sky_outer_radius + 5, y_targ, f'Target: {targ_name}', color='cyan', fontsize=10,
                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')])
 
         for (comparison_x, comparison_y), comparison_label in zip(
@@ -422,35 +421,21 @@ def plot_fov(aper, annulus, sigma, x_targ, y_targ, x_ref, y_ref, image, image_sc
                 path_effects=[path_effects.withStroke(linewidth=2, foreground='black')],
             )
 
-        handles = []
         if opt_method == "PSF":
-            label_aper = "PSF Photometry"
+            photometry_details = "PSF Photometry"
         else:
-            label_aper = (
-                f"{opt_method} Photometry\n"
-                f"(Min Aper: {abs(min_aper_fov):.2f} px)\n"
-                f"(Min Annulus: {min_annulus_fov:.2f} px)"
+            photometry_details = (
+                f"{opt_method} Photometry | Min aperture: {abs(min_aper_fov):.2f} px"
+                f" | Min annulus: {min_annulus_fov:.2f} px"
             )
-        
-        if opt_method == "Aperture":
-            aperture_line = Line2D([], [], color=outer_circle_color, linestyle='-', label=label_aper)
-            handles.append(aperture_line)
-        elif opt_method == "PSF":
-            psf_line = Line2D([], [], color=outer_circle_color, linestyle='-', label=label_aper)
-            handles.append(psf_line)
 
-        plt.title(f"FOV for {targ_name}\n({image_scale})")
+        ax.set_title(f"FOV for {targ_name}\n({image_scale})\n{photometry_details}",
+                     fontsize=12, pad=10)
         plt.xlabel("x-axis [pixel]")
         plt.ylabel("y-axis [pixel]")
         plt.xlim(pltx[0], pltx[1])
         plt.ylim(plty[0], plty[1])
         ax.grid(False)
-
-        if handles:
-            l = plt.legend(handles=handles, framealpha=0.75)
-            for text in l.get_texts():
-                text.set_color("k")
-                text.set_path_effects([path_effects.withStroke(linewidth=1.5, foreground='white')])
 
         apos = '\''
         Path(save).mkdir(parents=True, exist_ok=True)

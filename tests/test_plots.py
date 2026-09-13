@@ -308,17 +308,13 @@ def test_plot_adaptive_aperture_diagnostics_writes_outputs(tmp_path):
     assert (tmp_path / "working_artifacts" / "AdaptiveApertureDiagnostics_Target_2026-03-09.pdf").exists()
 
 
-def test_plot_fov_psf_legend_omits_aperture_annulus_text(tmp_path, monkeypatch):
-    labels = []
+def test_plot_fov_psf_header_omits_aperture_annulus_text(tmp_path, monkeypatch):
+    figures = []
 
-    original_legend = plt.legend
+    def capture_figure(*args, **kwargs):
+        figures.append(plt.gcf())
 
-    def spy_legend(*args, **kwargs):
-        legend = original_legend(*args, **kwargs)
-        labels.extend(text.get_text() for text in legend.get_texts())
-        return legend
-
-    monkeypatch.setattr(plt, "legend", spy_legend)
+    monkeypatch.setattr(plt, "savefig", capture_figure)
 
     plot_fov(
         aper=20.0,
@@ -338,8 +334,12 @@ def test_plot_fov_psf_legend_omits_aperture_annulus_text(tmp_path, monkeypatch):
         min_annulus_fov=61.31,
     )
 
-    assert labels
-    assert set(labels) == {"PSF Photometry"}
+    assert figures
+    for figure in figures:
+        assert len(figure.axes) == 1
+        ax = figure.axes[0]
+        assert ax.get_legend() is None
+        assert ax.get_title().splitlines()[-1] == "PSF Photometry"
 
 
 def test_plot_fov_marks_every_ensemble_comparison(tmp_path, monkeypatch):
@@ -372,7 +372,7 @@ def test_plot_fov_marks_every_ensemble_comparison(tmp_path, monkeypatch):
         comparison_labels=["Comp 1", "Comp 3", "Comp 4"],
     )
 
-    assert {"Target", "Comp 1", "Comp 3", "Comp 4"}.issubset(plotted_labels)
+    assert {"Target: Target", "Comp 1", "Comp 3", "Comp 4"}.issubset(plotted_labels)
     assert (
         tmp_path / "working_artifacts" / "FOV_Target_LinearStretch_2026-03-09.png"
     ).is_file()

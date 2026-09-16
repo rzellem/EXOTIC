@@ -16410,6 +16410,7 @@ def run_inits_preflight(init_path, use_nextastro_astrometry=False):
         report.passed(False, 'planet found in the NASA Exoplanet Archive', f"{planet_name}: {type(exc).__name__}: {exc}")
     if archive is not None:
         inits_preflight.compare_archive_parameters(planet_dict, archive, report)
+    inits_preflight.check_transit_geometry(planet_dict, report)
 
     # --- timing ----------------------------------------------------------------
     def value_or_archive(key):

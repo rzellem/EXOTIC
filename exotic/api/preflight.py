@@ -43,6 +43,8 @@ hour of reduction has been spent on it:
 
   * planetary parameters copied from a template and never edited
     (archive agreement: period, Rp/Rs, a/Rs, inclination)
+  * a geometry that does not transit at all (b >= 1 + Rp/Rs), which the
+    archive comparison cannot see when the archive row itself is the problem
   * an ephemeris whose transit does not fall in the observing window
   * a target pixel that is not on the target (checked against a WCS)
   * comparison stars off the frame, saturated, or within noise of blank sky
@@ -137,6 +139,36 @@ def compare_archive_parameters(planet_dict, archive_dict, report, tolerances=ARC
         relative = abs(mine - theirs) / abs(theirs)
         report.passed(relative <= tolerance, label,
                       f"inits {mine}  archive {theirs}  ({relative * 100:.2f}% off, tolerance {tolerance * 100:g}%)")
+    return report
+
+
+def check_transit_geometry(planet_dict, report):
+    """Check that the given geometry actually transits.
+
+    The impact parameter follows from a/Rs and the inclination alone. A set of
+    priors with b >= 1 + Rp/Rs describes a planet that misses its star; every
+    downstream fit then has a flat model available at no cost, and the reported
+    mid-transit time is a number timed on nothing (WASP-53 b, 2026-09-15: inc
+    83.40 and a/Rs 11.78 gave b = 1.35 and a straight line under a legend that
+    quoted a depth). The archive comparison cannot catch this when the archive
+    is unreachable or the archive row itself is inconsistent; this check needs
+    no network.
+    """
+    label = 'given geometry transits'
+    rprs = _finite(planet_dict.get('rprs'))
+    ars = _finite(planet_dict.get('aRs'))
+    inc = _finite(planet_dict.get('inc'))
+    if rprs is None or ars is None or inc is None:
+        report.skip(label, 'Rp/Rs, a/Rs and inclination are all needed')
+        return report
+    b = abs(ars * np.cos(np.radians(inc)))
+    detail = f"b = a/Rs cos(i) = {b:.3f}  (1 + Rp/Rs = {1 + rprs:.3f})"
+    if b >= 1 + rprs:
+        report.passed(False, label, f"no transit: {detail}")
+    elif b > 1 - rprs:
+        report.look(False, label, f"grazing: {detail}")
+    else:
+        report.passed(True, label, detail)
     return report
 
 

@@ -295,6 +295,25 @@ class NASAExoplanetArchive:
         # Send the request
         response = requests.get(uri_full, timeout=self.requests_timeout)
 
+        # A non-CSV answer is an outage, not data. On 2026-09-17 the archive put
+        # a Cloudflare browser challenge in front of TAP/sync (HTTP 403,
+        # "cf-mitigated: challenge", an HTML page saying "Just a moment...");
+        # parsing that page as CSV produced "'DataFrame' object has no attribute
+        # 'pl_name'" three slow retries later, and the NextAstro cache fallback
+        # never ran because that is not a RequestException. Raise one, so the
+        # existing retry-then-cache path handles it and the message says what
+        # actually happened.
+        content_type = response.headers.get('content-type', '')
+        if response.status_code != 200 or 'text/html' in content_type:
+            reason = ("a browser challenge (Cloudflare 'cf-mitigated: challenge')"
+                      if response.headers.get('cf-mitigated') == 'challenge' or 'Just a moment' in response.text[:2000]
+                      else f"HTTP {response.status_code} with content-type {content_type or 'unknown'}")
+            raise requests.exceptions.RequestException(
+                f"The NASA Exoplanet Archive API returned {reason} instead of data. The archive itself is "
+                "reachable in a browser; its API is temporarily unavailable to scripts. EXOTIC will use cached "
+                "parameters if it has them; otherwise enter the planetary parameters in the initialization file "
+                "from https://exoplanetarchive.ipac.caltech.edu and run again.")
+
         if dataframe:
             return pandas.read_csv(StringIO(response.text))
         else:
@@ -510,8 +529,8 @@ class NASAExoplanetArchive:
             'aRsUnc': float(np.sqrt(np.abs(data.get('pl_ratdorerr1', 1) * data['pl_ratdorerr2']))) if 'pl_ratdorerr2' in data and data['pl_ratdorerr2'] is not None else 0.1,
             'inc': float(data['pl_orbincl']) if 'pl_orbincl' in data and data['pl_orbincl'] is not None else np.nan,
             'incUnc': float(np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2']))) if 'pl_orbinclerr1' in data and 'pl_orbinclerr2' in data and data['pl_orbinclerr1'] is not None and data['pl_orbinclerr2'] is not None else 0.1,
-            'omega': float(data.get('pl_orblper', 0)),
-            'ecc': float(data.get('pl_orbeccen', 0)),
+            'omega': float(data.get('pl_orblper') or 0),
+            'ecc': float(data.get('pl_orbeccen') or 0),
             'teff': float(data['st_teff']) if 'st_teff' in data and data['st_teff'] is not None else np.nan,
             'teffUncPos': float(data['st_tefferr1']) if 'st_tefferr1' in data and data['st_tefferr1'] is not None else np.nan,
             'teffUncNeg': float(data['st_tefferr2']) if 'st_tefferr2' in data and data['st_tefferr2'] is not None else np.nan,

@@ -44,6 +44,7 @@ except ImportError:
     import importlib_metadata as metadata  # Python <3.8
 
 from pathlib import Path
+from importlib import import_module
 import sys
 
 # Extend PYTHONPATH to include current directory and parent directory
@@ -72,3 +73,40 @@ except metadata.PackageNotFoundError:
     except IOError:
         # Unable to read from exotic script
         __version__ = "unknown"
+
+
+def _load_runtime_callable(name):
+    """Load CLI entry points lazily without importing the full runtime at package import."""
+    current_module = sys.modules.get(__name__)
+    module_names = [f"{__name__}.exotic", "exotic.exotic"]
+
+    seen = set()
+    for module_name in module_names:
+        if module_name in seen:
+            continue
+        seen.add(module_name)
+
+        try:
+            module = import_module(module_name)
+        except ModuleNotFoundError as exc:
+            if exc.name == module_name:
+                continue
+            raise
+        if module is current_module:
+            continue
+        runtime_callable = getattr(module, name, None)
+        if runtime_callable is not None:
+            return runtime_callable
+
+    raise ImportError(f"cannot import name '{name}' from '{__name__}'")
+
+
+def main(*args, **kwargs):
+    return _load_runtime_callable("main")(*args, **kwargs)
+
+
+def cli(*args, **kwargs):
+    return _load_runtime_callable("cli")(*args, **kwargs)
+
+
+__all__ = ["__version__", "main", "cli"]

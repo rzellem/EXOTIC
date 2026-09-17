@@ -1,0 +1,36 @@
+name: Python tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install EXOTIC and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Verify the default install works without MPI
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('mpi4py') is None"
+          python -c "import ldtk; import exotic.exotic"
+      - name: Run tests
+        env:
+          MPLBACKEND: Agg
+        run: python -m pytest -q

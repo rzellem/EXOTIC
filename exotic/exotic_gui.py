@@ -48,6 +48,7 @@ import json
 import os
 import platform
 import python_version
+import re
 import subprocess
 import sys
 
@@ -76,6 +77,11 @@ try:  # simple version
     from .version import __version__
 except ImportError:  # package import
     from version import __version__
+
+try:
+    from .inputs import parse_aavso_comp_star, parse_aavso_prereduced_overrides
+except ImportError:
+    from inputs import parse_aavso_comp_star, parse_aavso_prereduced_overrides
 
 animate_toggle()
 
@@ -120,6 +126,55 @@ class FileSelect(tk.Frame):
     @property
     def file_path(self):
         return self.filePath.get()
+
+
+def stringify_prefill(value):
+    if value is None:
+        return ""
+    return str(value)
+
+
+def normalize_filter_option_lookup(value):
+    if value is None:
+        return None
+    return re.sub(r'[\W_]+', '', str(value).strip().lower())
+
+
+def preselected_filter_option(prefill, choices):
+    if not isinstance(prefill, dict):
+        return choices[0]
+
+    filter_desc = prefill.get('filter_desc')
+    filter_value = prefill.get('filter')
+    if filter_desc in photometric_filters:
+        return filter_desc
+    if filter_value in photometric_filters:
+        return filter_value
+
+    normalized_candidates = {
+        normalize_filter_option_lookup(filter_desc),
+        normalize_filter_option_lookup(filter_value),
+    }
+    normalized_candidates.discard(None)
+
+    for option in choices:
+        if option == "N/A":
+            continue
+        option_metadata = photometric_filters.get(option, {})
+        if normalize_filter_option_lookup(option) in normalized_candidates:
+            return option
+        if normalize_filter_option_lookup(option_metadata.get('name')) in normalized_candidates:
+            return option
+
+    if prefill.get('wl_min') and prefill.get('wl_max'):
+        return "N/A"
+    return choices[0]
+
+
+def gui_reduction_command(reduction_choice, input_kind=1):
+    if reduction_choice == 3:
+        return '--quick-look'
+    return '--reduce' if input_kind == 1 else '--prereduced'
 
 
 def main():
@@ -191,6 +246,15 @@ def main():
                    padx=20,
                    variable=reduction_opt,
                    value=2).pack(anchor=tk.W)
+    tk.Radiobutton(
+        root,
+        text=("Quick Look Reduction — preliminary scientific results using fast least-squares "
+              "analysis (aperture-only for FITS data)."),
+        justify=tk.LEFT,
+        padx=20,
+        variable=reduction_opt,
+        value=3,
+    ).pack(anchor=tk.W)
     reduction_opt.set(2)
 
     # Button for closing
@@ -258,7 +322,10 @@ def main():
             #         "Planet Name": "HAT-P-32 b",
             planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
             planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('planet')) or "HAT-P-32 b",
+            )
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -272,7 +339,7 @@ def main():
 
             comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    "
                                                 "(Note: You can use the AAVSO's VSP to help you find\n    "
-                                                "good comparison stars: https://app.aavso.org/vsp/)",
+                                                "good comparison stars: https://apps.aavso.org/vsp/)",
                                      justify=tk.LEFT)
             comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             comppos_entry.insert(tk.END, "[x, y]")
@@ -352,7 +419,7 @@ def main():
                 "Comment4": "and is only here to serve as a guide. Will be updated per user's advice.",
                 "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
                 "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
-                "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
+                "Comparison Star(s) Guide": "Provide comparison stars either as X/Y pixels or as RA/Dec coordinates, but not both. RA/Dec requires a usable reference-image WCS.",
                 "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Plate Solution": "For your image to be given a plate solution, type y.",
@@ -363,6 +430,39 @@ def main():
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
+                "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
+                "Pixel Alignment Fallback": "Set optional_info 'allow_pixel_alignment_fallback' to false to require WCS-only processing and drop every frame without celestial WCS. Default true; EXOTIC prefers WCS when coverage is consistent and otherwise retains the sequence for legacy alignment.",
+                "Bad WCS Threshold Percent": "When allow_pixel_alignment_fallback is true, set optional_info 'bad_wcs_threshold_percent' to the maximum percent of images allowed to lack celestial WCS while still using WCS-only processing. Below the threshold, missing-WCS frames are dropped; at or above it, all frames are retained for alignment fallback. Default 3.",
+                "Prefer Pixel Coordinates Over WCS": "Set optional_info 'prefer_pixel_values_over_wcs_for_target' to y to keep the entered target pixel coordinates when they conflict with WCS-derived target coordinates. Default n.",
+                "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
+                "Stellar Variability Only": "Set optional_info 'stellar_variability_only' to true to skip transit fitting, select comparison-star photometry by out-of-transit scatter, and discard predicted ingress-to-egress transit-window points. Default false.",
+                "Apparent Magnitudes Required": "Set optional_info 'require_apparent_magnitudes' to false when catalogue-calibrated apparent magnitudes are not required. Differential-magnitude products remain independent of catalogue calibration. Stellar-variability magnitudes use the raw target/reference ratio with no airmass correction. Default true.",
+                "Use Exactly Supplied Comparisons": "Set optional_info 'use_exactly_the_comps_provided' to true to use only the supplied X/Y or RA/Dec comparison coordinates with no replacement, addition, vetting, ranking, or ensemble-size limit. One comparison is used alone; multiple comparisons are all used as a fixed ensemble. Default false.",
+                "Maximum Transit Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_transit' to the largest number of comparison stars used by the transit-fit ensemble. Default 5; minimum 2; no configured upper limit.",
+                "Maximum Stellar-Variability Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_stellar_variability' to the largest number of comparison stars used by stellar-variability-only and fortuitous-variable ensembles. Default 5; minimum 2; no configured upper limit.",
+                "Detect Bad Pixels Before Photometry": "Set optional_info 'detect_bad_pixels_before_photometry' to y to scan the frame stack for persistent isolated high-count bad pixels before plate-solve checks and photometry, save the detection count image and mask into working_artifacts/, and median-8 repair those pixels before centroiding and photometry. Default n.",
+                "Multiprocess Bad-Pixel Precheck": "Set optional_info 'multiprocess_bad_pixel_precheck' to y or a positive process count to scan bad pixels in parallel. Default n.",
+                "Out-of-Transit Baseline Detrending": "Set optional_info 'detrend_on_outoftransit_baseline' to true to run a second-pass final fit after dividing out a weighted linear trend fit only to the modeled out-of-transit baseline before ingress and after egress. Default true.",
+                "Final Fit Baseline Duration Multiplier": "Set optional_info 'final_fit_baseline_duration_multiplier' to the number of fitted transit durations to keep as baseline before ingress and after egress during the automatic final-fit prefit/refit. Default 1.0.",
+                "Restrict Baseline to an Hour": "Set optional_info 'restrict_baseline_to_an_hour' to false to include photometry more than one hour before ingress or after egress in the transit fit. Photometry remains measured; points that survive ordinary pre-fit clipping are plotted blue, while sigma-clipped points remain rejected. Default true.",
+                "Quick Look Mode": "Set optional_info 'quick_look_mode' to true to request preliminary least-squares Quick Look analysis from this initialization file. Default false; a missing entry runs the normal full route. Supports FITS and pre-reduced inputs.",
+                "EEBLS Tmid Initializer": "Set optional_info 'use_eebls_to_initialize_tmid_and_bounds' to y to run a fixed-period box least squares search over the light curve, use the strongest bracketed transit-like signal to initialize Tmid, and narrow the Tmid search range before fitting. Default y.",
+                "Pick Comparison by EEBLS SNR": "Set optional_info 'pick_comparison_by_eebls_snr' to y to prefer the comparison star whose target light curve yields the highest finite EEBLS SNR, falling back to residual scatter if no usable EEBLS SNR is available. Default y.",
+                "Impact Parameter Fit": "Set optional_info 'use_impactparameter_rather_than_inclination_to_fit' to y to sample impact parameter instead of inclination in nested fitting and triangle plots. Default y.",
+                "Maximum Rp/Rs Search Bound": "Set optional_info 'rprs_search_bound_max' to cap the nested-fit Rp/Rs search range. Default 0.5.",
+                "Restrict Rp/Rs Search Range": "Set optional_info 'restrict_Rp/Rs_range' to y to restrict Rp/Rs to a prior-centered percentage window. Set 'restrict_Rp/Rs_range_percentage' to control the half-width. Defaults y and 10.",
+                "Prior Rp/Rs Fallback For Pinned Posterior": "Set optional_info 'use_prior_Rp/Rs_when_posterior_pinned' to y to rerun a fit with Rp/Rs fixed to the input prior and quote a data-only Rp/Rs uncertainty when the Rp/Rs posterior remains edge-pinned after retry handling. Default y.",
+                "Restrict a/Rs Search Range": "Set optional_info 'restrict_a/Rs_range' to y to restrict a/Rs to a prior-centered percentage window. Set 'restrict_a/Rs_range_percentage' to control the half-width. Defaults y and 10.",
+                "Sparse Posterior Live-Point Retry": "Set optional_info 'use_sparse_posterior_live_point_retry' to y to rank comparison-star candidates at the configured UltraNest live-point count, then continue the chosen final comparison-star fit with 5x additional minimum live points using its retained final-pass bounds. Standalone final fits still only continue when Rp/Rs, Tmid, or a/Rs posteriors are too sparse. Set to n to disable. Default y.",
+                "LM Boundary Scout Before UltraNest": "Set optional_info 'use_lm_boundary_scout_before_ultranest' to y to run fast deterministic fits first and expand any edge-limited Rp/Rs, a/Rs, or Tmid bounds before launching UltraNest. The original search range is preserved and posterior retries remain available. Default y.",
+                "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
+                "Reject Overexposed Stars": "Set optional_info 'reject_overexposed_stars' to true to reject overexposed target frames and overexposed comparison-star measurements. Default true.",
+                "Saturation Value": "Set optional_info 'saturation_value' to the detector saturation value in the same units as the image pixels. If omitted/default, EXOTIC uses FITS SATURATE when available, maps TELESCOP Cecilia to 4096, otherwise uses 65535.",
+                "Overexposure Threshold Fraction": "Set optional_info 'overexposure_threshold_fraction' to the fraction of saturation used for rejection. Default 0.9.",
+                "Photometry Noise Budget": "Optional noise terms for raw-image photometry: gain_electrons_per_adu, read_noise_electrons, dark_current_electrons_per_second_per_pixel, flat_field_fractional_error, telescope_aperture_m, and scintillation_coefficient. Leave null to ignore an optional term.",
+                "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
+                "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
+                "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -371,11 +471,46 @@ def main():
 
                 "Target Star X & Y Pixel": input_data['targetpos'],
                 "Comparison Star(s) X & Y Pixel": [input_data['comppos']],
+                "Comparison Star(s) RA & Dec": null,
                 "Demosaic Format": null, # TODO add GUI input for these
                 "Demosaic Output": null
             }
             new_inits['planetary_parameters'] = {
                 "Planet Name": input_data['pName'],
+            }
+            new_inits['optional_info'] = {
+                "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                "allow_pixel_alignment_fallback": True,
+                "bad_wcs_threshold_percent": 3.0,
+                "prefer_pixel_values_over_wcs_for_target": "n",
+                "disable vertical flux normalization": False,
+                "stellar_variability_only": False,
+                "require_apparent_magnitudes": True,
+                "use_exactly_the_comps_provided": False,
+                "maximum_number_of_ensemble_comparisons_for_transit": 5,
+                "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
+                "detect_bad_pixels_before_photometry": "n",
+                "multiprocess_bad_pixel_precheck": "n",
+                "detrend_on_outoftransit_baseline": True,
+                "final_fit_baseline_duration_multiplier": 1.0,
+                "restrict_baseline_to_an_hour": True,
+                "use_eebls_to_initialize_tmid_and_bounds": "y",
+                "pick_comparison_by_eebls_snr": "y",
+                "use_impactparameter_rather_than_inclination_to_fit": "y",
+                "rprs_search_bound_max": 0.5,
+                "restrict_Rp/Rs_range": "y",
+                "restrict_Rp/Rs_range_percentage": 10.0,
+                "use_prior_Rp/Rs_when_posterior_pinned": "y",
+                "restrict_a/Rs_range": "y",
+                "restrict_a/Rs_range_percentage": 10.0,
+                "use_sparse_posterior_live_point_retry": "y",
+                "use_lm_boundary_scout_before_ultranest": "y",
+                "use_adaptive_apertures": False,
+                "reject_overexposed_stars": True,
+                "saturation_value": 65535,
+                "overexposure_threshold_fraction": 0.9,
+                "Use target-driven comp selection rather than comp-driven comp selection": "n",
+                "require_comp_star": "y"
             }
 
             now = datetime.now()
@@ -431,11 +566,11 @@ def main():
             print("################################################\n\n")
             pass
     else:
-        root=tk.Tk() 
+        fitsortext = tk.IntVar()
+        input_data = {}  # for saving entries
+        root=tk.Tk()
         root.protocol("WM_DELETE_WINDOW", exit)
         root.title(f"EXOTIC v{__version__}")
-
-        fitsortext = tk.IntVar()
 
         tk.Label(root,
                  text="""How do you want to run EXOTIC?""",
@@ -459,8 +594,6 @@ def main():
         # Button for closing
         exit_button = tk.Button(root, text="Next", command=root.destroy)
         exit_button.pack(pady=20, anchor=tk.E)
-        input_data = {}  # for saving entries
-
         root.mainloop()
 
         if fitsortext.get() == 2:
@@ -498,41 +631,29 @@ def main():
             exp_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
-            comp_star_label = tk.Label(root, text="Comparison Star used in Photometry (leave blank if none):",
-                                       justify=tk.LEFT)
-            comp_star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_ra_label = tk.Label(root, text="Comparison Star RA", justify=tk.LEFT)
-            comp_star_ra_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_ra_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_ra_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_dec_label = tk.Label(root, text="Comparison Star DEC", justify=tk.LEFT)
-            comp_star_dec_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_dec_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_dec_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_x_label = tk.Label(root, text="Comparison Star X Pixel Coordinate", justify=tk.LEFT)
-            comp_star_x_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_x_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_x_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
-            i += 1
-
-            comp_star_y_label = tk.Label(root, text="Comparison Star Y Pixel Coordinate", justify=tk.LEFT)
-            comp_star_y_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            comp_star_y_label.grid(row=i, column=j, sticky=tk.W, pady=2)
-            comp_star_y_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            comp_star_note = tk.Label(
+                root,
+                text="Leave these blank to load time, units, exposure, filter, and comparison-star metadata from an AAVSO header when available.",
+                justify=tk.LEFT
+            )
+            comp_star_note.grid(row=i, column=j, columnspan=2, sticky=tk.W, pady=2)
             i += 1
 
             def save_input():
-                input_data['file_time'] = pretime_entry.get()
-                input_data['file_units'] = preunit_entry.get()
-                input_data['exp'] = float(exp_entry.get())
-                input_data['phot_comp_star'] = {'ra': comp_star_ra_entry.get(), 'dec': comp_star_dec_entry.get(),
-                                                'x': comp_star_x_entry.get(), 'y': comp_star_y_entry.get()}
+                aavso_prefill = parse_aavso_prereduced_overrides(prered_file.file_path)
+                exposure_text = exp_entry.get().strip()
+
+                input_data['aavso_prefill'] = aavso_prefill
+                input_data['file_time'] = pretime_entry.get().strip() or stringify_prefill(aavso_prefill.get('file_time'))
+                input_data['file_units'] = preunit_entry.get().strip() or stringify_prefill(aavso_prefill.get('file_units'))
+                input_data['exp'] = float(exposure_text) if exposure_text else aavso_prefill.get('exposure')
+                input_data['phot_comp_star'] = parse_aavso_comp_star(prered_file.file_path)
+                input_data['filtermin'] = aavso_prefill.get('wl_min')
+                input_data['filtermax'] = aavso_prefill.get('wl_max')
+                input_data['obs_name'] = stringify_prefill(aavso_prefill.get('obs_name'))
+                input_data['dist'] = aavso_prefill.get('dist')
+                input_data['pm_ra'] = aavso_prefill.get('pm_ra')
+                input_data['pm_dec'] = aavso_prefill.get('pm_dec')
                 root.destroy()
 
             # Button for closing
@@ -592,6 +713,7 @@ def main():
             # Set up rows + columns
             i = 1
             j = 0
+            aavso_prefill = input_data.get('aavso_prefill', {}) if fitsortext.get() == 2 else {}
 
             folderPath = tk.StringVar()
 
@@ -667,7 +789,7 @@ def main():
             #             # "AAVSO Observer Code (blank if none)": "RTZ",
             obscode_label = tk.Label(root, text="AAVSO Observer Code (leave blank if none)", justify=tk.LEFT)
             obscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            obscode_entry.insert(tk.END, "")
+            obscode_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('aavso_num')))
             obscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -676,7 +798,7 @@ def main():
             #             # "Secondary Observer Codes (blank if none)": "",
             secondobscode_label = tk.Label(root, text="Secondary Observer Codes (leave blank if none)", justify=tk.LEFT)
             secondobscode_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            secondobscode_entry.insert(tk.END, "")
+            secondobscode_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('second_obs')))
             secondobscode_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             secondobscode_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -684,28 +806,43 @@ def main():
             #             # "Observation date": "17-December-2017",
             obsdate_label = tk.Label(root, text="Observation date (e.g. DAY-MONTH-YEAR)", justify=tk.LEFT)
             obsdate_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            obsdate_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('date')))
             obsdate_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obsdate_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
             #
             # #             "Obs. Latitude": "+32.41638889",
-            lat_label = tk.Label(root, text="Obs. Latitude (+ = North; - = South; e.g. +32.41)", justify=tk.LEFT)
+            lat_label_text = "Obs. Latitude (+ = North; - = South; e.g. +32.41)"
+            if fitsortext.get() == 2:
+                lat_label_text += " [optional for pre-reduced runs]"
+            lat_label = tk.Label(root, text=lat_label_text, justify=tk.LEFT)
             lat_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            lat_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('lat')))
             lat_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             lat_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
             #
             # #             "Obs. Longitude": "-110.73444444",
-            long_label = tk.Label(root, text="Obs. Longitude (+ = East; - = West; e.g. -110.74) ", justify=tk.LEFT)
+            long_label_text = "Obs. Longitude (+ = East; - = West; e.g. -110.74)"
+            if fitsortext.get() == 2:
+                long_label_text += " [optional for pre-reduced runs]"
+            long_label = tk.Label(root, text=long_label_text, justify=tk.LEFT)
             long_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            long_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('long')))
             long_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             long_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
             #
             # #             "Obs. Elevation (meters)": 2616,
-            elevation_label = tk.Label(root, text="Obs. Elevation [meters]", justify=tk.LEFT)
+            elevation_label_text = "Obs. Elevation [meters]"
+            if fitsortext.get() == 2:
+                elevation_label_text += " [optional for pre-reduced runs]"
+            elevation_label = tk.Label(root, text=elevation_label_text, justify=tk.LEFT)
             elevation_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            elevation_entry.insert(tk.END, "0")
+            if fitsortext.get() == 1:
+                elevation_entry.insert(tk.END, "0")
+            elif aavso_prefill.get('elev') is not None:
+                elevation_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('elev')))
             elevation_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             elevation_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -717,6 +854,7 @@ def main():
                                              "then note your actual camera type under \"Observing Notes\" below)",
                                         justify=tk.LEFT)
             cameratype_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            cameratype_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('camera')))
             cameratype_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             cameratype_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -724,6 +862,7 @@ def main():
             # #             "Pixel Binning": "1x1",
             pixbin_label = tk.Label(root, text="Pixel Binning  (e.g 1x1)", justify=tk.LEFT)
             pixbin_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            pixbin_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('pixel_bin')))
             pixbin_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             pixbin_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -747,7 +886,7 @@ def main():
             choices = [item for item in photometric_filters.keys()] + ["N/A"]
             choices = sorted(set(choices))  # sort and list unique values
             filteroptions = tk.StringVar(root)
-            filteroptions.set(choices[0])  # default value
+            filteroptions.set(preselected_filter_option(aavso_prefill, choices))
 
             l3 = tk.Label(root, text='Filter (use N/A for custom)', justify=tk.LEFT)
             l3.grid(row=i, column=j, sticky=tk.W, pady=2)
@@ -768,6 +907,7 @@ def main():
             #              "Observing Notes": "Weather, seeing was nice.",
             obsnotes_label = tk.Label(root, text="Observing Notes", justify=tk.LEFT)
             obsnotes_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            obsnotes_entry.insert(tk.END, stringify_prefill(aavso_prefill.get('notes')))
             obsnotes_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             obsnotes_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -811,7 +951,7 @@ def main():
 
                 comppos_label = tk.Label(root, text="Comparison Star(s) X & Y Pixel Position(s)\n    "
                                                     "(Note: You can use the AAVSO's VSP to help you find\n    "
-                                                    "good comparison stars: https://app.aavso.org/vsp/)",
+                                                    "good comparison stars: https://apps.aavso.org/vsp/)",
                                          justify=tk.LEFT)
                 comppos_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
                 comppos_entry.insert(tk.END, "[x1, y1], [x2, y2]")
@@ -827,19 +967,24 @@ def main():
                 # root.mainloop()
 
             def save_input():
-                input_data['obsnotes'] = obsnotes_entry.get()
+                input_data['obsnotes'] = obsnotes_entry.get().strip() or stringify_prefill(aavso_prefill.get('notes'))
                 if filteroptions.get() == "N/A":
-                    input_data['obsfilter'] = "N/A"
+                    input_data['obsfilter'] = stringify_prefill(aavso_prefill.get('filter')) or "N/A"
                 else:
                     input_data['obsfilter'] = photometric_filters[filteroptions.get()]["name"]
-                input_data['pixbin'] = pixbin_entry.get()
-                input_data['cameratype'] = cameratype_entry.get()
-                input_data['obscode'] = obscode_entry.get()
-                input_data['secondobscode'] = secondobscode_entry.get()
-                input_data['obsdate'] = obsdate_entry.get()
-                input_data['lat'] = lat_entry.get()
-                input_data['long'] = long_entry.get()
-                input_data['elevation'] = float(elevation_entry.get())
+                input_data['pixbin'] = pixbin_entry.get().strip() or stringify_prefill(aavso_prefill.get('pixel_bin'))
+                input_data['cameratype'] = cameratype_entry.get().strip() or stringify_prefill(aavso_prefill.get('camera'))
+                input_data['obscode'] = obscode_entry.get().strip() or stringify_prefill(aavso_prefill.get('aavso_num'))
+                input_data['secondobscode'] = secondobscode_entry.get().strip() or stringify_prefill(aavso_prefill.get('second_obs'))
+                input_data['obsdate'] = obsdate_entry.get().strip() or stringify_prefill(aavso_prefill.get('date'))
+                input_data['lat'] = lat_entry.get().strip() or stringify_prefill(aavso_prefill.get('lat'))
+                input_data['long'] = long_entry.get().strip() or stringify_prefill(aavso_prefill.get('long'))
+                elevation_value = elevation_entry.get().strip()
+                if fitsortext.get() == 1 or elevation_value:
+                    input_data['elevation'] = float(elevation_value)
+                else:
+                    input_data['elevation'] = aavso_prefill.get('elev')
+                input_data['obs_name'] = stringify_prefill(aavso_prefill.get('obs_name'))
                 input_data['pixscale'] = pixscale_entry.get()
                 if fitsortext.get() == 1:
                     input_data['comppos'] = str(list(ast.literal_eval(comppos_entry.get())))
@@ -867,7 +1012,7 @@ def main():
             pass
 
         try:
-            if filteroptions.get() == "N/A":
+            if filteroptions.get() == "N/A" and (input_data.get('filtermin') is None or input_data.get('filtermax') is None):
                 root=tk.Tk() 
                 root.protocol("WM_DELETE_WINDOW", exit)
                 root.title(f"EXOTIC v{__version__}")
@@ -886,6 +1031,8 @@ def main():
                 # "Filter Minimum Wavelength (nm)": null,
                 filtermin_label = tk.Label(root, text="Filter Minimum Wavelength (nm)", justify=tk.LEFT)
                 filtermin_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+                if input_data.get('filtermin') is not None:
+                    filtermin_entry.insert(tk.END, stringify_prefill(input_data.get('filtermin')))
                 filtermin_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 filtermin_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
@@ -893,13 +1040,17 @@ def main():
                 # "Filter Maximum Wavelength (nm)": null
                 filtermax_label = tk.Label(root, text="Filter Maximum Wavelength (nm)", justify=tk.LEFT)
                 filtermax_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+                if input_data.get('filtermax') is not None:
+                    filtermax_entry.insert(tk.END, stringify_prefill(input_data.get('filtermax')))
                 filtermax_label.grid(row=i, column=j, sticky=tk.W, pady=2)
                 filtermax_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
                 i += 1
 
                 def save_input():
-                    input_data['filtermax'] = float(filtermax_entry.get())
-                    input_data['filtermin'] = float(filtermin_entry.get())
+                    filtermax_value = filtermax_entry.get().strip()
+                    filtermin_value = filtermin_entry.get().strip()
+                    input_data['filtermax'] = float(filtermax_value) if filtermax_value else input_data.get('filtermax')
+                    input_data['filtermin'] = float(filtermin_value) if filtermin_value else input_data.get('filtermin')
                     root.destroy()
 
                 # Button for closing
@@ -970,7 +1121,10 @@ def main():
             #         "Planet Name": "HAT-P-32 b",
             planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
             planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('planet')) or "HAT-P-32 b",
+            )
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -978,7 +1132,10 @@ def main():
             #         "Host Star Name": "HAT-P-32",
             star_label = tk.Label(root, text="Host Star Name", justify=tk.LEFT)
             star_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            star_entry.insert(tk.END, "HAT-P-32")
+            star_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('host_star')) or "HAT-P-32",
+            )
             star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             star_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -1227,7 +1384,10 @@ def main():
             #         "Planet Name": "HAT-P-32 b",
             planet_label = tk.Label(root, text="Planet Name", justify=tk.LEFT)
             planet_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            planet_entry.insert(tk.END, "HAT-P-32 b")
+            planet_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('planet')) or "HAT-P-32 b",
+            )
             planet_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             planet_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -1235,7 +1395,10 @@ def main():
             #         "Host Star Name": "HAT-P-32",
             star_label = tk.Label(root, text="Host Star Name", justify=tk.LEFT)
             star_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
-            star_entry.insert(tk.END, "HAT-P-32")
+            star_entry.insert(
+                tk.END,
+                stringify_prefill(input_data.get('aavso_prefill', {}).get('host_star')) or "HAT-P-32",
+            )
             star_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             star_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
@@ -1376,7 +1539,7 @@ def main():
                 "Comment4": "and is only here to serve as a guide. Will be updated per user's advice.",
                 "Image Calibrations Directory Guide": "Enter in the path to image calibrations or enter in null for none.",
                 "Planetary Parameters Guide": "For planetary parameters that are not filled in, enter in null.",
-                "Comparison Star(s) Guide": "Up to 10 comparison stars can be added following the format given below.",
+                "Comparison Star(s) Guide": "Provide comparison stars either as X/Y pixels or as RA/Dec coordinates, but not both. RA/Dec requires a usable reference-image WCS.",
                 "Obs. Latitude Guide": "Indicate the sign (+ North, - South) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Obs. Longitude Guide": "Indicate the sign (+ East, - West) before the degrees. Needs to be in decimal or HH:MM:SS format.",
                 "Plate Solution": "For your image to be given a plate solution, type y.",
@@ -1387,6 +1550,38 @@ def main():
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, [ R, G, B ] for custom weights for mixing colors.  green is default",
+                "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
+                "Pixel Alignment Fallback": "Set optional_info 'allow_pixel_alignment_fallback' to false to require WCS-only processing and drop every frame without celestial WCS. Default true; EXOTIC prefers WCS when coverage is consistent and otherwise retains the sequence for legacy alignment.",
+                "Bad WCS Threshold Percent": "When allow_pixel_alignment_fallback is true, set optional_info 'bad_wcs_threshold_percent' to the maximum percent of images allowed to lack celestial WCS while still using WCS-only processing. Below the threshold, missing-WCS frames are dropped; at or above it, all frames are retained for alignment fallback. Default 3.",
+                "Prefer Pixel Coordinates Over WCS": "Set optional_info 'prefer_pixel_values_over_wcs_for_target' to y to keep the entered target pixel coordinates when they conflict with WCS-derived target coordinates. Default n.",
+                "Vertical Flux Normalization": "Set optional_info 'disable vertical flux normalization' to true to disable the default a0 baseline bound of [0.95, 1.05]. Default false.",
+                "Stellar Variability Only": "Set optional_info 'stellar_variability_only' to true to skip transit fitting, select comparison-star photometry by out-of-transit scatter, and discard predicted ingress-to-egress transit-window points. Default false.",
+                "Apparent Magnitudes Required": "Set optional_info 'require_apparent_magnitudes' to false when catalogue-calibrated apparent magnitudes are not required. Differential-magnitude products remain independent of catalogue calibration. Stellar-variability magnitudes use the raw target/reference ratio with no airmass correction. Default true.",
+                "Use Exactly Supplied Comparisons": "Set optional_info 'use_exactly_the_comps_provided' to true to use only the supplied X/Y or RA/Dec comparison coordinates with no replacement, addition, vetting, ranking, or ensemble-size limit. One comparison is used alone; multiple comparisons are all used as a fixed ensemble. Default false.",
+                "Maximum Transit Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_transit' to the largest number of comparison stars used by the transit-fit ensemble. Default 5; minimum 2; no configured upper limit.",
+                "Maximum Stellar-Variability Ensemble Comparisons": "Set optional_info 'maximum_number_of_ensemble_comparisons_for_stellar_variability' to the largest number of comparison stars used by stellar-variability-only and fortuitous-variable ensembles. Default 5; minimum 2; no configured upper limit.",
+                "Detect Bad Pixels Before Photometry": "Set optional_info 'detect_bad_pixels_before_photometry' to y to scan the frame stack for persistent isolated high-count bad pixels before plate-solve checks and photometry, save the detection count image and mask into working_artifacts/, and median-8 repair those pixels before centroiding and photometry. Default n.",
+                "Multiprocess Bad-Pixel Precheck": "Set optional_info 'multiprocess_bad_pixel_precheck' to y or a positive process count to scan bad pixels in parallel. Default n.",
+                "Out-of-Transit Baseline Detrending": "Set optional_info 'detrend_on_outoftransit_baseline' to true to run a second-pass final fit after dividing out a weighted linear trend fit only to the modeled out-of-transit baseline before ingress and after egress. Default true.",
+                "Final Fit Baseline Duration Multiplier": "Set optional_info 'final_fit_baseline_duration_multiplier' to the number of fitted transit durations to keep as baseline before ingress and after egress during the automatic final-fit prefit/refit. Default 1.0.",
+                "Restrict Baseline to an Hour": "Set optional_info 'restrict_baseline_to_an_hour' to false to include photometry more than one hour before ingress or after egress in the transit fit. Photometry remains measured; points that survive ordinary pre-fit clipping are plotted blue, while sigma-clipped points remain rejected. Default true.",
+                "Quick Look Mode": "Set optional_info 'quick_look_mode' to true to request preliminary least-squares Quick Look analysis from this initialization file. Default false; a missing entry runs the normal full route. Supports FITS and pre-reduced inputs.",
+                "EEBLS Tmid Initializer": "Set optional_info 'use_eebls_to_initialize_tmid_and_bounds' to y to run a fixed-period box least squares search over the light curve, use the strongest bracketed transit-like signal to initialize Tmid, and narrow the Tmid search range before fitting. Default y.",
+                "Pick Comparison by EEBLS SNR": "Set optional_info 'pick_comparison_by_eebls_snr' to y to prefer the comparison star whose target light curve yields the highest finite EEBLS SNR, falling back to residual scatter if no usable EEBLS SNR is available. Default y.",
+                "Impact Parameter Fit": "Set optional_info 'use_impactparameter_rather_than_inclination_to_fit' to y to sample impact parameter instead of inclination in nested fitting and triangle plots. Default y.",
+                "Maximum Rp/Rs Search Bound": "Set optional_info 'rprs_search_bound_max' to cap the nested-fit Rp/Rs search range. Default 0.5.",
+                "Restrict Rp/Rs Search Range": "Set optional_info 'restrict_Rp/Rs_range' to y to restrict Rp/Rs to a prior-centered percentage window. Set 'restrict_Rp/Rs_range_percentage' to control the half-width. Defaults y and 10.",
+                "Prior Rp/Rs Fallback For Pinned Posterior": "Set optional_info 'use_prior_Rp/Rs_when_posterior_pinned' to y to rerun a fit with Rp/Rs fixed to the input prior and quote a data-only Rp/Rs uncertainty when the Rp/Rs posterior remains edge-pinned after retry handling. Default y.",
+                "Restrict a/Rs Search Range": "Set optional_info 'restrict_a/Rs_range' to y to restrict a/Rs to a prior-centered percentage window. Set 'restrict_a/Rs_range_percentage' to control the half-width. Defaults y and 10.",
+                "Sparse Posterior Live-Point Retry": "Set optional_info 'use_sparse_posterior_live_point_retry' to y to rank comparison-star candidates at the configured UltraNest live-point count, then continue the chosen final comparison-star fit with 5x additional minimum live points using its retained final-pass bounds. Standalone final fits still only continue when Rp/Rs, Tmid, or a/Rs posteriors are too sparse. Set to n to disable. Default y.",
+                "LM Boundary Scout Before UltraNest": "Set optional_info 'use_lm_boundary_scout_before_ultranest' to y to run fast deterministic fits first and expand any edge-limited Rp/Rs, a/Rs, or Tmid bounds before launching UltraNest. The original search range is preserved and posterior retries remain available. Default y.",
+                "Adaptive Apertures": "Set optional_info 'use_adaptive_apertures' to true to evaluate aperture candidates in PSF sigma units and rescale the actual aperture/annulus radii frame-by-frame from the measured PSF width. Default false.",
+                "Reject Overexposed Stars": "Set optional_info 'reject_overexposed_stars' to true to reject overexposed target frames and overexposed comparison-star measurements. Default true.",
+                "Saturation Value": "Set optional_info 'saturation_value' to the detector saturation value in the same units as the image pixels. If omitted/default, EXOTIC uses FITS SATURATE when available, maps TELESCOP Cecilia to 4096, otherwise uses 65535.",
+                "Overexposure Threshold Fraction": "Set optional_info 'overexposure_threshold_fraction' to the fraction of saturation used for rejection. Default 0.9.",
+                "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
+                "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
+                "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
@@ -1404,6 +1599,7 @@ def main():
 
                         "AAVSO Observer Code (blank if none)": input_data['obscode'],
                         "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
+                        "Observatory Full Title": input_data.get('obs_name', ""),
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
@@ -1419,6 +1615,7 @@ def main():
 
                         "Target Star X & Y Pixel": (input_data['targetpos']),
                         "Comparison Star(s) X & Y Pixel": (input_data['comppos']),
+                        "Comparison Star(s) RA & Dec": null,
                         
                         "Demosaic Format": null, # TODO add GUI input for these
                         "Demosaic Output": null
@@ -1446,8 +1643,48 @@ def main():
                     new_inits['user_info'] = original_inits['user_info']
 
                 new_inits['optional_info'] = {
+                    "quick_look_mode": reduction_opt.get() == 3,
                     "Filter Minimum Wavelength (nm)": input_data.get('filtermin', null),
-                    "Filter Maximum Wavelength (nm)": input_data.get('filtermax', null)
+                    "Filter Maximum Wavelength (nm)": input_data.get('filtermax', null),
+                    "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+                    "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                    "allow_pixel_alignment_fallback": True,
+                    "bad_wcs_threshold_percent": 3.0,
+                    "prefer_pixel_values_over_wcs_for_target": "n",
+                    "disable vertical flux normalization": False,
+                    "stellar_variability_only": False,
+                    "require_apparent_magnitudes": True,
+                    "use_exactly_the_comps_provided": False,
+                    "maximum_number_of_ensemble_comparisons_for_transit": 5,
+                    "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
+                    "detect_bad_pixels_before_photometry": "n",
+                    "multiprocess_bad_pixel_precheck": "n",
+                    "detrend_on_outoftransit_baseline": True,
+                    "final_fit_baseline_duration_multiplier": 1.0,
+                    "restrict_baseline_to_an_hour": True,
+                    "use_eebls_to_initialize_tmid_and_bounds": "y",
+                    "pick_comparison_by_eebls_snr": "y",
+                    "use_impactparameter_rather_than_inclination_to_fit": "y",
+                    "rprs_search_bound_max": 0.5,
+                    "restrict_Rp/Rs_range": "y",
+                    "restrict_Rp/Rs_range_percentage": 10.0,
+                    "use_prior_Rp/Rs_when_posterior_pinned": "y",
+                    "restrict_a/Rs_range": "y",
+                    "restrict_a/Rs_range_percentage": 10.0,
+                    "use_sparse_posterior_live_point_retry": "y",
+                    "use_lm_boundary_scout_before_ultranest": "y",
+                    "use_adaptive_apertures": False,
+                    "reject_overexposed_stars": True,
+                    "saturation_value": 65535,
+                    "overexposure_threshold_fraction": 0.9,
+                    "gain_electrons_per_adu": null,
+                    "read_noise_electrons": null,
+                    "dark_current_electrons_per_second_per_pixel": null,
+                    "flat_field_fractional_error": null,
+                    "telescope_aperture_m": null,
+                    "scintillation_coefficient": null,
+                    "Use target-driven comp selection rather than comp-driven comp selection": "n",
+                    "require_comp_star": "y"
                 }
 
                 if 'pixscale' not in input_data.keys():
@@ -1465,11 +1702,12 @@ def main():
 
                         "AAVSO Observer Code (blank if none)": input_data['obscode'],
                         "Secondary Observer Codes (blank if none)": input_data['secondobscode'],
+                        "Observatory Full Title": input_data.get('obs_name', ""),
 
                         "Observation date": input_data['obsdate'],
                         "Obs. Latitude": input_data['lat'],
                         "Obs. Longitude": input_data['long'],
-                        "Obs. Elevation (meters)": float(input_data.get('elevation', 0)),
+                        "Obs. Elevation (meters; Note: leave blank if unknown)": input_data.get('elevation'),
                         "Camera Type (CCD or DSLR)": input_data['cameratype'],
                         "Pixel Binning": input_data['pixbin'],
                         "Filter Name (aavso.org/filters)": input_data['obsfilter'],
@@ -1483,11 +1721,46 @@ def main():
                     new_inits['user_info'] = original_inits['user_info']
 
                 new_inits['optional_info'] = {
+                    "quick_look_mode": reduction_opt.get() == 3,
                     "Pre-reduced File:": prered_file.file_path,
                     "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
                     "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
                     "Comparison Star used in Photometry (blank if none)": input_data['phot_comp_star'],
-                    "Exposure Time (s)": input_data['exp']
+                    "Exposure Time (s)": input_data['exp'],
+                    "Calculate Limb Darkening Coefficients with Uncertainties? (y/n)": null,
+                    "Ignore WCS in Header and Do Manual Alignment? (y/n)": "n",
+                    "allow_pixel_alignment_fallback": True,
+                    "bad_wcs_threshold_percent": 3.0,
+                    "prefer_pixel_values_over_wcs_for_target": "n",
+                    "disable vertical flux normalization": False,
+                    "stellar_variability_only": False,
+                    "require_apparent_magnitudes": True,
+                    "use_exactly_the_comps_provided": False,
+                    "maximum_number_of_ensemble_comparisons_for_transit": 5,
+                    "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
+                    "detect_bad_pixels_before_photometry": "n",
+                    "multiprocess_bad_pixel_precheck": "n",
+                    "detrend_on_outoftransit_baseline": True,
+                    "final_fit_baseline_duration_multiplier": 1.0,
+                    "restrict_baseline_to_an_hour": True,
+                    "use_eebls_to_initialize_tmid_and_bounds": "y",
+                    "pick_comparison_by_eebls_snr": "y",
+                    "use_impactparameter_rather_than_inclination_to_fit": "y",
+                    "use_prior_Rp/Rs_when_posterior_pinned": "y",
+                    "use_sparse_posterior_live_point_retry": "y",
+                    "use_lm_boundary_scout_before_ultranest": "y",
+                    "use_adaptive_apertures": False,
+                    "reject_overexposed_stars": True,
+                    "saturation_value": 65535,
+                    "overexposure_threshold_fraction": 0.9,
+                    "gain_electrons_per_adu": null,
+                    "read_noise_electrons": null,
+                    "dark_current_electrons_per_second_per_pixel": null,
+                    "flat_field_fractional_error": null,
+                    "telescope_aperture_m": null,
+                    "scintillation_coefficient": null,
+                    "Use target-driven comp selection rather than comp-driven comp selection": "n",
+                    "require_comp_star": "y"
                 }
 
             if planetparams.get() in ["manual", "nea"]:
@@ -1516,7 +1789,10 @@ def main():
                     "Star Metallicity (-) Uncertainty": float(input_data['metUncNeg']),
                     "Star Surface Gravity (log(g))": float(input_data['logg']),
                     "Star Surface Gravity (+) Uncertainty": float(input_data['loggUncPos']),
-                    "Star Surface Gravity (-) Uncertainty": float(input_data['loggUncNeg'])
+                    "Star Surface Gravity (-) Uncertainty": float(input_data['loggUncNeg']),
+                    "Star Distance (pc)": null if input_data.get('dist') in (None, "") else float(input_data['dist']),
+                    "Star Proper Motion RA (mas/yr)": null if input_data.get('pm_ra') in (None, "") else float(input_data['pm_ra']),
+                    "Star Proper Motion DEC (mas/yr)": null if input_data.get('pm_dec') in (None, "") else float(input_data['pm_dec'])
                 }
 
             elif planetparams.get() == "inits":
@@ -1557,12 +1833,7 @@ def main():
 
             tk.mainloop()
 
-        run_mthd = None
-
-        if fitsortext.get() == 1:
-            run_mthd = '--reduce'
-        elif fitsortext.get() == 2:
-            run_mthd = '--prereduced'
+        run_mthd = gui_reduction_command(reduction_opt.get(), fitsortext.get())
 
         #         If the user already has an inits file, then go for it
         try:

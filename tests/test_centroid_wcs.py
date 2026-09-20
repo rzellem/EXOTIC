@@ -1510,6 +1510,93 @@ def test_automatic_optimal_calibration_selector_filters_flux_and_ranks_color(mon
     assert all(0.5 <= candidate["brightness_ratio"] <= 2.0 for candidate in candidates)
 
 
+@pytest.mark.parametrize('ratio, retries, selected', [
+    (0.5, 0, True), (0.4, 1, True), (0.3, 2, True),
+    (0.2, 3, True), (0.1, 4, True), (0.08, 5, True),
+    (0.05, 6, True), (0.02, 7, True), (0.01, 8, True),
+    (0.005, 9, True), (0.001, 10, True), (0.0005, 11, True), (0.0004, 12, False),
+    (2.05, 1, True), (2.85, 9, True), (5.0, 12, True),
+])
+def test_automatic_optimal_selector_widens_until_usable_match(monkeypatch, ratio, retries, selected):
+    image = np.zeros((300, 300))
+    ra = np.tile(np.arange(300), (300, 1))
+    dec = ra.T
+    # An in-range detection without a catalogue match must not stop retries.
+    detections = [
+        {'x': 220., 'y': 220., 'flux': 1000.},
+        {'x': 80., 'y': 80., 'flux': ratio * 1000.},
+        # A still fainter usable star must not be admitted after a successful pass.
+        {'x': 80., 'y': 220., 'flux': 0.5},
+    ]
+    if not selected or ratio == 5.0:
+        detections.pop()
+    monkeypatch.setattr(exotic_module, 'detect_reference_fallback_bright_stars', lambda *a, **k: detections)
+    monkeypatch.setattr(exotic_module, 'image_aperture_signal_flux', lambda *a, **k: 1000.)
+    lookups = []
+    messages = []
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, **k: messages.append(message))
+
+    def match(catalog, x, y, obs_filter, **kwargs):
+        lookups.append((int(x), int(y)))
+        if (int(x), int(y)) == (220, 220):
+            return None
+        return {'color': {'color': 0.6, 'label': 'B-V'}, 'catalog_row': {}}
+
+    monkeypatch.setattr(exotic_module, 'nextastro_catalog_nearest_color_row', match)
+    stars, candidates = exotic_module.select_automatic_optimal_calibration_stars(
+        image, image.shape, [150, 150], ra, dec, 'V', {'rows': []}, count=10,
+    )
+    assert ([80., 80.] in stars) is selected
+    assert lookups.count((220, 220)) == 1
+    assert len([m for m in messages if 'retrying with brightness' in m]) == retries
+    if retries < 11:
+        assert stars == [[80., 80.]]
+    if not selected:
+        assert stars == []
+        assert candidates == []
+
+
+@pytest.mark.parametrize('central_match, outer_ratio, expected, brightness_retries', [
+    (True, 1.0, [[80., 80.]], 0),
+    (False, 1.0, [[250., 250.]], 0),
+    (False, 0.4, [[250., 250.]], 1),
+    (False, 0.05, [[250., 250.]], 6),
+])
+def test_automatic_optimal_selector_relaxes_field_before_brightness(
+        monkeypatch, central_match, outer_ratio, expected, brightness_retries):
+    image = np.zeros((300, 300))
+    ra = np.tile(np.arange(300), (300, 1))
+    detections = [
+        {'x': 80., 'y': 80., 'flux': 1000.},
+        {'x': 250., 'y': 250., 'flux': outer_ratio * 1000.},
+    ]
+    monkeypatch.setattr(exotic_module, 'detect_reference_fallback_bright_stars', lambda *a, **k: detections)
+    monkeypatch.setattr(exotic_module, 'image_aperture_signal_flux', lambda *a, **k: 1000.)
+    messages, lookups = [], []
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, **k: messages.append(message))
+
+    def match(catalog, x, y, obs_filter, **kwargs):
+        lookups.append((int(x), int(y)))
+        if (int(x), int(y)) == (80, 80) and not central_match:
+            return None
+        return {'color': {'color': 0.6, 'label': 'B-V'}, 'catalog_row': {}}
+
+    monkeypatch.setattr(exotic_module, 'nextastro_catalog_nearest_color_row', match)
+    stars, _ = exotic_module.select_automatic_optimal_calibration_stars(
+        image, image.shape, [150, 150], ra, ra.T, 'V', {'rows': []}, count=10,
+    )
+    assert stars == expected
+    assert lookups.count((80, 80)) == 1
+    spatial_logs = [i for i, m in enumerate(messages) if 'retrying the full field' in m]
+    brightness_logs = [i for i, m in enumerate(messages) if 'retrying with brightness' in m]
+    assert len(spatial_logs) == (0 if central_match else 1)
+    assert len(brightness_logs) == brightness_retries
+    if brightness_logs:
+        assert spatial_logs[0] < brightness_logs[0]
+    if central_match:
+        assert (250, 250) not in lookups
+
+
 def test_build_absolute_comp_ensemble_flux_uses_median_normalized_members():
     comp_flux_map = {
         "comp1": np.array([100.0, 102.0, 98.0, 100.0, 101.0, 99.0]),

@@ -1725,6 +1725,56 @@ def test_saturation_value_from_header_uses_cecilia_microobservatory_value():
     assert saturation_value_from_header({}) is None
 
 
+@pytest.mark.parametrize('header, area', [
+    ({'CCDXBIN': 2, 'CCDYBIN': 2}, 4),
+    ({'XBINNING': 2, 'YBINNING': 3}, 6),
+    ({'XBINING': '2', 'YBINING': '2'}, 4),
+    ({'CCDSUM': '2 3'}, 6),
+    ({'CCDSUM': '2x2'}, 4),
+    ({'CCDSUM': '2,2'}, 4),
+    ({'ccdxbin': (2, 'Effective binning'), 'ccdybin': 2}, 4),
+    ({'CCDXBIN': 2, 'CCDYBIN': 2, 'XBINNING': 1, 'YBINNING': 1}, 1),
+    ({'CCDXBIN': 1, 'CCDYBIN': 1, 'XBINNING': 2, 'YBINNING': 2}, 4),
+    ({'CCDXBIN': 1, 'CCDYBIN': 1, 'XBINING': 2, 'YBINING': 2}, 4),
+    ({'XBINNING': 3, 'YBINNING': 2, 'XBINING': 2, 'YBINING': 2}, 6),
+    ({'XBINNING': 'bad', 'YBINNING': 2, 'XBINING': 2, 'YBINING': 2,
+      'CCDXBIN': 1, 'CCDYBIN': 1}, 4),
+    ({'XBINNING': 2, 'CCDXBIN': 3, 'CCDYBIN': 3}, 9),
+    ({'XBINNING': 2, 'YBINNING': 2, 'XBINING': 2, 'YBINING': 2, 'CCDSUM': '2 2'}, 4),
+    ({'CCDXBIN': 'bad', 'CCDYBIN': 2, 'XBINNING': 2, 'YBINNING': 2}, 4),
+    ({'CCDXBIN': 2, 'CCDSUM': '3 3'}, 9),
+])
+def test_saturation_default_scales_by_header_binning_area(header, area):
+    assert saturation_value_from_header(header) == pytest.approx(65535.0 * area)
+
+
+@pytest.mark.parametrize('header', [
+    {}, {'CCDXBIN': 2}, {'CCDXBIN': 2, 'YBINNING': 2},
+    {'CCDXBIN': 0, 'CCDYBIN': 2}, {'CCDXBIN': -2, 'CCDYBIN': 2},
+    {'CCDXBIN': 1.5, 'CCDYBIN': 2}, {'CCDXBIN': np.inf, 'CCDYBIN': 2},
+    {'CCDSUM': '2'}, {'CCDSUM': '2 2 2'}, {'CCDSUM': 'nan 2'},
+])
+def test_saturation_ignores_incomplete_or_invalid_binning(header):
+    assert saturation_value_from_header(header) is None
+
+
+def test_header_saturation_is_not_scaled_twice():
+    from astropy.io import fits
+    header = fits.Header({'XBINNING': 2, 'YBINNING': 2, 'SATURATE': 262140.0})
+    assert saturation_value_from_header(header) == 262140.0
+    header['TELESCOP'] = 'Cecilia'
+    assert saturation_value_from_header(header) == 4096.0
+
+
+def test_binned_bright_target_passes_default_overexposure_threshold():
+    from astropy.io import fits
+    header = fits.Header({'CCDXBIN': 2, 'CCDYBIN': 2})
+    threshold = saturation_value_from_header(header) * parse_overexposure_threshold_fraction(None)
+    assert threshold == pytest.approx(235926.0)
+    assert 141162.0 < threshold
+    assert 240000.0 > threshold
+
+
 def test_should_use_eebls_to_initialize_tmid_and_bounds_parses_values():
     assert should_use_eebls_to_initialize_tmid_and_bounds(None) is True
     assert should_use_eebls_to_initialize_tmid_and_bounds("y") is True

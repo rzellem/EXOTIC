@@ -11090,6 +11090,34 @@ def microobservatory_saturation_value_from_header(header):
     return MICROOBSERVATORY_TELESCOP_SATURATION_VALUES.get(str(telescop).strip().lower())
 
 
+def summed_pixel_binning_from_header(header):
+    """Return the pixel area factor from the first valid binning convention.
+
+    XBINNING/YBINNING take precedence, followed by XBINING/YBINING,
+    CCDXBIN/CCDYBIN, and NOAO CCDSUM. Never multiply aliases together or infer
+    binning from image dimensions. Partial/invalid pairs are ignored.
+    """
+    pairs = [
+        (header_value_case_insensitive(header, x_key),
+         header_value_case_insensitive(header, y_key))
+        for x_key, y_key in (
+            ('XBINNING', 'YBINNING'),
+            ('XBINING', 'YBINING'),
+            ('CCDXBIN', 'CCDYBIN'),
+        )
+    ]
+    ccdsum = header_scalar_value(header_value_case_insensitive(header, 'CCDSUM'))
+    if isinstance(ccdsum, str):
+        values = re.split(r'[\s,xX]+', ccdsum.strip())
+        if len(values) == 2:
+            pairs.append(values)
+    for pair in pairs:
+        values = [finite_header_float(value) for value in pair]
+        if all(value is not None and value >= 1 and value.is_integer() for value in values):
+            return values[0] * values[1]
+    return None
+
+
 def saturation_value_from_header(header):
     microobservatory_saturation = microobservatory_saturation_value_from_header(header)
     if microobservatory_saturation is not None:
@@ -11099,6 +11127,9 @@ def saturation_value_from_header(header):
     saturate = finite_header_float(saturate)
     if saturate is not None and saturate > 0:
         return float(saturate)
+    binning_area = summed_pixel_binning_from_header(header)
+    if binning_area is not None:
+        return SATURATION_VALUE_DEFAULT * binning_area
     return None
 
 
@@ -16473,9 +16504,13 @@ def run_inits_preflight(init_path, use_nextastro_astrometry=False):
         image = np.asarray(fits.getdata(first_file, ext=extension), dtype=float)
         if image.ndim > 2:
             image = image.squeeze()
-        saturation = saturation_value_from_header(first_header)
-        if saturation is None:
-            saturation = parse_saturation_value(info.get('saturation_value'))
+        saturation = parse_saturation_value(
+            info.get('saturation_value', info.get('saturation_value_adu'))
+        )
+        if saturation == SATURATION_VALUE_DEFAULT:
+            header_saturation = saturation_value_from_header(first_header)
+            if header_saturation is not None:
+                saturation = header_saturation
         fraction = info.get('overexposure_threshold_fraction')
         try:
             fraction = float(fraction) if fraction not in (None, '') else OVEREXPOSURE_THRESHOLD_FRACTION_DEFAULT
@@ -19010,7 +19045,7 @@ def select_automatic_optimal_calibration_stars(
         else filter_reference_fallback_stars_to_middle_fifty_percent(detected_pool, image_shape)
     )
     target_detection = nearest_reference_fallback_star_by_pixels(
-        comp_pool,
+        detected_pool,
         target_x,
         target_y,
         max_sep_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
@@ -19019,127 +19054,155 @@ def select_automatic_optimal_calibration_stars(
 
     min_sep2 = max(float(min_comp_target_sep), 0.0) ** 2
     candidates = []
-    for star in comp_pool:
-        if id(star) in used_ids:
-            continue
-        x_pos = _finite_float(star.get('x'))
-        y_pos = _finite_float(star.get('y'))
-        star_flux = _finite_float(star.get('flux'))
-        if x_pos is None or y_pos is None or star_flux is None:
-            continue
-        if not pixel_within_image(x_pos, y_pos, image_shape):
-            continue
-        if (x_pos - target_x) ** 2 + (y_pos - target_y) ** 2 < min_sep2:
-            continue
-        brightness_ratio = float(star_flux / target_flux)
-        if (
-            not brightest_first
-            and not (
-                AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO
-                <= brightness_ratio
-                <= AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO
+    # Only relax brightness when the current range yields no usable catalogue
+    # matches. Reuse detection and do not repeat failed catalogue lookups.
+    brightness_ranges = [(0.0, np.inf)] if brightest_first else [
+        (AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO,
+         AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO),
+        # Retry the original brightness range over the full field first.
+        (AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MIN_RATIO,
+         AUTOMATIC_CALIBRATION_SELECTOR_BRIGHTNESS_MAX_RATIO),
+        (0.4, 2.1), (0.3, 2.2), (0.2, 2.3), (0.1, 2.4),
+        (0.08, 2.5), (0.05, 2.6), (0.02, 2.7), (0.01, 2.8),
+        (0.005, 2.9), (0.001, 3.0), (0.0005, 3.1), (0.0005, np.inf),
+    ]
+    evaluated_ids = set()
+    for range_index, (min_ratio, max_ratio) in enumerate(brightness_ranges):
+        if range_index == 1:
+            comp_pool = detected_pool
+            log_info(
+                "Automatic optimal calibration selector found no usable comparisons in the central 50%; "
+                "retrying the full field at the same brightness limits and retaining the full field for later retries."
             )
-        ):
-            continue
-        if (
-            brightest_first
-            and _finite_float(saturation_threshold) is not None
-            and aperture_contains_overexposed_pixel(
-                image_data,
-                x_pos,
-                y_pos,
-                REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
-                float(saturation_threshold),
+        elif range_index > 1:
+            upper_label = f"{max_ratio * 100:g}%" if np.isfinite(max_ratio) else "no upper limit"
+            log_info(
+                "Automatic optimal calibration selector found no usable comparisons; "
+                f"retrying with brightness {min_ratio * 100:g}% to {upper_label} of the target."
             )
-        ):
-            continue
-        xi = int(np.clip(round(x_pos), 0, width - 1))
-        yi = int(np.clip(round(y_pos), 0, height - 1))
-        comp_ra = _finite_float(ra_wcs[yi][xi])
-        comp_dec = _finite_float(dec_wcs[yi][xi])
-        if comp_ra is None or comp_dec is None:
-            continue
-        if brightest_first:
-            match = nextastro_photometry_catalog_match(
-                field_catalog,
-                comp_ra,
-                comp_dec,
-                obs_filter,
-                max_separation_arcsec=catalog_match_radius_arcsec,
-            )
-            color = nextastro_catalog_color_with_gaia_fallback(
-                (match or {}).get('catalog_row'),
-                obs_filter,
-                lookup_state=gaia_lookup_state,
-                max_separation_arcsec=catalog_match_radius_arcsec,
-            )
+        for star in comp_pool:
+            if id(star) in used_ids or id(star) in evaluated_ids:
+                continue
+            x_pos = _finite_float(star.get('x'))
+            y_pos = _finite_float(star.get('y'))
+            star_flux = _finite_float(star.get('flux'))
+            if x_pos is None or y_pos is None or star_flux is None:
+                continue
+            if not pixel_within_image(x_pos, y_pos, image_shape):
+                continue
+            if (x_pos - target_x) ** 2 + (y_pos - target_y) ** 2 < min_sep2:
+                continue
+            brightness_ratio = float(star_flux / target_flux)
             if (
-                match is None
-                or catalog_band_priority(match.get('mag_band'), obs_filter) != 0
+                not brightest_first
+                and not (
+                    min_ratio <= brightness_ratio <= max_ratio
+                )
             ):
                 continue
-            color_delta = (
-                abs(color['color'] - target_color['color'])
-                if color is not None and target_color is not None
-                else np.nan
-            )
-        else:
-            match = nextastro_catalog_nearest_color_row(
-                field_catalog,
-                comp_ra,
-                comp_dec,
-                obs_filter,
-                gaia_lookup_state=gaia_lookup_state,
-                gaia_match_radius_arcsec=catalog_match_radius_arcsec,
-            )
-            color = (match or {}).get('color')
-            if match is None or color is None:
+            evaluated_ids.add(id(star))
+            if (
+                brightest_first
+                and _finite_float(saturation_threshold) is not None
+                and aperture_contains_overexposed_pixel(
+                    image_data,
+                    x_pos,
+                    y_pos,
+                    REFERENCE_FALLBACK_DETECTION_APERTURE_RADIUS_PIXELS,
+                    float(saturation_threshold),
+                )
+            ):
                 continue
-            color_delta = abs(color['color'] - target_color['color'])
-        colour_term, colour_term_error = colour_term_for_catalog_label(
-            colour_term_metadata,
-            (color or {}).get('label'),
-        )
-        expected_colour_mismatch_mag = None
-        colour_term_uncertainty_mag = None
-        if colour_term is not None and np.isfinite(colour_term) and np.isfinite(color_delta):
-            expected_colour_mismatch_mag = abs(float(colour_term)) * float(color_delta)
-        if colour_term_error is not None and np.isfinite(colour_term_error) and np.isfinite(color_delta):
-            colour_term_uncertainty_mag = abs(float(color_delta)) * float(colour_term_error)
-        candidates.append({
-            'x': float(x_pos),
-            'y': float(y_pos),
-            'flux': float(star_flux),
-            'brightness_ratio': brightness_ratio,
-            'ra': comp_ra,
-            'dec': comp_dec,
-            'catalog_match': match,
-            'color': (color or {}).get('color', np.nan),
-            'color_label': (color or {}).get('label', ''),
-            'target_color': (target_color or {}).get('color', np.nan),
-            'color_delta': float(color_delta),
-            'catalog_magnitude': match.get('mag'),
-            'catalog_magnitude_error': match.get('error'),
-            'catalog_magnitude_band': match.get('mag_band'),
-            'target_catalog_magnitude': (target_match or {}).get('mag'),
-            'target_catalog_magnitude_error': (target_match or {}).get('error'),
-            'target_catalog_magnitude_band': (target_match or {}).get('mag_band'),
-            'colour_term': float(colour_term) if colour_term is not None else None,
-            'colour_term_error': (
-                float(colour_term_error) if colour_term_error is not None else None
-            ),
-            'expected_colour_mismatch_mag': (
-                float(expected_colour_mismatch_mag)
-                if expected_colour_mismatch_mag is not None
-                else None
-            ),
-            'colour_term_uncertainty_mag': (
-                float(colour_term_uncertainty_mag)
-                if colour_term_uncertainty_mag is not None
-                else None
-            ),
-            'target_flux': float(target_flux),
-        })
+            xi = int(np.clip(round(x_pos), 0, width - 1))
+            yi = int(np.clip(round(y_pos), 0, height - 1))
+            comp_ra = _finite_float(ra_wcs[yi][xi])
+            comp_dec = _finite_float(dec_wcs[yi][xi])
+            if comp_ra is None or comp_dec is None:
+                continue
+            if brightest_first:
+                match = nextastro_photometry_catalog_match(
+                    field_catalog,
+                    comp_ra,
+                    comp_dec,
+                    obs_filter,
+                    max_separation_arcsec=catalog_match_radius_arcsec,
+                )
+                color = nextastro_catalog_color_with_gaia_fallback(
+                    (match or {}).get('catalog_row'),
+                    obs_filter,
+                    lookup_state=gaia_lookup_state,
+                    max_separation_arcsec=catalog_match_radius_arcsec,
+                )
+                if (
+                    match is None
+                    or catalog_band_priority(match.get('mag_band'), obs_filter) != 0
+                ):
+                    continue
+                color_delta = (
+                    abs(color['color'] - target_color['color'])
+                    if color is not None and target_color is not None
+                    else np.nan
+                )
+            else:
+                match = nextastro_catalog_nearest_color_row(
+                    field_catalog,
+                    comp_ra,
+                    comp_dec,
+                    obs_filter,
+                    gaia_lookup_state=gaia_lookup_state,
+                    gaia_match_radius_arcsec=catalog_match_radius_arcsec,
+                )
+                color = (match or {}).get('color')
+                if match is None or color is None:
+                    continue
+                color_delta = abs(color['color'] - target_color['color'])
+            colour_term, colour_term_error = colour_term_for_catalog_label(
+                colour_term_metadata,
+                (color or {}).get('label'),
+            )
+            expected_colour_mismatch_mag = None
+            colour_term_uncertainty_mag = None
+            if colour_term is not None and np.isfinite(colour_term) and np.isfinite(color_delta):
+                expected_colour_mismatch_mag = abs(float(colour_term)) * float(color_delta)
+            if colour_term_error is not None and np.isfinite(colour_term_error) and np.isfinite(color_delta):
+                colour_term_uncertainty_mag = abs(float(color_delta)) * float(colour_term_error)
+            candidates.append({
+                'x': float(x_pos),
+                'y': float(y_pos),
+                'flux': float(star_flux),
+                'brightness_ratio': brightness_ratio,
+                'ra': comp_ra,
+                'dec': comp_dec,
+                'catalog_match': match,
+                'color': (color or {}).get('color', np.nan),
+                'color_label': (color or {}).get('label', ''),
+                'target_color': (target_color or {}).get('color', np.nan),
+                'color_delta': float(color_delta),
+                'catalog_magnitude': match.get('mag'),
+                'catalog_magnitude_error': match.get('error'),
+                'catalog_magnitude_band': match.get('mag_band'),
+                'target_catalog_magnitude': (target_match or {}).get('mag'),
+                'target_catalog_magnitude_error': (target_match or {}).get('error'),
+                'target_catalog_magnitude_band': (target_match or {}).get('mag_band'),
+                'colour_term': float(colour_term) if colour_term is not None else None,
+                'colour_term_error': (
+                    float(colour_term_error) if colour_term_error is not None else None
+                ),
+                'expected_colour_mismatch_mag': (
+                    float(expected_colour_mismatch_mag)
+                    if expected_colour_mismatch_mag is not None
+                    else None
+                ),
+                'colour_term_uncertainty_mag': (
+                    float(colour_term_uncertainty_mag)
+                    if colour_term_uncertainty_mag is not None
+                    else None
+                ),
+                'target_flux': float(target_flux),
+            })
+
+        if candidates:
+            break
 
     if brightest_first:
         candidates.sort(
@@ -19182,7 +19245,7 @@ def log_automatic_optimal_calibration_selection(comp_stars, candidates, requeste
         candidate_text = "image-detected, non-saturated on the reference frame, and NextAstro matched"
         ranking_text = "ranked brightest-first for the stellar-variability ensemble"
     else:
-        candidate_text = "image-detected, flux-matched to 0.5-2.0x the target, and NextAstro matched"
+        candidate_text = "image-detected, brightness-qualified with widening when needed, and NextAstro matched"
         ranking_text = "ranked by catalog color similarity to the target"
     log_info(
         "Automatic optimal calibration selector chose "

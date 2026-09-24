@@ -147,7 +147,7 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
 ![EXOTIC is now Running! Saved](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_running.png)
 
 ## If you run into any issues with EXOTIC
-- Please send a message on our Slack Workspace on the #data-reduction channel to get help from the Exoplanet Watch Community. You can sign up for your own free Slack account by clicking on [this link](https://join.slack.com/t/uol-ets/shared_invite/zt-mvb4ljbo-LRBgpk3uMmUokbs4ge2JlA).
+- Please send a message on our Slack Workspace on the #data-reduction channel to get help from the Exoplanet Watch Community. You can sign up for your own free Slack account by clicking on [this link](https://join.slack.com/t/uol-ets/shared_invite/zt-43jd43rcm-EvOCuR7JNcjsKrHiioTCfQ).
 
 - Alternatively, you can email the Exoplanet Watch team directly at exoplanetwatch@jpl.nasa.gov.
 

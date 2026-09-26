@@ -660,6 +660,31 @@ def test_plot_comp_star_candidate_lightcurve_fits_writes_outputs(tmp_path):
     assert not (tmp_path / "working_artifacts" / "CompStarLightCurveFit_Comp3_Target_2026-03-09.png").exists()
 
 
+@pytest.mark.parametrize("final_data_available", [True, False])
+def test_plot_final_lightcurve_refreshes_cached_candidate_uncertainty(tmp_path, monkeypatch, final_data_available):
+    fit = SimpleNamespace(
+        parameters={"rprs": 0.1}, errors={},
+        data=np.array([1.002, 0.998, 0.988, 0.992, 1.001, 0.999]),
+        model=np.array([1., 1., 0.99, 0.99, 1., 1.]),
+        transit=np.array([1., 1., 0.99, 0.99, 1., 1.]),
+        empirical_transit_uncertainty={"available": True, "combined_rprs_uncertainty": 99.},
+    )
+    if not final_data_available:
+        fit.data = np.array([])
+    expected = plots_module.fit_empirical_transit_uncertainty(fit)
+    def build(final_fit, *args, **kwargs):
+        refreshed = final_fit.empirical_transit_uncertainty
+        if final_data_available:
+            assert refreshed["combined_rprs_uncertainty"] != 99.
+            assert refreshed["depth_uncertainty_fraction"] == expected["depth_uncertainty_fraction"]
+        else:
+            assert refreshed == {}
+        return plt.figure()
+    monkeypatch.setattr(plots_module, "_build_final_lightcurve_figure", build)
+    monkeypatch.setattr(plots_module, "save_figure_formats", lambda *args, **kwargs: None)
+    plot_final_lightcurve(fit, np.ones(6), "Target", str(tmp_path), "2026-09-26")
+
+
 def test_plot_final_lightcurve_requests_uncertainty_bands_without_baseline_label(tmp_path):
     class DummyFinalFit:
         def __init__(self):

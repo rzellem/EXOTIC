@@ -572,7 +572,8 @@ def test_format_value_error_for_plot_preserves_two_sigfig_uncertainty_places(mon
     assert elca.format_value_error_for_plot(89.3511, 2.16) == ("89.4", "2.2")
 
 
-def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_path):
+@pytest.mark.parametrize("prior_error", [0.005, None, np.nan, -0.005])
+def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_path, prior_error):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()
     time = np.linspace(-0.015, 0.010, 51)
@@ -592,6 +593,7 @@ def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_pat
         fixed_parameter_errors={"rprs": 0.02},
     )
     fit.rprs_prior_fallback_applied = True
+    fit.rprs_prior_fallback_prior_uncertainty = prior_error
     fit.empirical_transit_uncertainty = {
         "available": True,
         "combined_rprs_uncertainty": 0.02,
@@ -600,9 +602,13 @@ def test_plot_bestfit_marks_prior_rprs_fallback_uncertainty(monkeypatch, tmp_pat
     fig, axes = fit.plot_bestfit(show_flux_baseline_label=False)
     legend_text = "\n".join(text.get_text() for text in axes[0].get_legend().get_texts())
 
-    assert "(Prior)" in legend_text
     assert "0.0100" in legend_text
     assert "0.0040" in legend_text
+    if prior_error == 0.005:
+        assert "0.0010 (Prior)" in legend_text
+    else:
+        assert "(Prior; uncertainty unavailable)" in legend_text
+    assert "0.0040 (Data-based estimate)" in legend_text
     plt.close(fig)
 
 

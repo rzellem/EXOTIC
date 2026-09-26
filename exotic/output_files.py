@@ -1595,6 +1595,9 @@ def fit_empirical_transit_uncertainty(fit, fit_quality=None, transit_depth_thres
         'rprs_prior_fallback_prior_value': finite_float(
             getattr(fit, 'rprs_prior_fallback_prior_value', np.nan)
         ),
+        'rprs_prior_fallback_prior_uncertainty': finite_float(
+            getattr(fit, 'rprs_prior_fallback_prior_uncertainty', np.nan)
+        ),
         'rprs_prior_fallback_original_fit_value': finite_float(
             getattr(fit, 'rprs_prior_fallback_original_fit_value', np.nan)
         ),

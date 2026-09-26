@@ -117,6 +117,10 @@ from tenacity import RetryError, retry, retry_if_exception, stop_after_attempt, 
 # color, color_demosaicing
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 # ########## EXOTIC imports ##########
+try:
+    from .api.bad_pixels import prepare_reference as prepare_bad_pixel_reference, repair_frame as repair_detector_pixels
+except ImportError:
+    from api.bad_pixels import prepare_reference as prepare_bad_pixel_reference, repair_frame as repair_detector_pixels
 try:  # light curve numerics
     from .api.elca import lc_fitter, transit, get_phase
 except ImportError:  # package import
@@ -8981,6 +8985,13 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
 
             fallback_fit.rprs_prior_fallback_applied = True
             fallback_fit.rprs_prior_fallback_prior_value = prior_rprs
+            try:
+                prior_rprs_error = float(restriction_reference_prior.get('rprs_unc', np.nan))
+            except (TypeError, ValueError):
+                prior_rprs_error = np.nan
+            fallback_fit.rprs_prior_fallback_prior_uncertainty = (
+                prior_rprs_error if np.isfinite(prior_rprs_error) and prior_rprs_error >= 0 else np.nan
+            )
             fallback_fit.rprs_prior_fallback_original_fit_value = original_rprs_value
             fallback_fit.rprs_prior_fallback_original_bounds = original_bounds.get('rprs')
             fallback_fit.rprs_prior_fallback_edge = rprs_final_diagnostics.get('edge')
@@ -20664,6 +20675,8 @@ def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None
 
 
 def repair_bad_pixels_in_frame(image_data, bad_pixel_reference):
+    if bad_pixel_reference is not None and 'summary' in bad_pixel_reference:
+        return repair_detector_pixels(image_data, bad_pixel_reference)
     if bad_pixel_reference is None:
         return image_data
 
@@ -25122,6 +25135,13 @@ def realTimeReduce(i, target_name, p_dict, info_dict, ax, use_nextastro_astromet
         )
     else:
         log_info("Bad-pixel precheck disabled per optional_info setting.")
+
+    bad_pixel_reference = prepare_bad_pixel_reference(
+        info_dict, np.asarray(load_image_data(inputfiles[0])).shape,
+        existing=bad_pixel_reference,
+    )
+    if bad_pixel_reference is not None and 'summary' in bad_pixel_reference:
+        log_info(f"Detector bad-pixel handling: {bad_pixel_reference['summary']}")
 
     exotic_UIprevTPX = info_dict['tar_coords'][0]
     exotic_UIprevTPY = info_dict['tar_coords'][1]
@@ -35855,6 +35875,17 @@ def _main_impl():
             else:
                 log_info("Bad-pixel precheck disabled per optional_info setting.")
 
+            detector_shape = np.asarray(load_calibrated_reduction_image(
+                inputfiles[0], generalDark, generalBias, generalFlat,
+                demosaic_fmt, demosaic_out, demosaic_mult,
+            )).shape
+            bad_pixel_reference = prepare_bad_pixel_reference(
+                exotic_infoDict, detector_shape, existing=bad_pixel_reference,
+                dark_files=exotic_infoDict.get('darks'),
+            )
+            if bad_pixel_reference is not None and 'summary' in bad_pixel_reference:
+                log_info(f"Detector bad-pixel handling: {bad_pixel_reference['summary']}")
+
             exotic_UIprevTPX = exotic_infoDict['tar_coords'][0]
             exotic_UIprevTPY = exotic_infoDict['tar_coords'][1]
 
@@ -40283,7 +40314,7 @@ def _main_impl():
                     'proper_motion_dec_mas_yr': pDict.get('pm_dec'),
                 }
                 aavso_bad_pixel_info = {
-                    'enabled': bool(detect_bad_pixels_before_photometry),
+                    'enabled': bool(detect_bad_pixels_before_photometry or bad_pixel_reference is not None),
                     'detected': bad_pixel_reference is not None,
                 }
                 if bad_pixel_reference is not None:
@@ -40295,6 +40326,7 @@ def _main_impl():
                         'minimum_fraction': bad_pixel_reference.get('minimum_fraction'),
                         'counts_path': bad_pixel_reference.get('counts_path'),
                         'mask_path': bad_pixel_reference.get('mask_path'),
+                        'detector_mask_summary': bad_pixel_reference.get('summary'),
                     })
             if quick_look_mode:
                 log_info("Quick Look: AAVSO submission output intentionally suppressed.")

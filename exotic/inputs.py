@@ -293,6 +293,9 @@ class Inputs:
             'run_final_fit_phase_residual_clip': 'y',
             'exit_at_first_qc_pass_solution': 'y',
             'detect_bad_pixels_before_photometry': 'n',
+            'bad_pixel_map': None,
+            'detect_bad_pixels_from_darks': True,
+            'detect_low_pixels_before_photometry': True,
             'multiprocess_bad_pixel_precheck': 'n',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
@@ -361,6 +364,9 @@ class Inputs:
             else:
                 self.info_dict[key] = self.params[key](self.info_dict[key])
             if key == 'save':
+                # Keep the individual dark source for defect variability even
+                # when calibration subtraction reuses a discovered master.
+                self.info_dict['bad_pixel_dark_source'] = self.info_dict.get('darks')
                 self.info_dict['flats'], self.info_dict['darks'], self.info_dict['biases'] = \
                     image_calibrations(self.info_dict['flats'], self.info_dict['darks'],
                                        self.info_dict['biases'], self.init_opt,
@@ -621,6 +627,9 @@ class Inputs:
                 'detect_bad_pixels_before_photometry',
                 'Detect Bad Pixels Before Photometry? (y/n)',
             ),
+            'bad_pixel_map': ('bad_pixel_map', 'Bad Pixel Map FITS'),
+            'detect_bad_pixels_from_darks': ('detect_bad_pixels_from_darks',),
+            'detect_low_pixels_before_photometry': ('detect_low_pixels_before_photometry',),
             'multiprocess_bad_pixel_precheck': (
                 'multiprocess_bad_pixel_precheck',
                 'Multiprocess Bad-Pixel Precheck? (y/n or process count)',

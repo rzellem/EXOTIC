@@ -1574,14 +1574,10 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
         plt.close(f)
         return
 
-    empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
-    if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
-        empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
-        if isinstance(empirical_uncertainty, dict) and empirical_uncertainty.get('available'):
-            try:
-                fit.empirical_transit_uncertainty = empirical_uncertainty
-            except Exception:
-                pass
+    # A retained sampler can update the fit after the candidate estimate was
+    # cached. Recompute from the final arrays, as the final JSON export does.
+    empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
+    fit.empirical_transit_uncertainty = empirical_uncertainty
 
     Path(save).mkdir(parents=True, exist_ok=True)
 

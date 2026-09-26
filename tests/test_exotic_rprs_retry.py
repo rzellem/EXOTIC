@@ -861,7 +861,7 @@ def test_pinned_rprs_without_expansion_reruns_with_prior_value_and_data_error(mo
         max_rprs_retries=0,
         max_ars_retries=0,
         max_impact_parameter_retries=0,
-        search_restriction_prior={"rprs": 0.1, "ars": 10.0},
+        search_restriction_prior={"rprs": 0.1, "rprs_unc": 0.005, "ars": 10.0},
     )
 
     assert len(captured["calls"]) == 2
@@ -870,6 +870,7 @@ def test_pinned_rprs_without_expansion_reruns_with_prior_value_and_data_error(mo
     assert captured["calls"][1]["prior"]["rprs"] == pytest.approx(0.1)
     assert captured["calls"][1]["fixed_parameter_errors"]["rprs"] > 0
     assert fit.rprs_prior_fallback_applied is True
+    assert fit.rprs_prior_fallback_prior_uncertainty == pytest.approx(0.005)
     assert fit.parameters["rprs"] == pytest.approx(0.1)
     assert fit.errors["rprs"] == pytest.approx(fit.empirical_transit_uncertainty["data_rprs_uncertainty"])
     assert fit.empirical_transit_uncertainty["combined_rprs_uncertainty"] == pytest.approx(

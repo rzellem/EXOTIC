@@ -4789,6 +4789,26 @@ class lc_fitter(object):
             rprs2err_text,
             rprs_prior_marker,
         )
+        if rprs_prior_marker:
+            # Fixed-parameter errors may contain the data estimate, not the
+            # input prior uncertainty. Keep their provenance explicit.
+            try:
+                prior_error = float(getattr(self, 'rprs_prior_fallback_prior_uncertainty', np.nan))
+            except (TypeError, ValueError):
+                prior_error = np.nan
+            if np.isfinite(prior_error) and prior_error >= 0:
+                prior_value_text, prior_error_text = format_value_error_for_plot(
+                    rprs2, 2 * self.parameters['rprs'] * prior_error,
+                )
+                lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s $\pm$ %s (Prior)" % (
+                    prior_value_text, prior_error_text,
+                )
+            else:
+                lclabel1 = r"$(R_{p}/R_{s})^{2}$ = %s (Prior; uncertainty unavailable)" % rprs2_text
+            if np.isfinite(rprs2err) and rprs2err >= 0:
+                lclabel1 += "\n" + r"$\pm$ %s (Data-based estimate)" % rprs2err_text
+            else:
+                lclabel1 += "\nData-based estimate unavailable"
 
         tmid_error_for_plot = self._model_data_uncertainty_for_reporting('tmid')
         if not np.isfinite(tmid_error_for_plot):

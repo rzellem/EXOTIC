@@ -18,19 +18,24 @@ A Python 3 package for reducing and analyzing photometric data of exoplanetary t
 
 ## Installation + Setup
 
-To install EXOTIC, you need to have Python 3.10 or lower installed on your computer. You can then install EXOTIC by following these steps:
+To install EXOTIC, use Python 3.12 or newer. Python 3.13 is tested and recommended. You can then install EXOTIC by following these steps:
 
 1. Install [Anaconda](https://www.anaconda.com/products/distribution) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (a minimal version of Anaconda) on your computer.
 2. Create a new virtual environment and activate it:
 
    ```
-   conda create -n exotic python=3.10
+   conda create -n exotic python=3.13
    conda activate exotic
    ```
 3. Install EXOTIC and its dependencies:
    ```
    pip install exotic
    ```
+4. MPI support is optional but recommended when your computer already has a compatible MPI runtime, or when you have permission to install one. It can support MPI-aware work in UltraNest and LDTk, but ordinary EXOTIC reductions run normally without it. EXOTIC detects working MPI support automatically; no EXOTIC setting is required. If an MPI runtime is available but `mpi4py` is not already installed, add the optional Python bindings with:
+   ```
+   pip install "exotic[mpi]"
+   ```
+   If you cannot install system software, skip this step; no core EXOTIC reduction capability is removed.
 5. (Optional) Run EXOTIC's graphical user interface (GUI):
    ```
    exotic-gui
@@ -110,6 +115,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
             "AAVSO Observer Code (blank if none)": "RTZ",
             "Secondary Observer Codes (blank if none)": "",
+            "Observatory Full Title": "",
 
             "Observation date": "17-December-2017",
             "Obs. Latitude": "+32.41638889",
@@ -120,10 +126,11 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Name (aavso.org/filters)": "V",
             "Observing Notes": "Weather, seeing was nice.",
 
-            "Plate Solution? (y/n)": "y",
+            "Plate Solution? (y/n)": true,
 
             "Target Star X & Y Pixel": [424, 286],
-            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []]
+            "Comparison Star(s) X & Y Pixel": [[465, 183], [512, 263], [], [], [], [], [], [], [], []],
+            "Comparison Star(s) RA & Dec": null
     },
     "planetary_parameters": {
             "Target Star RA": "02:04:10",
@@ -159,12 +166,92 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Filter Minimum Wavelength (nm)": null,
             "Filter Maximum Wavelength (nm)": null,
 
+            "Fast Aperture Mask (y/n)": false,
+            "allow_pixel_alignment_fallback": true,
+            "prefer_pixel_values_over_wcs_for_target": false,
+            "use_psf_photometry": true,
+            "use_aperture_photometry": true,
+            "use_aperture_corrections_and_full_image_fwhm": false,
+            "use_ensemble_photometry_rather_than_single_comp": false,
+            "stellar_variability_only": false,
+            "use_ensemble_photometry_for_stellar_variability": true,
+            "require_apparent_magnitudes": true,
+            "use_exactly_the_comps_provided": false,
+            "maximum_number_of_ensemble_comparisons_for_transit": 5,
+            "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
+            "photometer_fortuitous_variables": true,
+            "use_single_comparison_for_fortuitous_variables": true,
+            "use_nextastro_vsx_cache_first": false,
+            "skip_low_comparison_coverage_rejection": false,
+            "fit_lightcurve_to_every_comparison_candidate": false,
+            "detrend_on_outoftransit_baseline": true,
+            "final_fit_baseline_duration_multiplier": 1.0,
+            "restrict_baseline_to_an_hour": true,
+            "use_eebls_to_initialize_tmid_and_bounds": true,
+            "pick_comparison_by_eebls_snr": true,
+            "use_impactparameter_rather_than_inclination_to_fit": true,
+            "Use target-driven comp selection rather than comp-driven comp selection": false,
+            "require_comp_star": true,
+
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,
 
             "Exposure Time (s)": 60.0
     }
 }
 ```
+
+### Comparison-star mode tags
+
+Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` and `false`) are recommended. Every initialization boolean also accepts numeric `1`/`0` and case-insensitive strings `"y"`/`"n"`, `"yes"`/`"no"`, `"true"`/`"false"`, and `"on"`/`"off"`.
+
+With `"restrict_baseline_to_an_hour": true` (the default), EXOTIC still measures every valid frame but fits only frames from one hour before ingress through one hour after egress. Frames outside that window that survive the ordinary pre-fit sigma/raw-ratio clipping are shown in blue in the `Diagnostics/FullDataFullLightCurve` plot; the canonical `FinalLightCurve` shows the fitted black points, red rejection crosses, and model without the blue baseline overlay. Frames rejected by the ordinary pre-fit clipping passes remain excluded from the fit but are retained as red crosses in both plots for traceability.
+
+For raw-image reductions, bias, dark, and flat calibration frames are combined through temporary disk-backed stacks so full-resolution calibration sets do not need to reside in RAM at once. When calibration frames are supplied, the resulting `MasterBias.fits`, `MasterDark.fits`, and `MasterFlat.fits` products are saved in the run's output directory and copied beside the light-science images with `CALTYPE`, `NINPUT`, and `NCOMBINE` metadata. On later runs, those canonical files are detected automatically (and excluded from the science-image list) and loaded directly, so the raw calibration stacks do not need to be rebuilt. A user may also provide a canonical master file directly in a calibration input field.
+
+Raw-image reductions prefer per-frame WCS when WCS coverage is consistent across the dataset. With the default `"allow_pixel_alignment_fallback": true`, EXOTIC uses `"bad_wcs_threshold_percent"` to choose the safe path: sparse missing-WCS frames below the threshold are dropped and the retained sequence remains WCS-based; when the missing-WCS fraction reaches or exceeds the threshold, all frames are retained and legacy pixel alignment is available for frames without usable WCS. Set `"allow_pixel_alignment_fallback": false` to require WCS-only processing and drop every frame without celestial WCS. The existing `"Ignore WCS in Header and Do Manual Alignment? (y/n)": "y"` option explicitly enables pixel alignment for the entire run.
+
+Comparison stars may be supplied in `user_info` using either `"Comparison Star(s) X & Y Pixel"` or `"Comparison Star(s) RA & Dec"`. Do not populate both. RA/Dec values may be decimal degrees, such as `[[31.04125, 46.68972]]`, or sexagesimal strings, such as `[["02:04:09.90", "+46:41:23.0"]]`. Sexagesimal values must be quoted because they are JSON strings; forms such as `[[02:04:09.90, +46:41:23.0]]` are not valid JSON. Supplied X/Y positions are converted to sky coordinates with the reference frame's WCS; during photometry those sky coordinates are projected independently through every retained frame's own WCS header.
+
+| Reduction | Requested comparison mode | `optional_info` settings |
+|---|---|---|
+| Transit fit | Single comparison star (default) | `"stellar_variability_only": false`, `"require_comp_star": true`, `"use_ensemble_photometry_rather_than_single_comp": false` |
+| Transit fit | Comparison-star ensemble | `"stellar_variability_only": false`, `"require_comp_star": true`, `"use_ensemble_photometry_rather_than_single_comp": true`, `"maximum_number_of_ensemble_comparisons_for_transit": 5` |
+| Transit or variability run | Exactly the supplied comparison(s) | `"use_exactly_the_comps_provided": true`. Comparisons may be supplied as X/Y or RA/Dec. One supplied comparison is used alone; two or more are all used as one fixed ensemble. Automatic replacement, addition, VSX/stability vetting, ranking, and ensemble-size limiting are bypassed. |
+| Transit fit | No comparison star | There is no tag that forces this mode. `"require_comp_star": false` only removes the requirement for a comparison star; it does not force target-only photometry. The current comparison-calibration FITS path still selects a single comparison or an ensemble. |
+| Stellar-variability-only run | Single comparison star | `"stellar_variability_only": true`, `"use_ensemble_photometry_for_stellar_variability": false` |
+| Stellar-variability-only run | Calibrated comparison-star ensemble (default) | `"stellar_variability_only": true`, `"use_ensemble_photometry_for_stellar_variability": true`, `"maximum_number_of_ensemble_comparisons_for_stellar_variability": 5` |
+| Stellar-variability-only run | No comparison star | Not supported for raw-FITS absolute variability photometry; a single calibrated comparison or calibrated ensemble is required. A pre-reduced relative light curve can be supplied without raw comparison-star photometry, but it is not selected by a comparison-mode tag. |
+
+The two ensemble limits are independent. `"maximum_number_of_ensemble_comparisons_for_transit"` caps only the transit-fit ensemble. `"maximum_number_of_ensemble_comparisons_for_stellar_variability"` caps both stellar-variability-only and fortuitous-variable ensembles. Each defaults to `5`, must be an integer of at least `2`, and has no configured upper limit. Increase either value to permit a much larger ensemble; EXOTIC will enlarge automatic candidate discovery for the corresponding ensemble where applicable, then use up to that number of surviving comparisons. Very large ensembles require more photometry work. Stellar-variability and fortuitous-variable ensembles can also retain fewer frames because every selected member must have a usable measurement in a retained frame. Transit and instrumental stellar-variability ensembles combine each frame with inverse-variance weights from the incoming per-star photometry errors and propagate that same weighted uncertainty to the light curve.
+
+Ensemble settings retain a single-comparison fallback when EXOTIC cannot build a usable ensemble, except when `"use_exactly_the_comps_provided"` is true. Exact-comparison mode fails explicitly if the supplied reference cannot be measured; it never silently substitutes or drops a supplied comparison. This makes the same reference star or ensemble reproducible across multiple runs.
+
+Differential-magnitude CSV and plot products are always attempted independently of catalogue calibration. Set `"require_apparent_magnitudes": false` when catalogue-calibrated apparent magnitudes are not required; EXOTIC still writes apparent-magnitude products when calibration is available. Stellar-variability apparent and differential magnitudes use the raw target/reference flux ratio and are explicitly not airmass-corrected, because a real time-dependent stellar signal can be correlated with airmass. Airmass remains in the output as metadata.
+
+Flux-bearing result files retain both magnitude representations. Final-lightcurve and differential-magnitude CSV rows explicitly include the raw, uncorrected differential magnitude and uncertainty alongside the corrected differential magnitude and uncertainty, plus apparent magnitude and uncertainty where applicable (or `na` when no catalogue calibration is available). Transit AAVSO files retain their standard exoplanet columns and add one preserved `#MAGNITUDE-XC` record per data row containing both raw and corrected differential values and the applied correction factor. When weighted linear out-of-transit baseline detrending is applied, `#OUT_OF_TRANSIT_BASELINE-XC` records the formula, BJD_TDB reference time, intercept, and slope; the standard `DIFF` and `ERR` rows are restored to their pre-detrending values and `DETREND_2` carries the correction function, making the operation reversible from the AAVSO file. AID rows retain the standard 15-column Extended format, use original geocentric JD values in `#DATE=JD`, and store raw differential values as plain `NOTES` text in the form `DIFFMAG=...;DIFFERR=...` while `MAG` and `MERR` remain the apparent magnitude measurement. Transit AAVSO files continue to use `#DATE_TYPE=BJD_TDB`. All transit and AID AAVSO files are written in an `AAVSO_Files` subfolder of their corresponding output directory. That folder also receives copies of the final-lightcurve PNG, PDF, and CSV; every FOV finder-chart PNG and PDF; the normal, final, and zoomed triangle plots; the KTMF QC PNG and PDF; and the prior-versus-posterior comparison PNG and PDF. Finder charts label every selected comparison member, including ensembles and comparisons sourced outside AAVSO. This preserves the target-minus-reference measurement needed to apply a revised apparent-magnitude calibration later. Each reduction writes its run log from startup through shutdown to a unique `Diagnostics/EXOTIC_RunLog_<timestamp>_pid<PID>.log`, so separate or midnight-spanning runs do not overwrite or split one another.
+
+For fortuitous VSX variables found during a transit reduction, `"photometer_fortuitous_variables": true` turns their photometry on; `"use_single_comparison_for_fortuitous_variables": true` selects one comparison (the default), while `false` requests an ensemble capped by `"maximum_number_of_ensemble_comparisons_for_stellar_variability"`. Fortuitous-variable differential products remain available when catalogue calibration is unavailable. Fortuitous-variable photometry has no no-comparison mode.
+
+`photometer_fortuitous_variables` defaults to `true` for full FITS reductions with a WCS. EXOTIC searches the field in VSX, retains unsaturated stars whose reference-image source-plus-sky noise estimate implies an internal error below 0.05 mag, and measures each retained variable against one calibrated comparison star by default, or against its own calibrated comparison ensemble when `"use_single_comparison_for_fortuitous_variables"` is `false`. Exported light curves also retain only frames whose final comparison-calibrated internal magnitude error is below 0.05 mag. Each VSX target uses its own frame-level saturation mask: saturation of the exoplanet target does not remove that image from the VSX target's run, while saturated measurements of that VSX target or a reference star are masked only for the affected source and frame. The ensemble's high-side comparison-catalog error sigma clip has a 0.01 mag minimum threshold, so comparison errors at or below 0.01 mag are never rejected by that clip. Every ensemble AAVSO AID file includes an `#ENSEMBLE-COMPARISONS-XC` JSON header listing every selected comparison star with its label, RA, Dec, pixel position, and catalog calibration. Per-star plots, magnitude CSV, and ensemble-selection JSON are written below `variables/optimal_variables/<name>/` when the VSX period is at most 10 days and amplitude is at least 0.3 mag, or below `variables/normal/<name>/` otherwise; each AAVSO AID file is placed in that variable directory's `AAVSO_Files` subfolder. Skipped variables are recorded only in the shared `variables/FortuitousVariables_<date>.json` manifest and do not receive an object directory. Set `"photometer_fortuitous_variables"` to `false` to disable these products.
+
+`use_nextastro_vsx_cache_first` defaults to `false`. When enabled, fortuitous-variable discovery queries `https://photometry.nextastro.org/vsx_query` first. EXOTIC falls back to AAVSO when the cache fails or returns no objects. Full-schema cache responses supply period and amplitude directly; legacy cache responses are enriched from AAVSO for optimal/normal classification.
+
+## Third-Party GUI Launchers
+
+### TransitLab
+[TransitLab](https://github.com/ArtTrail/TransitLab) is a cross-platform desktop GUI launcher and workflow assistant for EXOTIC, available for Windows, macOS (Apple Silicon), and Linux. It guides observers through every step of a reduction run: loading FITS frames, image analysis, target parameter lookup via the NASA Exoplanet Archive, running EXOTIC, and submitting results to AAVSO, all from a single tabbed interface.
+
+**Features include:**
+- Automatic plate solving (astrometry.net or ASTAP)
+- NASA Exoplanet Archive integration for automatic target parameter lookup
+- AAVSO comparison star selection
+- Transit geometry visualizer with real-time animated light curve preview
+- Session history browser
+- Automation mode for unattended reductions
+- Built-in Python & EXOTIC setup wizard (install, upgrade, uninstall without the command line)
+- AAVSO submission directly from the app
+
+[Download the latest release](https://github.com/ArtTrail/TransitLab/releases/latest) | [Source code](https://github.com/ArtTrail/TransitLab)
 
 ## Features and Pipeline Architecture
 

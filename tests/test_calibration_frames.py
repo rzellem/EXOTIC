@@ -266,3 +266,33 @@ def test_existing_master_calibration_is_loaded_without_raw_frame_reprocessing(tm
     result = exotic_module._load_existing_master_calibration([str(master_path)], "dark")
 
     np.testing.assert_allclose(result, expected)
+
+
+@pytest.mark.parametrize("kind", ("bias", "dark", "flat"))
+@pytest.mark.parametrize("filename_case", (str.lower, str.upper))
+def test_compressed_master_calibration_loads_image_extension(tmp_path, kind, filename_case):
+    master_path = tmp_path / filename_case(f"master{kind}.fits.fz")
+    expected = np.arange(4, dtype=np.float32).reshape(2, 2)
+    fits.HDUList([
+        fits.PrimaryHDU(), fits.CompImageHDU(data=expected)
+    ]).writeto(master_path)
+
+    result = exotic_module._load_existing_master_calibration([str(master_path)], kind)
+
+    np.testing.assert_allclose(result, expected)
+
+
+def test_existing_master_prefers_uncompressed_when_both_are_supplied(tmp_path):
+    normal_path = tmp_path / "MasterDark.fits"
+    compressed_path = tmp_path / "masterdark.fits.fz"
+    expected = np.full((2, 2), 12.0)
+    fits.writeto(normal_path, expected)
+    fits.HDUList([
+        fits.PrimaryHDU(), fits.CompImageHDU(data=np.zeros((2, 2)))
+    ]).writeto(compressed_path)
+
+    result = exotic_module._load_existing_master_calibration(
+        [str(compressed_path), str(normal_path)], "dark"
+    )
+
+    np.testing.assert_allclose(result, expected)

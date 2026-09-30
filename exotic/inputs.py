@@ -68,6 +68,10 @@ CALIBRATION_MASTER_FILENAMES = {
     'dark': 'MasterDark.fits',
     'flat': 'MasterFlat.fits',
 }
+CALIBRATION_MASTER_FILENAME_VARIANTS = {
+    kind: (filename.lower(), filename.lower() + '.fz')
+    for kind, filename in CALIBRATION_MASTER_FILENAMES.items()
+}
 AAVSO_WAVELENGTH_UNIT_FACTORS_TO_NM = {
     'a': 0.1,
     'angstrom': 0.1,
@@ -324,6 +328,7 @@ class Inputs:
             'restrict_ars_range': 'y',
             'restrict_ars_range_percentage': 10.0,
             'use_sparse_posterior_live_point_retry': 'y',
+            'do_heavy_final_ultranest_fit': False,
             'quick_look_mode': False,
         }
         self.params = {
@@ -866,6 +871,7 @@ class Inputs:
                 'Use Sparse Posterior Live Point Retry? (y/n)',
                 'Sparse Posterior Live-Point Retry? (y/n)',
             ),
+            'do_heavy_final_ultranest_fit': ('do_heavy_final_ultranest_fit',),
             'bad_wcs_threshold_percent': (
                 'bad_wcs_threshold_percent',
                 'Bad WCS Threshold Percent',
@@ -948,8 +954,9 @@ def check_imaging_files(directory, img_type, exclude_calibration_masters=False):
                                 and not (
                                     exclude_calibration_masters
                                     and file.name.lower() in {
-                                        filename.lower()
-                                        for filename in CALIBRATION_MASTER_FILENAMES.values()
+                                        filename
+                                        for filenames in CALIBRATION_MASTER_FILENAME_VARIANTS.values()
+                                        for filename in filenames
                                     }
                                 ):
                             input_files.append(str(file))
@@ -1027,11 +1034,16 @@ def _science_directory_calibration_masters(science_images):
         return {}
     if not science_dir.is_dir():
         return {}
-    return {
-        calibration_type: science_dir / filename
-        for calibration_type, filename in CALIBRATION_MASTER_FILENAMES.items()
-        if (science_dir / filename).is_file()
+    files_by_name = {
+        path.name.lower(): path for path in science_dir.iterdir() if path.is_file()
     }
+    masters = {}
+    for calibration_type, filenames in CALIBRATION_MASTER_FILENAME_VARIANTS.items():
+        for filename in filenames:
+            if filename in files_by_name:
+                masters[calibration_type] = files_by_name[filename]
+                break
+    return masters
 
 
 def image_calibrations(flats_dir, darks_dir, biases_dir, init, science_images=None):

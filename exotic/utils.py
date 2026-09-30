@@ -23,7 +23,7 @@ _WINDOWS_RESERVED_FILENAME_STEMS = {
     *(f'COM{i}' for i in range(1, 10)),
     *(f'LPT{i}' for i in range(1, 10)),
 }
-_WINDOWS_ILLEGAL_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+_UNSUPPORTED_FILENAME_CHARS_RE = re.compile(r'[^A-Za-z0-9._-]')
 _FILENAME_WHITESPACE_RE = re.compile(r'\s+')
 _COMPACT_EXOPLANET_SUFFIX_RE = re.compile(r'(?<=[0-9A-Z])([b-z])$')
 MAX_APPARENT_MAGNITUDE = 30.0
@@ -78,13 +78,14 @@ def format_aavso_exoplanet_name(value):
 
 
 def _clean_filename_text(value):
-    cleaned = _WINDOWS_ILLEGAL_FILENAME_CHARS_RE.sub('-', str(value or ''))
+    cleaned = str(value or '').replace('&', 'and')
     cleaned = _FILENAME_WHITESPACE_RE.sub('', cleaned)
+    cleaned = _UNSUPPORTED_FILENAME_CHARS_RE.sub('-', cleaned)
     return cleaned.rstrip(' .')
 
 
 def sanitize_filename_component(value, fallback='output'):
-    """Return one filename component that is safe on Windows, macOS, and Linux."""
+    """Return a component using only ASCII letters, numbers, '.', '-', and '_'."""
 
     cleaned = _clean_filename_text(value)
     if cleaned in {'', '.', '..'}:
@@ -112,7 +113,7 @@ def safe_output_filename(prefix, *parts, extension):
 
     stem_parts = [str(prefix), *(str(part) for part in parts)]
     safe_stem = sanitize_filename_component('_'.join(stem_parts), fallback=str(prefix or 'output'))
-    ext = _FILENAME_WHITESPACE_RE.sub('', str(extension or ''))
+    ext = _clean_filename_text(extension)
     if ext and not ext.startswith('.'):
         ext = f'.{ext}'
     return f'{safe_stem}{ext}'

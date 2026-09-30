@@ -200,6 +200,65 @@ def test_quick_look_aperture_sample_spans_sequence_and_is_capped_at_twelve():
     assert np.all(np.diff(indices) > 0)
 
 
+def test_exact_aperture_tuning_retains_supplied_stars_when_sample_score_is_unavailable():
+    frame_count = 12
+    rows = np.ones((frame_count, 7), dtype=float)
+    rows[:, 3:5] = 1.0
+    flux = np.full((frame_count, 1, 1), np.nan)
+    flux[:4, 0, 0] = 100.0
+    psf_data = {'target': rows.copy(), 'comp1': rows.copy()}
+    aper_data = {'target': np.ones_like(flux), 'comp1': flux}
+    common = dict(
+        psf_data=psf_data,
+        aper_data=aper_data,
+        apers=np.array([2.5]),
+        annuli=np.array([10.0]),
+        airmass=np.linspace(1.0, 1.5, frame_count),
+        comp_stars=[[10.0, 20.0]],
+        sigma=1.0,
+        use_psf_photometry=False,
+        use_aperture_photometry=True,
+    )
+
+    assert exotic_module.select_comparison_calibrated_photometry(**common) is None
+    selected = exotic_module.select_comparison_calibrated_photometry(
+        **common, use_exactly_the_comps_provided=True,
+    )
+
+    assert selected is not None
+    assert selected['a'] == 0
+    assert selected['an'] == 0
+    assert selected['best_comp_index'] == 0
+    assert selected['comp_summaries'][0]['coverage_rejected'] is False
+    # Missing measurements stay missing; exact mode does not manufacture flux.
+    assert np.count_nonzero(np.isfinite(aper_data['comp1'])) == 4
+
+
+def test_exact_coarse_aperture_tuning_disables_coverage_vetting(monkeypatch):
+    frame_count = 12
+    flux = np.full((frame_count, 1, 1), 100.0)
+    flux[6:, 0, 0] = np.nan
+    data = {'comp1': flux, 'comp2': np.full_like(flux, 100.0)}
+    original = exotic_module.comparison_star_stability_summary
+    summaries = []
+
+    def record_summary(*args, **kwargs):
+        summary = original(*args, **kwargs)
+        summaries.append(summary)
+        return summary
+
+    monkeypatch.setattr(exotic_module, 'comparison_star_stability_summary', record_summary)
+    for exact in (False, True):
+        exotic_module.auto_tune_aperture_sigma_grid(
+            np.array([2.5]), np.array([10.0]), data, 2,
+            np.linspace(1.0, 1.5, frame_count),
+            use_exactly_the_comps_provided=exact,
+        )
+
+    assert summaries[0]['comp_summaries'][0]['coverage_rejected'] is True
+    assert summaries[1]['comp_summaries'][0]['coverage_rejected'] is False
+
+
 def test_quick_look_fit_uses_only_lm_and_labels_uncertainty(monkeypatch):
     calls = []
 

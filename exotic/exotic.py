@@ -127,6 +127,7 @@ except ImportError:  # package import
     from api.elca import lc_fitter, transit, get_phase
 try:  # output files
     from inputs import (
+        CALIBRATION_MASTER_FILENAME_VARIANTS,
         CALIBRATION_MASTER_FILENAMES,
         Inputs,
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
@@ -136,6 +137,7 @@ try:  # output files
     )
 except ImportError:  # package import
     from .inputs import (
+        CALIBRATION_MASTER_FILENAME_VARIANTS,
         CALIBRATION_MASTER_FILENAMES,
         Inputs,
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
@@ -10383,6 +10385,10 @@ def parse_automatic_calibration_selector_count(config_value):
     return count
 
 
+def should_do_heavy_final_ultranest_fit(config_value):
+    return parse_bool_config_value(config_value, False, 'do_heavy_final_ultranest_fit')
+
+
 def should_use_sparse_posterior_live_point_retry(config_value):
     if config_value is None:
         return SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT
@@ -10520,6 +10526,16 @@ def configure_sparse_posterior_live_point_retry(config_value):
     enabled = should_use_sparse_posterior_live_point_retry(config_value)
     os.environ[SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV] = "1" if enabled else "0"
     return enabled
+
+
+def configure_heavy_final_ultranest_fit(config_value, sparse_retry_value=True):
+    # Gate both selected-comparison extensions and standalone sparse-posterior
+    # continuations so neither can silently start a heavy final fit by default.
+    enabled = (
+        should_do_heavy_final_ultranest_fit(config_value)
+        and should_use_sparse_posterior_live_point_retry(sparse_retry_value)
+    )
+    return configure_sparse_posterior_live_point_retry(enabled)
 
 
 def configure_lm_boundary_scout_before_ultranest(config_value):
@@ -19848,12 +19864,13 @@ def merge_aavso_vsp_v_calibration_fallback(
         file, axis, obs_filter, img_scale, calibration_stars, user_comp_stars,
         user_targ_star=None,
         max_new_comp_stars=STELLAR_VARIABILITY_ENSEMBLE_MAX_MEMBERS,
-        vsp_query_available=True):
+        vsp_query_available=True, aavso_comp=False):
     """Query VSP when a V-family observation has no usable direct V calibration.
 
     Existing AAVSO VSP calibrations mean the field has already been queried. The
     returned mapping contains the unified input-plus-VSP calibration pool, while
     the second mapping contains only the VSP results from this fallback query.
+    Only explicit AAVSO opt-in permits adding stars to the science comparison list.
     """
     unified_calibrations = dict(calibration_stars or {})
     preferred_band = preferred_catalog_magnitude_band_for_filter(obs_filter)
@@ -19904,7 +19921,10 @@ def merge_aavso_vsp_v_calibration_fallback(
             axis,
             obs_filter,
             img_scale,
-            user_comp_stars=user_comp_stars,
+            user_comp_stars=(
+                user_comp_stars if coerce_boolean_config_value(aavso_comp) is True
+                else [list(position) for position in (user_comp_stars or [])]
+            ),
             user_targ_star=user_targ_star,
             max_new_comp_stars=max_new_comp_stars,
         )
@@ -23885,11 +23905,13 @@ def _load_existing_master_calibration(calibration_files, calibration_type):
     expected_name = CALIBRATION_MASTER_FILENAMES.get(str(calibration_type).strip().lower())
     if expected_name is None:
         return None
+    accepted_names = CALIBRATION_MASTER_FILENAME_VARIANTS[str(calibration_type).strip().lower()]
     master_path = next(
         (
             Path(path)
+            for filename in accepted_names
             for path in calibration_files
-            if Path(path).name.lower() == expected_name.lower() and Path(path).is_file()
+            if Path(path).name.lower() == filename and Path(path).is_file()
         ),
         None,
     )
@@ -30334,7 +30356,8 @@ def _refined_sigma_grid(center, lower_bound, upper_bound, half_width, points):
 def auto_tune_aperture_sigma_grid(coarse_apertures_sigma, coarse_annuli_sigma, coarse_aper_data, comp_star_count,
                                   subset_airmass, require_comp_star=True,
                                   skip_low_comparison_coverage_rejection=False,
-                                  psf_quality_masks=None):
+                                  psf_quality_masks=None,
+                                  use_exactly_the_comps_provided=False):
     best_candidate = None
     best_score = np.inf
     best_sort_key = (np.inf, np.inf)
@@ -30355,6 +30378,7 @@ def auto_tune_aperture_sigma_grid(coarse_apertures_sigma, coarse_annuli_sigma, c
                 comp_flux_map,
                 subset_airmass,
                 skip_low_coverage_rejection=skip_low_comparison_coverage_rejection,
+                bypass_vetting=use_exactly_the_comps_provided,
             )
             field_score = field_summary['field_score']
             candidate_sort_key = comparison_field_sort_key(field_summary)
@@ -35399,7 +35423,8 @@ def _main_impl():
             log_info(
                 f"PSF flux seed-track directory requested: {psf_seed_track_directory}"
             )
-        use_sparse_posterior_live_point_retry = configure_sparse_posterior_live_point_retry(
+        use_sparse_posterior_live_point_retry = configure_heavy_final_ultranest_fit(
+            exotic_infoDict.get('do_heavy_final_ultranest_fit', False),
             exotic_infoDict.get(
                 'use_sparse_posterior_live_point_retry',
                 SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_DEFAULT,
@@ -35426,6 +35451,12 @@ def _main_impl():
                     f"comparison fit continues with {SPARSE_POSTERIOR_LIVE_POINT_RETRY_FACTOR_DEFAULT}x "
                     "additional minimum live points using its retained final-pass bounds."
                 )
+        if not use_sparse_posterior_live_point_retry:
+            log_info(
+                "Heavy final UltraNest fit disabled: final fits use the configured minimum live-point "
+                "count without live-point extension. Set optional_info 'do_heavy_final_ultranest_fit' "
+                "to true to opt in."
+            )
         log_ultranest_mpi_status()
 
         # Keep non-final reduction products separate from the primary results.
@@ -36505,6 +36536,7 @@ def _main_impl():
                             else maximum_number_of_ensemble_comparisons_for_stellar_variability
                         ),
                         vsp_query_available=not aavso_vsp_query_failed,
+                        aavso_comp=exotic_infoDict.get('aavso_comp', 'n'),
                     )
                 )
                 if fallback_chart_id is not None:
@@ -36538,6 +36570,13 @@ def _main_impl():
                             warn=True,
                         )
                     vsp_comp_stars.update(fallback_vsp_stars)
+                    # Track fallback calibrators for magnitudes without making them
+                    # eligible for the transit comparison selection.
+                    fortuitous_auto_stars, _ = merge_automatic_comparison_star_coords(
+                        fortuitous_auto_stars,
+                        [star['pos'] for star in fallback_vsp_stars.values()],
+                        duplicate_radius_pixels=REFERENCE_FALLBACK_DEDUPE_RADIUS_PIXELS,
+                    )
                     fortuitous_ensemble_stars, fallback_duplicate_messages = (
                         merge_automatic_comparison_star_coords(
                             science_comp_stars,
@@ -37101,6 +37140,7 @@ def _main_impl():
                     require_comp_star=require_comp_star,
                     skip_low_comparison_coverage_rejection=skip_low_comp_coverage_rejection,
                     psf_quality_masks=tuning_psf_quality_masks,
+                    use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                 )
                 refined_tuning_data = populate_aperture_tuning_data_from_cutouts(
                     tuning_cutouts,
@@ -37130,6 +37170,7 @@ def _main_impl():
                     use_psf_photometry=False,
                     use_aperture_photometry=True,
                     comp_overexposed_masks=tuning_overexposed_masks,
+                    use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                 )
                 if tuning_selection is not None:
                     selected_aperture_index = int(tuning_selection['a'])
@@ -37788,6 +37829,7 @@ def _main_impl():
                     use_psf_photometry=False,
                     use_aperture_photometry=True,
                     comp_overexposed_masks=comp_overexposed_masks,
+                    use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                 )
                 if aperture_estimation_calibration is None:
                     log_info(

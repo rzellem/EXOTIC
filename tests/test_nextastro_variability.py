@@ -1425,7 +1425,17 @@ def test_selected_comparison_finder_entries_do_not_depend_on_aavso_metadata():
     ]
 
 
-def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(monkeypatch):
+@pytest.mark.parametrize('options, expected_positions', [
+    ({}, [[100, 200]]),
+    ({'aavso_comp': 'n'}, [[100, 200]]),
+    ({'aavso_comp': False}, [[100, 200]]),
+    ({'aavso_comp': None}, [[100, 200]]),
+    ({'aavso_comp': ''}, [[100, 200]]),
+    ({'aavso_comp': 'y'}, [[100, 200], [300, 400]]),
+    ({'aavso_comp': True}, [[100, 200], [300, 400]]),
+])
+def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(
+        monkeypatch, options, expected_positions):
     calls = []
     supplied_positions = [[100, 200]]
 
@@ -1471,6 +1481,7 @@ def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(monkeypatc
             },
             supplied_positions,
             user_targ_star=[250, 250],
+            **options,
         )
     )
 
@@ -1479,7 +1490,7 @@ def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(monkeypatc
     assert len(calls) == 1
     assert calls[0][2] == 'Clear'
     assert calls[0][4]['max_new_comp_stars'] == 5
-    assert supplied_positions == [[100, 200], [300, 400]]
+    assert supplied_positions == expected_positions
     assert set(fallback_stars) == {'000-BPW-929', '000-BMX-191'}
     assert set(combined) == {'NextAstro-g-only', '000-BPW-929', '000-BMX-191'}
 
@@ -1507,6 +1518,7 @@ def test_clear_v_calibration_fallback_skips_vsp_when_nextastro_has_usable_v(monk
             1.2,
             existing,
             [[100, 200]],
+            aavso_comp='y',
         )
     )
 
@@ -1537,6 +1549,7 @@ def test_clear_v_calibration_fallback_does_not_repeat_exhausted_vsp_query(monkey
             {},
             [[100, 200]],
             vsp_query_available=False,
+            aavso_comp='y',
         )
     )
 

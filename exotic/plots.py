@@ -314,7 +314,7 @@ def plot_centroids(x_targ, y_targ, x_ref, y_ref, times, target_name, save, date)
 
     plt.tight_layout()
     plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename(
-        "CentroidPositions&Distances",
+        "CentroidPositionsandDistances",
         target_name,
         date=date,
         extension="pdf",

@@ -46,6 +46,20 @@ def test_safe_output_filename_removes_spaces_from_planet_names():
     assert " " not in filename
 
 
+def test_safe_output_filename_replaces_ampersand_with_and():
+    assert safe_output_filename(
+        "CentroidPositions&Distances", "HAT-P-32 b", "20-December-2017",
+        extension="pdf",
+    ) == "CentroidPositionsandDistances_HAT-P-32b_20-December-2017.pdf"
+
+
+@pytest.mark.parametrize("value", ["star+name", "star(name)", "star#name", "caf\u00e9", "a&b", "a/b"])
+def test_filename_components_use_only_supported_characters(value):
+    assert re.fullmatch(r"[A-Za-z0-9._-]+", sanitize_filename_component(value))
+    assert re.fullmatch(r"[A-Za-z0-9._-]+", sanitize_filename_component("", fallback=value))
+    assert re.fullmatch(r"[A-Za-z0-9._-]+", safe_output_filename(value, extension=value))
+
+
 @pytest.mark.parametrize(
     ("planet_name", "expected"),
     (

@@ -133,3 +133,5 @@ exotic.log.*
 pl_names.json
 /.project
 /.deps313
+.pytest_tmp_compressed_masters/test_bias_and_darks_build_expo0/dark_10s.fits
+/.pytest_tmp_compressed_masters

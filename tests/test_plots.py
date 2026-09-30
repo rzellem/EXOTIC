@@ -33,6 +33,19 @@ class DummyFit:
         self.airmass = np.array([1.1, 1.2, 1.3])
 
 
+def test_plot_centroids_uses_supported_filename(tmp_path):
+    positions = np.array([10.0, 10.1, 10.2])
+    times = np.array([2458107.0, 2458107.01, 2458107.02])
+    plots_module.plot_centroids(
+        positions, positions, positions + 5, positions + 5,
+        times, "HAT-P-32 b", tmp_path, "20-December-2017",
+    )
+
+    assert [path.name for path in (tmp_path / "working_artifacts").iterdir()] == [
+        "CentroidPositionsandDistances_HAT-P-32b_20-December-2017.pdf"
+    ]
+
+
 def test_format_parameter_value_uses_uncertainty_precision_without_scientific_notation():
     assert (
         _format_parameter_value(2461197.8645824, 0.0005037355680314821, split_error=True)

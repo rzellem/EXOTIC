@@ -93,10 +93,11 @@ def test_elevation_skips_invalid_header_alias_and_uses_later_valid_alias(monkeyp
     assert result == pytest.approx(612.0)
 
 
-def test_imaging_directory_ignores_canonical_calibration_masters(tmp_path):
+@pytest.mark.parametrize("suffix", (".fits", ".fits.fz"))
+def test_imaging_directory_ignores_canonical_calibration_masters(tmp_path, suffix):
     science_file = tmp_path / "science_001.fits"
     fits.writeto(science_file, np.ones((2, 2)), overwrite=True)
-    for filename in ("MasterBias.fits", "MasterDark.fits", "MasterFlat.fits"):
+    for filename in (f"masterbias{suffix}", f"masterdark{suffix}", f"masterflat{suffix}"):
         fits.writeto(tmp_path / filename, np.ones((2, 2)), overwrite=True)
 
     result = inputs_module.imaging_files(str(tmp_path))
@@ -121,6 +122,27 @@ def test_image_calibrations_prefers_masters_next_to_science_images(tmp_path):
     assert flats == [str(tmp_path / "MasterFlat.fits")]
     assert darks == [str(tmp_path / "MasterDark.fits")]
     assert biases == [str(tmp_path / "MasterBias.fits")]
+
+
+@pytest.mark.parametrize("normal_also_present", (False, True))
+def test_image_calibrations_discovers_compressed_masters(tmp_path, normal_also_present):
+    science_file = tmp_path / "science_001.fits"
+    fits.writeto(science_file, np.ones((2, 2)))
+    for kind in ("bias", "dark", "flat"):
+        fits.HDUList([
+            fits.PrimaryHDU(), fits.CompImageHDU(data=np.ones((2, 2)))
+        ]).writeto(tmp_path / f"master{kind}.fits.fz")
+        if normal_also_present:
+            fits.writeto(tmp_path / f"master{kind}.fits", np.ones((2, 2)))
+
+    flats, darks, biases = inputs_module.image_calibrations(
+        None, None, None, "y", science_images=[str(science_file)]
+    )
+
+    suffix = ".fits" if normal_also_present else ".fits.fz"
+    assert flats == [str(tmp_path / f"masterflat{suffix}")]
+    assert darks == [str(tmp_path / f"masterdark{suffix}")]
+    assert biases == [str(tmp_path / f"masterbias{suffix}")]
 
 
 def test_complete_co_located_masters_skip_interactive_calibration_prompt(tmp_path, monkeypatch):
@@ -808,6 +830,18 @@ def test_comp_params_defaults_sparse_posterior_live_point_retry_to_yes(tmp_path)
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["use_sparse_posterior_live_point_retry"] == "y"
+    assert inputs.info_dict["do_heavy_final_ultranest_fit"] is False
+
+
+def test_comp_params_reads_heavy_final_ultranest_opt_in(tmp_path):
+    init_file = tmp_path / "inits.json"
+    init_file.write_text(json.dumps({
+        "user_info": {}, "planetary_parameters": {},
+        "optional_info": {"do_heavy_final_ultranest_fit": True},
+    }))
+    inputs = Inputs(init_opt="y")
+    inputs.comp_params(init_file, {})
+    assert inputs.info_dict["do_heavy_final_ultranest_fit"] is True
 
 
 def test_comp_params_defaults_exit_at_first_qc_pass_solution_to_yes(tmp_path):

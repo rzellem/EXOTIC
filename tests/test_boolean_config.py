@@ -16,6 +16,7 @@ BOOLEAN_RUNTIME_PARSERS = (
     exotic_module.should_use_single_comparison_for_fortuitous_variables,
     exotic_module.should_use_nextastro_vsx_cache_first,
     exotic_module.should_use_sparse_posterior_live_point_retry,
+    exotic_module.should_do_heavy_final_ultranest_fit,
     exotic_module.should_use_lm_boundary_scout_before_ultranest,
     exotic_module.should_run_fast_ultranest_before_final_run,
     exotic_module.should_run_final_residual_rejection,
@@ -62,3 +63,27 @@ def test_multiprocess_bad_pixel_boolean_forms_are_consistent():
         assert exotic_module.get_multiprocess_bad_pixel_precheck_processes(value) >= 1
     for value in FALSE_VARIANTS:
         assert exotic_module.get_multiprocess_bad_pixel_precheck_processes(value) is None
+
+
+@pytest.mark.parametrize('heavy,legacy,expected', [
+    (None, True, None), (False, True, None), ('n', True, None),
+    (True, True, 1200), ('y', True, 1200), (True, False, None),
+    ('invalid', True, None),
+])
+def test_heavy_final_fit_requires_explicit_opt_in(monkeypatch, heavy, legacy, expected):
+    monkeypatch.setenv('EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS', '200')
+    # An earlier run's opt-in must not leak into a later default run.
+    monkeypatch.setenv(exotic_module.SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV, '1')
+    exotic_module.configure_heavy_final_ultranest_fit(heavy, legacy)
+    assert exotic_module.selected_final_live_point_target() == (200, expected)
+
+
+def test_disabled_heavy_final_fit_does_not_continue_selected_sampler(monkeypatch):
+    import types
+
+    monkeypatch.setenv(exotic_module.SPARSE_POSTERIOR_LIVE_POINT_RETRY_ENABLED_ENV, '1')
+    exotic_module.configure_heavy_final_ultranest_fit(None)
+    fit = types.SimpleNamespace()
+    fit.extend_ultranest_fit = lambda **kwargs: pytest.fail('Default run started a heavy fit')
+    assert exotic_module.extend_selected_comparison_live_points_if_needed(fit) is fit
+    assert fit.sparse_posterior_live_point_extension_applied is False

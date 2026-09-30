@@ -837,8 +837,11 @@ def test_plot_bestfit_draws_prefit_rejected_baseline_points_as_red_crosses(monke
         "rejected_unc": np.array([1e-3]),
     }
 
-    fig, _ = fit.plot_bestfit()
+    fig, axes = fit.plot_bestfit()
 
+    retained_percent = fit.residuals / np.median(fit.data) * 100
+    half_span = 0.75 * np.ptp(retained_percent)
+    np.testing.assert_allclose(axes[1].get_ylim(), [-half_span, half_span])
     assert any(
         scatter.get("color") == "#d62728" and scatter.get("marker") == "x"
         for scatter in captured_scatter

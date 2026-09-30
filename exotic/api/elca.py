@@ -59,9 +59,9 @@ from scipy.special import ndtr, ndtri
 from ultranest import ReactiveNestedSampler
 
 try:
-    from ..utils import format_value_and_uncertainty, format_value_with_uncertainty
+    from ..utils import format_value_and_uncertainty, format_value_with_uncertainty, residual_plot_limits
 except ImportError:
-    from utils import format_value_and_uncertainty, format_value_with_uncertainty
+    from utils import format_value_and_uncertainty, format_value_with_uncertainty, residual_plot_limits
 
 try:
     from plotting import corner
@@ -4946,6 +4946,7 @@ class lc_fitter(object):
         axs[0].legend(loc='best')
         axs[1].set_ylabel("Residuals [%]", fontsize=14)
         axs[1].grid(True, ls='--', axis='y')
+        axs[1].set_ylim(residual_plot_limits(self.residuals / np.median(self.data) * 1e2))
         return f, axs
 
     def plot_triangle(self, plot_title=None, zoom_sigma=None):
@@ -5486,7 +5487,9 @@ class glc_fitter(lc_fitter):
         axs[0].set_ylim([1-self.parameters['rprs']**2-ylim_sigma*min_std, 1+ylim_sigma*min_std])
         axs[1].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
         axs[1].set_xlabel("Phase", fontsize=14)
-        axs[1].set_ylim([-5*min_std*1e2, 5*min_std*1e2])
+        axs[1].set_ylim(residual_plot_limits(np.concatenate([
+            lc['residuals'] / np.median(lc['flux']) * 1e2 for lc in self.lc_data
+        ])))
 
         # compute average min and max for all the data
         mins = []; maxs = []

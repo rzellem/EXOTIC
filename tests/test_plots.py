@@ -33,6 +33,54 @@ class DummyFit:
         self.airmass = np.array([1.1, 1.2, 1.3])
 
 
+@pytest.mark.parametrize('diagnostic', [False, True])
+def test_final_residual_window_ignores_rejected_outliers(diagnostic):
+    class Fit:
+        phase = np.linspace(-0.05, 0.05, 5)
+        phase_upsample = phase
+        transit_upsample = np.ones(5)
+        detrended = np.array([0.98, 0.99, 1.0, 1.01, 1.02])
+        data = detrended
+        residuals = np.array([-0.02, -0.01, 0.0, 0.01, 0.02])
+        final_residual_rejection = {
+            'applied': True, 'rejected_phase': [0.01],
+            'rejected_flux': [0.5], 'rejected_residual_percent': [-50.0],
+        }
+
+        def plot_bestfit(self, **kwargs):
+            fig, axes = plt.subplots(2, 1)
+            axes[0].plot(self.phase, self.detrended)
+            axes[1].plot(self.phase, self.residuals * 100)
+            return fig, axes
+
+    fig = plots_module._build_final_lightcurve_figure(
+        Fit(), np.ones(5), 'Target', show_restricted_baseline_points=diagnostic,
+        show_binned_points=diagnostic, diagnostic=diagnostic,
+    )
+    np.testing.assert_allclose(fig.axes[1].get_ylim(), [-3.0, 3.0])
+    plt.close(fig)
+
+
+def test_calibrated_axis_labels_fit_inside_native_canvas(tmp_path):
+    fit = SimpleNamespace(stellar_variability_params=[
+        {'time': 1, 'mag': 13.74, 'mag_err': 0.001, 'mag_band': 'r'},
+    ])
+    fig, axes = plt.subplots(2, 1, figsize=(9, 6))
+    fig.subplots_adjust(right=0.98)
+    axes[0].set_ylim(0.94, 1.06)
+    assert plots_module._add_apparent_magnitude_axis(axes[0], fit)
+    fig.canvas.draw()
+    secondary = axes[0].child_axes[0]
+    renderer = fig.canvas.get_renderer()
+    for text in [*secondary.get_yticklabels(), secondary.yaxis.label]:
+        bounds = text.get_window_extent(renderer)
+        assert bounds.x1 <= fig.bbox.x1
+    assert all(label.get_text().startswith('13.') for label in secondary.get_yticklabels())
+    assert secondary.yaxis.get_offset_text().get_text() == ''
+    plots_module._save_high_res_png(fig, tmp_path / 'calibrated.png')
+    plt.close(fig)
+
+
 def test_plot_centroids_uses_supported_filename(tmp_path):
     positions = np.array([10.0, 10.1, 10.2])
     times = np.array([2458107.0, 2458107.01, 2458107.02])
@@ -839,6 +887,8 @@ def test_plot_final_lightcurve_adds_apparent_magnitude_axis_when_calibrated(tmp_
     secondary_labels = []
 
     class FakeSecondaryAxis:
+        yaxis = SimpleNamespace(set_major_formatter=lambda formatter: None)
+
         def set_ylabel(self, label):
             secondary_labels.append(label)
 

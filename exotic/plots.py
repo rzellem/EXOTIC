@@ -4,6 +4,7 @@ import inspect
 from io import BytesIO
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
 from matplotlib.lines import Line2D
 import numpy as np
 from pathlib import Path
@@ -15,6 +16,7 @@ try:
         is_usable_apparent_magnitude,
         magnitude_text,
         normalized_magnitude_error,
+        residual_plot_limits,
         safe_output_filename,
     )
 except ImportError:
@@ -24,6 +26,7 @@ except ImportError:
         is_usable_apparent_magnitude,
         magnitude_text,
         normalized_magnitude_error,
+        residual_plot_limits,
         safe_output_filename,
     )
 
@@ -992,6 +995,12 @@ def _add_apparent_magnitude_axis(ax_lc, fit):
         functions=(flux_to_magnitude, magnitude_to_flux),
     )
     secondary_axis.set_ylabel(f"Apparent Magnitude ({calibration['band']})")
+    # Final PNGs use the fixed figure canvas. Reserve space for the entire
+    # calibrated tick values and axis title rather than clipping at right=0.98.
+    formatter = ScalarFormatter(useOffset=False)
+    formatter.set_scientific(False)
+    secondary_axis.yaxis.set_major_formatter(formatter)
+    ax_lc.figure.subplots_adjust(right=min(ax_lc.figure.subplotpars.right, 0.84))
     return True
 
 
@@ -1487,6 +1496,10 @@ def _build_final_lightcurve_figure(
         ax_lc.legend(loc='best')
     if not diagnostic:
         _set_canonical_lightcurve_limits(fit, ax_lc, ax_res)
+    residuals = np.asarray(getattr(fit, 'residuals', []), dtype=float).reshape(-1)
+    data = _finite_plot_values(getattr(fit, 'data', []))
+    if residuals.size and data.size and np.median(data) != 0:
+        ax_res.set_ylim(residual_plot_limits(residuals / np.median(data) * 100.0))
     _add_apparent_magnitude_axis(ax_lc, fit)
     return f
 

@@ -15,6 +15,19 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
+def residual_plot_limits(residual_percent):
+    """Center on zero with a total span of 1.5 times the retained data range.
+
+    Rejected points and uncertainty bars must not be passed here. A tiny
+    nonzero window handles empty or constant series without singular axes.
+    """
+    values = [float(value) for value in residual_percent if isfinite(float(value))]
+    half_span = 0.75 * (max(values) - min(values)) if values else 0.0
+    if half_span <= 0:
+        half_span = 1e-6
+    return -half_span, half_span
+
+
 _WINDOWS_RESERVED_FILENAME_STEMS = {
     'CON',
     'PRN',

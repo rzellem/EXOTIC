@@ -6894,7 +6894,8 @@ def test_fit_ranked_comparison_calibration_candidates_logs_per_comp_run_reportin
     assert any("OOT baseline detrending note: Skipped; need out-of-transit coverage on both sides of transit to fit a linear baseline." in message for message in logged)
 
 
-def test_evaluate_lightcurve_candidate_requests_nested_fit(monkeypatch):
+@pytest.mark.parametrize('inference_method', ['ultranest', 'lm'])
+def test_evaluate_lightcurve_candidate_requests_nested_fit(monkeypatch, inference_method):
     def fake_diagnostics(*args, **kwargs):
         return {"usable_point_count": 6}
 
@@ -6908,7 +6909,7 @@ def test_evaluate_lightcurve_candidate_requests_nested_fit(monkeypatch):
         jd_times=None,
         **kwargs,
     ):
-        assert kwargs.get("final_fit_mode") == "ns"
+        assert kwargs.get("final_fit_mode") == ('lm' if inference_method == 'lm' else 'ns')
         fit = types.SimpleNamespace(
             residuals=np.full(6, 0.01, dtype=float),
             data=np.ones(6, dtype=float),
@@ -6940,10 +6941,15 @@ def test_evaluate_lightcurve_candidate_requests_nested_fit(monkeypatch):
             True,
             True,
             True,
+            None,
+            None,
+            inference_method,
         )
     )
 
     assert result["accepted"] is True
+    if inference_method == 'lm':
+        assert result['myfit'].inference_method == 'Least-squares (LM)'
     assert result["ktmf_metric"] == pytest.approx(3.8)
     assert tflux_fit.shape == (6,)
     assert cflux_fit.shape == (6,)
@@ -7198,8 +7204,9 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
     assert result["selected_transit_delta_bic"] == pytest.approx(18.0)
 
 
-def test_apply_raw_target_photometry_selection_sets_no_comparison_aperture_sentinel():
-    fit = types.SimpleNamespace(time=np.linspace(0.0, 0.05, 6))
+@pytest.mark.parametrize('inference_method', ['UltraNest', 'Least-squares (LM)'])
+def test_apply_raw_target_photometry_selection_sets_no_comparison_aperture_sentinel(inference_method):
+    fit = types.SimpleNamespace(time=np.linspace(0.0, 0.05, 6), inference_method=inference_method)
     target_flux = np.linspace(1000.0, 1010.0, 6)
     target_driven_search = {
         "best_candidate": {
@@ -7240,6 +7247,7 @@ def test_apply_raw_target_photometry_selection_sets_no_comparison_aperture_senti
 
     assert applied is True
     assert photometry_info["best_fit_lc"] is fit
+    assert photometry_info['reuse_selected_full_reduction_fit'] is (inference_method == 'Least-squares (LM)')
     assert photometry_info["comp_star_num"] is None
     assert photometry_info["min_aperture"] == pytest.approx(-5.0)
     assert photometry_info["min_annulus"] == pytest.approx(12.0)

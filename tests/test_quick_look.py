@@ -9,6 +9,30 @@ import exotic.exotic as exotic_module
 from exotic.exotic_gui import gui_reduction_command
 
 
+def test_aavso_single_attempt_failure_does_not_sleep(monkeypatch):
+    calls = []
+    def fail(url, **kwargs):
+        calls.append(url)
+        raise exotic_module.requests.exceptions.ReadTimeout('catalogue unavailable')
+    monkeypatch.setattr(exotic_module.requests, 'get', fail)
+    monkeypatch.setattr(exotic_module, 'sleep', lambda *_: pytest.fail('single-attempt calibration must not sleep'))
+    with pytest.raises(exotic_module.AAVSOVSPUnavailableError, match='1 attempts'):
+        exotic_module.fetch_aavso_vsp_chart('https://example.invalid', max_retries=0)
+    assert len(calls) == 1
+
+
+def test_raw_target_quick_look_search_propagates_lm_to_candidate(monkeypatch):
+    times = np.arange(6, dtype=float)
+    candidate = {'method':'aperture', 'mask':np.ones(6,dtype=bool), 'ckey':None, 'a':0, 'an':0}
+    monkeypatch.setattr(exotic_module, 'build_target_fit_candidate_jobs', lambda *args, **kwargs: [candidate])
+    def evaluate(task):
+        assert task[-1] == 'lm'
+        raise RuntimeError('reached LM candidate')
+    monkeypatch.setattr(exotic_module, 'evaluate_lightcurve_candidate', evaluate)
+    with pytest.raises(RuntimeError, match='reached LM candidate'):
+        exotic_module.run_target_driven_photometry_search(times,times,np.ones(6),[],{},[],{}, {'target':np.ones((6,1,1))},[3],[8],1,require_comp_star=False,inference_method='lm')
+
+
 def test_quick_look_cli_parses_optional_init_file(monkeypatch):
     monkeypatch.setattr(sys, 'argv', ['exotic', '--quick-look', 'inits.json'])
 

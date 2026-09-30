@@ -19665,9 +19665,9 @@ class AAVSOVSPUnavailableError(RuntimeError):
     """Raised after the AAVSO VSP endpoint exhausts its response retries."""
 
 
-def fetch_aavso_vsp_chart(url):
+def fetch_aavso_vsp_chart(url, max_retries=AAVSO_VSP_MAX_RETRIES):
     """Fetch and validate a VSP chart, retrying transient/unusable responses."""
-    total_attempts = AAVSO_VSP_MAX_RETRIES + 1
+    total_attempts = max_retries + 1
     for attempt_number in range(1, total_attempts + 1):
         try:
             response = requests.get(url, timeout=AAVSO_VSP_REQUEST_TIMEOUT_SECONDS)
@@ -19690,7 +19690,7 @@ def fetch_aavso_vsp_chart(url):
             if attempt_number >= total_attempts:
                 raise AAVSOVSPUnavailableError(
                     f"AAVSO VSP returned no usable response after {total_attempts} attempts "
-                    f"({AAVSO_VSP_MAX_RETRIES} retries): {describe_retry_exception(exc)}"
+                    f"({max_retries} retries): {describe_retry_exception(exc)}"
                 ) from exc
 
             retries_remaining = total_attempts - attempt_number
@@ -19706,7 +19706,7 @@ def fetch_aavso_vsp_chart(url):
 
 
 def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=None,
-              user_targ_star=None, max_new_comp_stars=2):
+              user_targ_star=None, max_new_comp_stars=2, max_retries=0):
     if user_comp_stars is None:
         user_comp_stars = []
 
@@ -19729,7 +19729,7 @@ def vsp_query(file, axis, obs_filter, img_scale, maglimit=14, user_comp_stars=No
         maglimit = 12
 
     url = f"https://apps.aavso.org/vsp/api/chart/?format=json&ra={ra:5f}&dec={dec:5f}&fov={fov}&maglimit={maglimit}"
-    data = fetch_aavso_vsp_chart(url)
+    data = fetch_aavso_vsp_chart(url, max_retries=max_retries)
     chart_id = data['chartid']
 
     obs_filter = aavso_vsp_band_for_filter(obs_filter)
@@ -19906,7 +19906,7 @@ def merge_aavso_vsp_v_calibration_fallback(
     if not vsp_query_available:
         log_info(
             "Skipping the AAVSO VSP V-band calibration fallback because the earlier "
-            "VSP request already exhausted all retries.",
+            "VSP request already failed.",
             warn=True,
         )
         return unified_calibrations, {}, None, False
@@ -19927,11 +19927,12 @@ def merge_aavso_vsp_v_calibration_fallback(
             ),
             user_targ_star=user_targ_star,
             max_new_comp_stars=max_new_comp_stars,
+            max_retries=0,
         )
     except Exception as exc:
         log_info(
             "Warning: automatic AAVSO VSP V-band calibration fallback failed "
-            f"({describe_retry_exception(exc)}).",
+            f"({describe_retry_exception(exc)}); continuing without AAVSO V-band calibration.",
             warn=True,
         )
         return unified_calibrations, {}, None, True
@@ -26450,6 +26451,9 @@ def fitted_lightcurve_scatter_on_dataset(fit, times, flux_values, airmass):
 def evaluate_lightcurve_candidate(task):
     exposure_times_seconds = None
     gain_e_per_adu = None
+    inference_method = 'ultranest'
+    if len(task) == 15:
+        task, inference_method = task[:-1], task[-1]
     if len(task) == 14:
         (
             times,
@@ -26516,7 +26520,7 @@ def evaluate_lightcurve_candidate(task):
         jd_times,
         allow_mid_transit_range_warning=False,
         disable_vertical_flux_normalization=disable_vertical_flux_normalization,
-        final_fit_mode='ns',
+        final_fit_mode='lm' if inference_method == 'lm' else 'ns',
         use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
         plot_time_range=plot_time_range,
         use_eebls_to_initialize_tmid_and_bounds=use_eebls_to_initialize_tmid_and_bounds,
@@ -26524,6 +26528,8 @@ def evaluate_lightcurve_candidate(task):
         exposure_times_seconds=exposure_times_seconds,
         gain_e_per_adu=gain_e_per_adu,
     )
+    if myfit is not None and inference_method == 'lm':
+        myfit.inference_method = 'Least-squares (LM)'
     fit_diagnostics = ensure_lightcurve_fit_failure_reason(
         fit_diagnostics,
         myfit,
@@ -26699,7 +26705,7 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
                               compute_eebls_diagnostics=True,
                               exposure_times_seconds=None,
                               gain_e_per_adu=None,
-                              psf_flux_data=None):
+                              psf_flux_data=None, inference_method='ultranest'):
     candidate_mask = np.asarray(candidate['mask'], dtype=bool)
 
     if candidate['method'] == 'psf':
@@ -26739,6 +26745,7 @@ def target_fit_candidate_task(candidate, times, jd_times, airmass, ld, p_dict, p
         compute_eebls_diagnostics,
         None if exposure_times_seconds is None else np.asarray(exposure_times_seconds, dtype=float)[candidate_mask],
         gain_e_per_adu,
+        inference_method,
     )
 
 
@@ -26756,7 +26763,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
                                         pick_comparison_by_eebls_snr=True,
                                         exposure_times_seconds=None,
                                         gain_e_per_adu=None,
-                                        psf_flux_data=None):
+                                        psf_flux_data=None, inference_method='ultranest'):
     candidate_jobs = build_target_fit_candidate_jobs(
         psf_data,
         aper_data,
@@ -26809,6 +26816,7 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
             exposure_times_seconds=exposure_times_seconds,
             gain_e_per_adu=gain_e_per_adu,
             psf_flux_data=psf_flux_data,
+            inference_method=inference_method,
         )
         for candidate in evaluated_candidates
     ]
@@ -27017,6 +27025,9 @@ def apply_raw_target_photometry_selection(target_driven_search, photometry_info,
         selected_comparison_fit_point_count=selected_summary.get('fit_point_count'),
         selected_comparison_transit_qc_status=selected_summary.get('transit_qc_status'),
         selected_comparison_transit_qc_summary=selected_summary.get('transit_qc_summary'),
+        reuse_selected_full_reduction_fit=(
+            getattr(best_fit_lc, 'inference_method', None) == 'Least-squares (LM)'
+        ),
     )
     target_uncertainty = np.sqrt(np.clip(target_flux, 0.0, None))
     flux_values.update(
@@ -38956,6 +38967,7 @@ def _main_impl():
                     exposure_times_seconds=exposure_times_seconds,
                     gain_e_per_adu=fallback_gain_e_per_adu,
                     psf_flux_data=psf_flux_source,
+                    inference_method='lm' if quick_look_mode else 'ultranest',
                 )
                 if not apply_raw_target_photometry_selection(
                     raw_target_search,

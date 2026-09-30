@@ -4754,7 +4754,7 @@ class lc_fitter(object):
         if include_excluded:
             _plot_group('', '#1565c0', 'o', 'Excluded baseline points', 8)
         if include_rejected:
-            _plot_group('rejected_', '#d62728', 'x', 'Rejected photometry', 9)
+            _plot_group('rejected_', '#d62728', 'x', '_nolegend_', 9)
 
     def plot_bestfit(
         self,

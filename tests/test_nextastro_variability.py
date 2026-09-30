@@ -1490,6 +1490,7 @@ def test_clear_v_calibration_fallback_merges_aavso_with_existing_pool(
     assert len(calls) == 1
     assert calls[0][2] == 'Clear'
     assert calls[0][4]['max_new_comp_stars'] == 5
+    assert calls[0][4]['max_retries'] == 0
     assert supplied_positions == expected_positions
     assert set(fallback_stars) == {'000-BPW-929', '000-BMX-191'}
     assert set(combined) == {'NextAstro-g-only', '000-BPW-929', '000-BMX-191'}
@@ -1557,7 +1558,7 @@ def test_clear_v_calibration_fallback_does_not_repeat_exhausted_vsp_query(monkey
     assert fallback_stars == {}
     assert chart_id is None
     assert queried is False
-    assert 'already exhausted all retries' in log_messages[-1][0]
+    assert 'already failed' in log_messages[-1][0]
     assert log_messages[-1][1].get('warn') is True
 
 

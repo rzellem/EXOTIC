@@ -1100,7 +1100,7 @@ def demosaic_settings(demosaic_fmt, demosaic_out, init):
             demosaic_fmt = user_input(f"\nWhat is Bayer pattern for camera? (RGGB, BGGR, GRBG, GBRG): ", type_=str, values=['rggb', 'bggr', 'grbg', 'gbrg'])
             demosaic_fmt = demosaic_fmt.upper()
         if not demosaic_out:
-            demosaic_out = user_input(f"\nWhat color channel should be processed? (gray, red, green, blue, blueblock, custom): ", type_=str, values=['gray', 'red', 'green', 'blue', 'blueblock', 'custom'])
+            demosaic_out = user_input(f"\nWhat color channel should be processed? (gray, red, green, blue, blueblock, bin2x2, custom): ", type_=str, values=['gray', 'red', 'green', 'blue', 'blueblock', 'bin2x2', 'custom'])
         if demosaic_out == 'custom':
             demosaic_red = user_input("\nWhat weight for red channel (0.0-1.0)?", type_=float)
             demosaic_green = user_input("\nWhat weight for green channel (0.0-1.0)?", type_=float)

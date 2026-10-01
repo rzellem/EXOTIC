@@ -11146,6 +11146,8 @@ def summed_pixel_binning_from_header(header):
 
 
 def saturation_value_from_header(header):
+    if header.get('EXOBIN') == '2x2':
+        return finite_header_float(header.get('SATURATE'))
     microobservatory_saturation = microobservatory_saturation_value_from_header(header)
     if microobservatory_saturation is not None:
         return microobservatory_saturation
@@ -19630,6 +19632,8 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i, exposure_time=None):
     return image_data
 
 def calculate_demosaic_mult(demosaic_out): 
+    if demosaic_out == 'bin2x2':
+        return None
     if not demosaic_out:
         return None       
     # Build vector to convert RBG pixels to single output
@@ -19653,6 +19657,11 @@ def calculate_demosaic_mult(demosaic_out):
 
 # If demosaic requested, process
 def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
+    if demosaic_out == 'bin2x2':
+        from exotic.api.bayer_binning import bin2x2
+        if not demosaic_fmt or demosaic_fmt.upper() not in {'RGGB', 'BGGR', 'GRBG', 'GBRG'}:
+            raise ValueError('bin2x2 requires a valid Demosaic Format Bayer pattern')
+        return bin2x2(image_data)
     if demosaic_fmt:
         if i == 0:
             log_info(f"Demosaicing images (mapping {demosaic_fmt} to {demosaic_out})")
@@ -19660,6 +19669,83 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
         new_image_data = demosaicing_CFA_Bayer_bilinear(image_data, demosaic_fmt)
         image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
     return image_data
+
+
+def prepare_bin2x2_reduction(inputfiles, info, generalDark, generalBias, generalFlat):
+    """Stage native-grid calibration/repair before every downstream geometry read."""
+    from exotic.api.bayer_binning import bin2x2, binned_header, repair_bayer_pixels
+    from pathlib import Path
+    import tempfile
+
+    if len(inputfiles) == 0:
+        raise ValueError('No usable FITS frames for bin2x2')
+    pattern = str(info.get('demosaic_fmt') or '').upper()
+    if pattern not in {'RGGB', 'BGGR', 'GRBG', 'GBRG'}:
+        raise ValueError('bin2x2 requires a valid Demosaic Format Bayer pattern')
+    root = Path(info['save']) / 'working_artifacts'
+    root.mkdir(parents=True, exist_ok=True)
+    destination = Path(tempfile.mkdtemp(prefix='bin2x2_', dir=root))
+
+    def load_native(path):
+        return load_calibrated_reduction_frame(
+            path, generalDark, generalBias, generalFlat, None, None, None)
+
+    native_info = dict(info, save=str(destination))
+    existing = None
+    if should_detect_bad_pixels_before_photometry(info.get('detect_bad_pixels_before_photometry', 'n')):
+        existing = build_persistent_bad_pixel_map(
+            inputfiles, lambda path: load_native(path)[1], save_directory=destination,
+        )
+    reference = prepare_bad_pixel_reference(
+        native_info, load_native(inputfiles[0])[1].shape,
+        existing=existing, dark_files=info.get('darks'),
+    )
+    if reference is not None:
+        reference = dict(reference)
+        reference['summary'] = dict(reference.get('summary', {}), repair='Same Bayer phase neighbours before bin2x2')
+        import json
+        summary_path = destination / 'working_artifacts' / 'BadPixelSummary.json'
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps(reference['summary'], indent=2), encoding='utf-8')
+    paths = []
+    for index, source in enumerate(inputfiles):
+        header, image = load_native(source)
+        # Establish the actual native saturation limit before removing Bayer metadata.
+        saturation = parse_saturation_value(info.get('saturation_value'))
+        if saturation == SATURATION_VALUE_DEFAULT:
+            saturation = saturation_value_from_header(header) or saturation
+        fraction = parse_overexposure_threshold_fraction(info.get('overexposure_threshold_fraction'))
+        image = repair_bayer_pixels(image, reference)
+        native_saturated = image >= saturation * fraction
+        image = bin2x2(image)
+        # A single saturated Bayer site must not disappear into a dimmer tile sum.
+        saturated_tiles = bin2x2(native_saturated) > 0
+        image[saturated_tiles] = np.maximum(image[saturated_tiles], saturation * 4)
+        header = binned_header(header)
+        header['SATURATE'] = saturation * 4
+        header['EXOSRC'] = str(source)
+        header.add_history('Saturated native sites flag their output tile at >=4x native saturation.')
+        target = destination / f'{index:06d}_{Path(source).name.split(".")[0]}.fits'
+        fits.writeto(target, image, header, overwrite=False)
+        paths.append(str(target))
+        if index == 0 or (index + 1) % 25 == 0 or index + 1 == len(inputfiles):
+            log_info(f'bin2x2 preparation: {index + 1}/{len(inputfiles)}')
+    info = dict(info)
+    for key in ('tar_coords', 'comp_stars'):
+        if info.get(key) is not None and len(info[key]):
+            info[key] = ((np.asarray(info[key], dtype=float) - 0.5) / 2).tolist()
+    if info.get('pixel_scale') is not None:
+        info['pixel_scale'] = float(info['pixel_scale']) * 2
+    if parse_saturation_value(info.get('saturation_value')) != SATURATION_VALUE_DEFAULT:
+        info['saturation_value'] = parse_saturation_value(info['saturation_value']) * 4
+    parts = str(info.get('pixel_bin') or '1x1').lower().split('x')
+    info['pixel_bin'] = 'x'.join(str(int(p) * 2) for p in parts)
+    info.update(demosaic_fmt=None, demosaic_out=None, bad_pixel_map=None,
+                detect_bad_pixels_before_photometry='n', detect_bad_pixels_from_darks=False,
+                detect_low_pixels_before_photometry=False, bad_pixel_dark_source=None)
+    info['images'] = paths
+    log_info(f'bin2x2 calibrated working FITS saved in {destination}')
+    return paths, info
 
 class AAVSOVSPUnavailableError(RuntimeError):
     """Raised after the AAVSO VSP endpoint exhausts its response retries."""
@@ -35688,6 +35774,15 @@ def _main_impl():
 
             plateStatus.initializeFilenames(exotic_infoDict['images'])
             inputfiles = corruption_check(exotic_infoDict['images'])
+            if demosaic_out == 'bin2x2':
+                inputfiles, exotic_infoDict = prepare_bin2x2_reduction(
+                    inputfiles, exotic_infoDict, generalDark, generalBias, generalFlat,
+                )
+                generalDark, generalBias, generalFlat = (np.empty((0, 0)) for _ in range(3))
+                demosaic_fmt = demosaic_out = demosaic_mult = None
+                if provided_comparison_pixels:
+                    provided_comparison_pixels = ((np.asarray(provided_comparison_pixels) - 0.5) / 2).tolist()
+                plateStatus.initializeFilenames(inputfiles)
             early_ignore_header_wcs = should_ignore_header_wcs(exotic_infoDict.get('ignore_header_wcs'))
             if not early_ignore_header_wcs and maybe_reinterpret_decimal_ra_hours_from_wcs(inputfiles, pDict):
                 userpDict['ra'] = pDict['ra']

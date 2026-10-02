@@ -7,6 +7,7 @@ import requests
 from astropy.io import fits
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
+from exotic.api.demosaicing import normalize_demosaic_algorithm
 import astropy.units as u
 import re
 
@@ -274,6 +275,7 @@ class Inputs:
             'wl_min': None, 'wl_max': None, 'pixel_scale': None, 'exposure': None,
             'dist': None, 'pm_ra': None, 'pm_dec': None, 'airmass_already_corrected': False,
             'random_seed': None, 'ld_uncertainties': None, "demosaic_fmt": None, "demosaic_out": None,
+            'demosaic_algorithm': 'bilinear',
             'fast_aperture_mask': False, 'require_comp_star': 'y', 'ignore_header_wcs': 'n',
             'allow_pixel_alignment_fallback': True,
             'prefer_pixel_values_over_wcs_for_target': 'n',
@@ -380,6 +382,13 @@ class Inputs:
                     planet = planet_name(planet)
                 self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'] = \
                     demosaic_settings(self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'], self.init_opt)
+                if self.init_opt == 'n' and self.info_dict['demosaic_fmt'] and self.info_dict['demosaic_out'] != 'bin2x2':
+                    self.info_dict['demosaic_algorithm'] = user_input(
+                        '\nDemosaic algorithm (bilinear, malvar2004, menon2007): ',
+                        type_=str, values=['bilinear', 'malvar2004', 'menon2007', 'ddfapd'],
+                    )
+                self.info_dict['demosaic_algorithm'] = normalize_demosaic_algorithm(
+                    self.info_dict.get('demosaic_algorithm'))
 
         return self.info_dict, planet
 
@@ -486,6 +495,7 @@ class Inputs:
             'images': 'Directory with FITS files', 'save': 'Directory to Save Plots',
             'flats': 'Directory of Flats', 'darks': 'Directory of Darks', 'biases': 'Directory of Biases',
             'demosaic_fmt': 'Demosaic Format', 'demosaic_out': 'Demosaic Output',
+            'demosaic_algorithm': ('Demosaic Algorithm', 'demosaic_algorithm'),
             'aavso_num': ('AAVSO Observer Code (N/A if none)', 'AAVSO Observer Code (blank if none)'),
             'second_obs': ('Secondary Observer Codes (N/A if none)', 'Secondary Observer Codes (blank if none)'),
             'obs_name': 'Observatory Full Title',
@@ -550,6 +560,9 @@ class Inputs:
             'pm_dec': 'Star Proper Motion DEC (mas/yr)'
         }
         opt_info = {
+            'demosaic_fmt': 'Demosaic Format',
+            'demosaic_out': 'Demosaic Output',
+            'demosaic_algorithm': ('Demosaic Algorithm', 'demosaic_algorithm'),
             'quick_look_mode': (
                 'quick_look_mode',
                 'Quick Look Mode',
@@ -935,6 +948,8 @@ class Inputs:
         if self.info_dict['aavso_comp'] is None:
             self.info_dict['aavso_comp'] = 'n'
         self.info_dict = init_params(opt_info, self.info_dict, data['optional_info'])
+        self.info_dict['demosaic_algorithm'] = normalize_demosaic_algorithm(
+            self.info_dict.get('demosaic_algorithm'))
         planet_dict = init_params(planet_params, planet_dict, data['planetary_parameters'])
         return populate_missing_gaia_astrometry(planet_dict)
 

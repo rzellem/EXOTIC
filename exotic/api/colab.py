@@ -411,6 +411,7 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
             "Comparison Star(s) RA & Dec": null,
             
             "Demosaic Format": null,
+            "Demosaic Algorithm": "bilinear",
             "Demosaic Output": null
     },    
     "optional_info": {

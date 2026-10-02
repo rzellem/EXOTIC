@@ -429,6 +429,7 @@ def main():
                 "Target Star RA": "Must be in HH:MM:SS sexagesimal format.",
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
+                "Demosaic Algorithm": "RGB reconstruction: bilinear (default), malvar2004, or menon2007 (ddfapd alias). Ignored for bin2x2.",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, bin2x2 for calibrated 2x2 Bayer sums (R+G1+G2+B), [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
                 "Pixel Alignment Fallback": "Set optional_info 'allow_pixel_alignment_fallback' to false to require WCS-only processing and drop every frame without celestial WCS. Default true; EXOTIC prefers WCS when coverage is consistent and otherwise retains the sequence for legacy alignment.",
@@ -473,6 +474,7 @@ def main():
                 "Comparison Star(s) X & Y Pixel": [input_data['comppos']],
                 "Comparison Star(s) RA & Dec": null,
                 "Demosaic Format": null, # TODO add GUI input for these
+                "Demosaic Algorithm": "bilinear",
                 "Demosaic Output": null
             }
             new_inits['planetary_parameters'] = {
@@ -1549,6 +1551,7 @@ def main():
                 "Target Star RA": "Must be in HH:MM:SS sexagesimal format.",
                 "Target Star DEC": "Must be in +/-DD:MM:SS sexagesimal format with correct sign at the beginning (+ or -).",
                 "Demosaic Format": "Optional control for handling Bayer pattern color images - to use, provide Bayer color patttern of your camera (RGGB, BGGR, GRBG, GBRG) - null (no color processing) is default",
+                "Demosaic Algorithm": "RGB reconstruction: bilinear (default), malvar2004, or menon2007 (ddfapd alias). Ignored for bin2x2.",
                 "Demosaic Output": "Select how to process color data (gray for grayscale, red or green or blue for single color channel, blueblock for grayscale without blue, bin2x2 for calibrated 2x2 Bayer sums (R+G1+G2+B), [ R, G, B ] for custom weights for mixing colors.  green is default",
                 "Ignore Header WCS": "Set optional_info 'Ignore WCS in Header and Do Manual Alignment? (y/n)' to y to ignore FITS header WCS and force legacy image-to-image alignment. Default n.",
                 "Pixel Alignment Fallback": "Set optional_info 'allow_pixel_alignment_fallback' to false to require WCS-only processing and drop every frame without celestial WCS. Default true; EXOTIC prefers WCS when coverage is consistent and otherwise retains the sequence for legacy alignment.",
@@ -1618,6 +1621,7 @@ def main():
                         "Comparison Star(s) RA & Dec": null,
                         
                         "Demosaic Format": null, # TODO add GUI input for these
+                        "Demosaic Algorithm": "bilinear",
                         "Demosaic Output": null
                     }
 

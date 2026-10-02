@@ -19631,11 +19631,15 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i, exposure_time=None):
         image_data = image_data / safe_flat
     return image_data
 
-def calculate_demosaic_mult(demosaic_out): 
+def calculate_demosaic_mult(demosaic_out, demosaic_algorithm=None):
+    from exotic.api.demosaicing import DemosaicMix, normalize_demosaic_algorithm
+    algorithm = normalize_demosaic_algorithm(demosaic_algorithm)
     if demosaic_out == 'bin2x2':
         return None
     if not demosaic_out:
-        return None       
+        if algorithm == 'bilinear':
+            return None
+        demosaic_out = 'green'
     # Build vector to convert RBG pixels to single output
     if isinstance(demosaic_out, list):
         demosaic_mult = np.array(demosaic_out)
@@ -19653,7 +19657,9 @@ def calculate_demosaic_mult(demosaic_out):
         demosaic_mult = np.array([ 0.0, 1.0, 0.0 ])
     # Normalize
     demosaic_mult = demosaic_mult / (demosaic_mult[0]+demosaic_mult[1]+demosaic_mult[2])
-    return demosaic_mult
+    # Carry the algorithm with the weights through existing serial and worker
+    # frame loaders, without process-global state or changing default array callers.
+    return demosaic_mult if algorithm == 'bilinear' else DemosaicMix(demosaic_mult, algorithm)
 
 # If demosaic requested, process
 def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
@@ -19663,11 +19669,23 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
             raise ValueError('bin2x2 requires a valid Demosaic Format Bayer pattern')
         return bin2x2(image_data)
     if demosaic_fmt:
+        from exotic.api.demosaicing import DemosaicMix, reconstruct_bayer
+        algorithm = demosaic_mult.algorithm if isinstance(demosaic_mult, DemosaicMix) else 'bilinear'
+        weights = demosaic_mult.weights if isinstance(demosaic_mult, DemosaicMix) else demosaic_mult
+        if weights is None:
+            weights = np.array([0., 1., 0.])
         if i == 0:
-            log_info(f"Demosaicing images (mapping {demosaic_fmt} to {demosaic_out})")
+            log_info(f"Demosaicing images using {algorithm} (mapping {demosaic_fmt} to {demosaic_out or 'green'})")
         img_dtype = image_data.dtype    # Save data type
-        new_image_data = demosaicing_CFA_Bayer_bilinear(image_data, demosaic_fmt)
-        image_data = (new_image_data @ demosaic_mult).astype(img_dtype)
+        if algorithm == 'bilinear':
+            new_image_data = demosaicing_CFA_Bayer_bilinear(image_data, demosaic_fmt)
+        else:
+            new_image_data = reconstruct_bayer(image_data, demosaic_fmt, algorithm)
+        image_data = new_image_data @ weights
+        # Higher-order reconstruction can be negative or exceed the input range.
+        # Keep it floating-point to avoid truncation or unsigned wraparound.
+        if algorithm == 'bilinear':
+            image_data = image_data.astype(img_dtype)
     return image_data
 
 
@@ -35741,7 +35759,9 @@ def _main_impl():
                 demosaic_fmt = exotic_infoDict['demosaic_fmt'].upper()
             if exotic_infoDict['demosaic_out']:
                 demosaic_out = exotic_infoDict['demosaic_out']     
-            demosaic_mult = calculate_demosaic_mult(demosaic_out)   
+            demosaic_mult = calculate_demosaic_mult(
+                demosaic_out, exotic_infoDict.get('demosaic_algorithm'),
+            )
 
         # check for Nans + Zeros
         for k in pDict:

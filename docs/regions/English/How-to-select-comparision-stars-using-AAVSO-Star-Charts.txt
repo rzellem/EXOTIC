@@ -2,15 +2,15 @@ AAVSO Comparison star charts
 
 1. Getting the charts
 
-   the main URL is https://app.aavso.org/vsp/
+   the main URL is https://apps.aavso.org/vsp/
 
  you can go directly to the chart for a specific star by looking up the chart id in the lists that are periodically posted to the Slack channel and forming the URL as
 
-       https://app.aavso.org/vsp/chart/?chartid=(the listed chartid)
+       https://apps.aavso.org/vsp/chart/?chartid=(the listed chartid)
 
 Example, fot HAT-P-23
 
-      https://app.aavso.org/vsp/chart/?chartid=X26350XQ
+      https://apps.aavso.org/vsp/chart/?chartid=X26350XQ
 
 You can also go to the main URL and use the full search capabilities. You can search by star name or by RA and Dec. There is a help available (https://www.aavso.org/sites/default/files/VSP_Help.pdf)
 

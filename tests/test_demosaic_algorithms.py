@@ -25,15 +25,16 @@ def test_invalid_algorithm_fails_explicitly():
 
 
 @pytest.mark.parametrize('section', ['user_info', 'optional_info'])
-def test_init_file_accepts_algorithm_and_output_in_either_section(tmp_path, section):
+@pytest.mark.parametrize('output', ['green', 'green_binned', 'blue_binned', 'red_binned'])
+def test_init_file_accepts_algorithm_and_output_in_either_section(tmp_path, section, output):
     data = dict(user_info={}, optional_info={}, planetary_parameters={})
-    data[section] = {'Demosaic Format': 'RGGB', 'Demosaic Output': 'green',
+    data[section] = {'Demosaic Format': 'RGGB', 'Demosaic Output': output,
                      'Demosaic Algorithm': 'DDFAPD'}
     path = tmp_path / 'init.json'; path.write_text(json.dumps(data))
     inputs = Inputs(init_opt='y'); inputs.comp_params(path, {})
     assert inputs.info_dict['demosaic_algorithm'] == 'menon2007'
     assert inputs.info_dict['demosaic_fmt'] == 'RGGB'
-    assert inputs.info_dict['demosaic_out'] == 'green'
+    assert inputs.info_dict['demosaic_out'] == output
 
 
 def test_init_default_and_optional_precedence(tmp_path):
@@ -119,3 +120,17 @@ def test_frame_and_pool_loaders_use_the_selected_algorithm(tmp_path, monkeypatch
     precheck = reduction._load_bad_pixel_precheck_worker_frame(str(path))
     for result in (serial, alignment, precheck):
         np.testing.assert_allclose(result, expected)
+
+
+@pytest.mark.parametrize('output', ['green_binned', 'blue_binned', 'red_binned'])
+@pytest.mark.parametrize('algorithm', ['bilinear', 'malvar2004', 'menon2007'])
+def test_channel_binning_never_interpolates(monkeypatch, output, algorithm):
+    def fail(*args, **kwargs):
+        raise AssertionError('Native channel binning must not reconstruct RGB')
+    monkeypatch.setattr(reduction, 'demosaicing_CFA_Bayer_bilinear', fail)
+    monkeypatch.setattr('exotic.api.demosaicing.reconstruct_bayer', fail)
+    image = np.tile([[10., 20.], [30., 40.]], (3, 4))
+    mix = pickle.loads(pickle.dumps(reduction.calculate_demosaic_mult(output, algorithm)))
+    result = reduction.demosaic_img(image, 'RGGB', output, mix, 1)
+    expected = {'green_binned': 50., 'red_binned': 10., 'blue_binned': 40.}[output]
+    np.testing.assert_array_equal(result, np.full((3, 4), expected))

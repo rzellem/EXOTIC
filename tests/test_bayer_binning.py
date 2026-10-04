@@ -3,7 +3,21 @@ import pytest
 from astropy.io import fits
 from astropy.wcs import WCS, Sip
 
-from exotic.api.bayer_binning import bin2x2, binned_header, repair_bayer_pixels
+from exotic.api.bayer_binning import (bin2x2, bin_bayer_channel, binned_origin,
+                                     binned_header, repair_bayer_pixels)
+
+
+@pytest.mark.parametrize('pattern', ['RGGB', 'BGGR', 'GRBG', 'GBRG'])
+@pytest.mark.parametrize('output', ['green_binned', 'blue_binned', 'red_binned'])
+def test_selected_channel_native_sum(pattern, output):
+    image = np.arange(35, dtype=float).reshape(5, 7) - 10
+    sites = [(y, x) for y in range(2) for x in range(2)
+             if pattern[y * 2 + x] == output[0].upper()]
+    expected = np.array([[sum(image[y + dy, x + dx] for dy, dx in sites)
+                          for x in range(0, 6, 2)] for y in range(0, 4, 2)])
+    np.testing.assert_array_equal(bin_bayer_channel(image, pattern, output), expected)
+    image = np.full((4, 4), 60000, np.uint16)
+    assert np.all(bin_bayer_channel(image, pattern, output) == 60000 * len(sites))
 
 
 def test_flux_preserved_without_integer_overflow():
@@ -37,7 +51,9 @@ def test_repairs_native_bayer_phase_before_sum():
 
 @pytest.mark.parametrize('use_cd', [False, True])
 @pytest.mark.parametrize('use_sip', [False, True])
-def test_wcs_preserves_sky_at_superpixel_centres(use_cd, use_sip):
+@pytest.mark.parametrize('pattern', ['RGGB', 'BGGR', 'GRBG', 'GBRG'])
+@pytest.mark.parametrize('output', ['bin2x2', 'green_binned', 'blue_binned', 'red_binned'])
+def test_wcs_preserves_sky_at_superpixel_centres(use_cd, use_sip, pattern, output):
     wcs = WCS(naxis=2)
     wcs.wcs.crpix = [60.3, 48.8]
     wcs.wcs.crval = [125., -30.]
@@ -52,10 +68,10 @@ def test_wcs_preserves_sky_at_superpixel_centres(use_cd, use_sip):
         a[2, 0] = 1e-5; b[0, 2] = -2e-5
         wcs.sip = Sip(a, b, None, None, wcs.wcs.crpix)
     header = wcs.to_header(relax=True)
-    new_wcs = WCS(binned_header(header))
+    new_wcs = WCS(binned_header(header, output, pattern))
     points = np.array([[10., 12.], [24., 20.], [40., 35.]])
     np.testing.assert_allclose(new_wcs.all_pix2world(points, 0),
-                               wcs.all_pix2world(points * 2 + .5, 0), atol=1e-10)
+                               wcs.all_pix2world(points * 2 + binned_origin(pattern, output), 0), atol=1e-10)
 
 
 def test_header_units_and_input_preserved():
@@ -118,3 +134,42 @@ def test_one_saturated_bayer_site_remains_rejectable(tmp_path):
     assert saturation_value_from_header(header) == 4000
     assert result[0, 0] >= 4000
     assert result[1, 1] == 20
+
+
+@pytest.mark.parametrize('pattern', ['RGGB', 'BGGR', 'GRBG', 'GBRG'])
+@pytest.mark.parametrize('output', ['green_binned', 'blue_binned', 'red_binned'])
+def test_channel_reduction_calibration_geometry_and_saturation(tmp_path, pattern, output):
+    from exotic.exotic import prepare_bin2x2_reduction, load_calibrated_reduction_frame
+    image = np.tile([[10., 20.], [30., 40.]], (4, 4))
+    selected = [(y, x) for y in range(2) for x in range(2)
+                if pattern[y * 2 + x] == output[0].upper()]
+    other = next((y, x) for y in range(2) for x in range(2) if (y, x) not in selected)
+    image[other] = 2000.  # Excluded colours must not flag the selected channel.
+    y, x = selected[0]
+    image[y + 2, x + 2] = 2000.
+    source = tmp_path / 'raw.fits'
+    fits.writeto(source, image * 2 + 35, fits.Header({'EXPTIME': 10, 'RDNOISE': 3.}))
+    info = dict(save=str(tmp_path), demosaic_fmt=pattern, demosaic_out=output,
+                tar_coords=[4.5, 6.5], comp_stars=[[2.5, 2.5]], pixel_scale=1.2,
+                saturation_value=1000, detect_bad_pixels_from_darks=False,
+                detect_low_pixels_before_photometry=False)
+    paths, configured = prepare_bin2x2_reduction(
+        [str(source)], info, np.full(image.shape, 3.),
+        np.full(image.shape, 5.), np.full(image.shape, 2.))
+    header = fits.getheader(paths[0]); result = fits.getdata(paths[0])
+    assert result.shape == (4, 4)
+    expected = bin_bayer_channel(image, pattern, output)
+    expected[1, 1] = max(expected[1, 1], 1000 * len(selected))
+    np.testing.assert_array_equal(result, expected)
+    assert result[0, 0] < header['SATURATE']
+    assert header['SATURATE'] == 1000 * len(selected)
+    assert header['RDNOISE'] == pytest.approx(3 * np.sqrt(len(selected)))
+    assert header['EXODEB'] == output
+    assert configured['saturation_value'] == header['SATURATE']
+    np.testing.assert_allclose(configured['tar_coords'],
+                               (np.array(info['tar_coords']) - binned_origin(pattern, output)) / 2)
+    assert configured['pixel_scale'] == 2.4
+    assert info['demosaic_out'] == output
+    empty = np.empty((0, 0))
+    _, reloaded = load_calibrated_reduction_frame(paths[0], empty, empty, empty, None, None, None)
+    np.testing.assert_array_equal(reloaded, result)

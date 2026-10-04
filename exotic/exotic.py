@@ -19634,7 +19634,7 @@ def apply_cals(image_data, gen_dark, gen_bias, gen_flat, i, exposure_time=None):
 def calculate_demosaic_mult(demosaic_out, demosaic_algorithm=None):
     from exotic.api.demosaicing import DemosaicMix, normalize_demosaic_algorithm
     algorithm = normalize_demosaic_algorithm(demosaic_algorithm)
-    if demosaic_out == 'bin2x2':
+    if isinstance(demosaic_out, str) and demosaic_out in ('bin2x2', 'green_binned', 'blue_binned', 'red_binned'):
         return None
     if not demosaic_out:
         if algorithm == 'bilinear':
@@ -19663,11 +19663,9 @@ def calculate_demosaic_mult(demosaic_out, demosaic_algorithm=None):
 
 # If demosaic requested, process
 def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
-    if demosaic_out == 'bin2x2':
-        from exotic.api.bayer_binning import bin2x2
-        if not demosaic_fmt or demosaic_fmt.upper() not in {'RGGB', 'BGGR', 'GRBG', 'GBRG'}:
-            raise ValueError('bin2x2 requires a valid Demosaic Format Bayer pattern')
-        return bin2x2(image_data)
+    if isinstance(demosaic_out, str) and demosaic_out in ('bin2x2', 'green_binned', 'blue_binned', 'red_binned'):
+        from exotic.api.bayer_binning import bin_bayer_channel
+        return bin_bayer_channel(image_data, demosaic_fmt, demosaic_out)
     if demosaic_fmt:
         from exotic.api.demosaicing import DemosaicMix, reconstruct_bayer
         algorithm = demosaic_mult.algorithm if isinstance(demosaic_mult, DemosaicMix) else 'bilinear'
@@ -19691,18 +19689,20 @@ def demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, i):
 
 def prepare_bin2x2_reduction(inputfiles, info, generalDark, generalBias, generalFlat):
     """Stage native-grid calibration/repair before every downstream geometry read."""
-    from exotic.api.bayer_binning import bin2x2, binned_header, repair_bayer_pixels
+    from exotic.api.bayer_binning import (bin_bayer_channel, bayer_sites, binned_origin,
+                                          binned_header, repair_bayer_pixels)
     from pathlib import Path
     import tempfile
 
+    output = info.get('demosaic_out') or 'bin2x2'
     if len(inputfiles) == 0:
-        raise ValueError('No usable FITS frames for bin2x2')
+        raise ValueError(f'No usable FITS frames for {output}')
     pattern = str(info.get('demosaic_fmt') or '').upper()
-    if pattern not in {'RGGB', 'BGGR', 'GRBG', 'GBRG'}:
-        raise ValueError('bin2x2 requires a valid Demosaic Format Bayer pattern')
+    sample_count = len(bayer_sites(pattern, output))
+    origin = binned_origin(pattern, output)
     root = Path(info['save']) / 'working_artifacts'
     root.mkdir(parents=True, exist_ok=True)
-    destination = Path(tempfile.mkdtemp(prefix='bin2x2_', dir=root))
+    destination = Path(tempfile.mkdtemp(prefix=f'{output}_', dir=root))
 
     def load_native(path):
         return load_calibrated_reduction_frame(
@@ -19720,7 +19720,7 @@ def prepare_bin2x2_reduction(inputfiles, info, generalDark, generalBias, general
     )
     if reference is not None:
         reference = dict(reference)
-        reference['summary'] = dict(reference.get('summary', {}), repair='Same Bayer phase neighbours before bin2x2')
+        reference['summary'] = dict(reference.get('summary', {}), repair=f'Same Bayer phase neighbours before {output}')
         import json
         summary_path = destination / 'working_artifacts' / 'BadPixelSummary.json'
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -19735,34 +19735,34 @@ def prepare_bin2x2_reduction(inputfiles, info, generalDark, generalBias, general
         fraction = parse_overexposure_threshold_fraction(info.get('overexposure_threshold_fraction'))
         image = repair_bayer_pixels(image, reference)
         native_saturated = image >= saturation * fraction
-        image = bin2x2(image)
+        image = bin_bayer_channel(image, pattern, output)
         # A single saturated Bayer site must not disappear into a dimmer tile sum.
-        saturated_tiles = bin2x2(native_saturated) > 0
-        image[saturated_tiles] = np.maximum(image[saturated_tiles], saturation * 4)
-        header = binned_header(header)
-        header['SATURATE'] = saturation * 4
+        saturated_tiles = bin_bayer_channel(native_saturated, pattern, output) > 0
+        image[saturated_tiles] = np.maximum(image[saturated_tiles], saturation * sample_count)
+        header = binned_header(header, output, pattern)
+        header['SATURATE'] = saturation * sample_count
         header['EXOSRC'] = str(source)
-        header.add_history('Saturated native sites flag their output tile at >=4x native saturation.')
+        header.add_history(f'Saturated selected sites flag their output tile at >={sample_count}x native saturation.')
         target = destination / f'{index:06d}_{Path(source).name.split(".")[0]}.fits'
         fits.writeto(target, image, header, overwrite=False)
         paths.append(str(target))
         if index == 0 or (index + 1) % 25 == 0 or index + 1 == len(inputfiles):
-            log_info(f'bin2x2 preparation: {index + 1}/{len(inputfiles)}')
+            log_info(f'{output} preparation: {index + 1}/{len(inputfiles)}')
     info = dict(info)
     for key in ('tar_coords', 'comp_stars'):
         if info.get(key) is not None and len(info[key]):
-            info[key] = ((np.asarray(info[key], dtype=float) - 0.5) / 2).tolist()
+            info[key] = ((np.asarray(info[key], dtype=float) - origin) / 2).tolist()
     if info.get('pixel_scale') is not None:
         info['pixel_scale'] = float(info['pixel_scale']) * 2
     if parse_saturation_value(info.get('saturation_value')) != SATURATION_VALUE_DEFAULT:
-        info['saturation_value'] = parse_saturation_value(info['saturation_value']) * 4
+        info['saturation_value'] = parse_saturation_value(info['saturation_value']) * sample_count
     parts = str(info.get('pixel_bin') or '1x1').lower().split('x')
     info['pixel_bin'] = 'x'.join(str(int(p) * 2) for p in parts)
     info.update(demosaic_fmt=None, demosaic_out=None, bad_pixel_map=None,
                 detect_bad_pixels_before_photometry='n', detect_bad_pixels_from_darks=False,
                 detect_low_pixels_before_photometry=False, bad_pixel_dark_source=None)
     info['images'] = paths
-    log_info(f'bin2x2 calibrated working FITS saved in {destination}')
+    log_info(f'{output} calibrated working FITS saved in {destination}')
     return paths, info
 
 class AAVSOVSPUnavailableError(RuntimeError):
@@ -35794,7 +35794,7 @@ def _main_impl():
 
             plateStatus.initializeFilenames(exotic_infoDict['images'])
             inputfiles = corruption_check(exotic_infoDict['images'])
-            if demosaic_out == 'bin2x2':
+            if isinstance(demosaic_out, str) and demosaic_out in ('bin2x2', 'green_binned', 'blue_binned', 'red_binned'):
                 inputfiles, exotic_infoDict = prepare_bin2x2_reduction(
                     inputfiles, exotic_infoDict, generalDark, generalBias, generalFlat,
                 )

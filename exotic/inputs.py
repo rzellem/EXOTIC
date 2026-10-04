@@ -382,7 +382,7 @@ class Inputs:
                     planet = planet_name(planet)
                 self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'] = \
                     demosaic_settings(self.info_dict['demosaic_fmt'], self.info_dict['demosaic_out'], self.init_opt)
-                if self.init_opt == 'n' and self.info_dict['demosaic_fmt'] and self.info_dict['demosaic_out'] != 'bin2x2':
+                if self.init_opt == 'n' and self.info_dict['demosaic_fmt'] and self.info_dict['demosaic_out'] not in ('bin2x2', 'green_binned', 'blue_binned', 'red_binned'):
                     self.info_dict['demosaic_algorithm'] = user_input(
                         '\nDemosaic algorithm (bilinear, malvar2004, menon2007): ',
                         type_=str, values=['bilinear', 'malvar2004', 'menon2007', 'ddfapd'],
@@ -1115,7 +1115,7 @@ def demosaic_settings(demosaic_fmt, demosaic_out, init):
             demosaic_fmt = user_input(f"\nWhat is Bayer pattern for camera? (RGGB, BGGR, GRBG, GBRG): ", type_=str, values=['rggb', 'bggr', 'grbg', 'gbrg'])
             demosaic_fmt = demosaic_fmt.upper()
         if not demosaic_out:
-            demosaic_out = user_input(f"\nWhat color channel should be processed? (gray, red, green, blue, blueblock, bin2x2, custom): ", type_=str, values=['gray', 'red', 'green', 'blue', 'blueblock', 'bin2x2', 'custom'])
+            demosaic_out = user_input(f"\nWhat color channel should be processed? (gray, red, green, blue, blueblock, bin2x2, green_binned, blue_binned, red_binned, custom): ", type_=str, values=['gray', 'red', 'green', 'blue', 'blueblock', 'bin2x2', 'green_binned', 'blue_binned', 'red_binned', 'custom'])
         if demosaic_out == 'custom':
             demosaic_red = user_input("\nWhat weight for red channel (0.0-1.0)?", type_=float)
             demosaic_green = user_input("\nWhat weight for green channel (0.0-1.0)?", type_=float)

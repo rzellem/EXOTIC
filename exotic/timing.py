@@ -14,11 +14,49 @@ from astropy.coordinates import SkyCoord, EarthLocation
 from astropy import units as u
 
 
+# The numeric epoch and its metadata must use the same alias selection.
+EPHEMERIS_EPOCH_KEYS = ('Published Mid-Transit Time',) + tuple(
+    f'Published Mid-Transit Time ({frame}{separator}{scale})'
+    for frame in ('BJD', 'HJD', 'JD', 'MJD')
+    for scale in ('TDB', 'UTC', 'TT', 'TAI', 'TCB')
+    for separator in ('_', '-')
+    if (frame, separator, scale) != ('BJD', '-', 'UTC')
+) + ('Published Mid-Transit Time (BJD-UTC)',)
+
+
+def input_ephemeris_epoch_key(values):
+    return next((key for key in EPHEMERIS_EPOCH_KEYS if key in values and values[key] is not None), None)
+
+
+def is_ephemeris_metadata_key(key):
+    return key == 'ephemeris_timing' or (key.startswith('midT') and key not in ('midT', 'midTUnc'))
+
+
+def copy_ephemeris_metadata(parameters, source):
+    """Call when replacing an epoch: discard provenance for the old value."""
+    for key in list(parameters):
+        if is_ephemeris_metadata_key(key):
+            parameters.pop(key)
+    parameters['midTStandard'] = source.get('midTStandard')
+    parameters['midTSource'] = source.get('midTSource')
+
+
+def ephemeris_export_fields(parameters):
+    source = parameters.get('midTSource')
+    if isinstance(source, (float, np.floating)) and not np.isfinite(source):
+        source = None
+    return {
+        'Published Mid-Transit Time': float(parameters['midT']),
+        'Published Mid-Transit Time Standard': time_standard(parameters.get('midTStandard')) or 'UNKNOWN',
+        'Published Mid-Transit Time Reference': source,
+    }
+
+
 def time_standard(value):
     if value is None or isinstance(value, (float, np.floating, int)) and (not np.isfinite(value) or value == 0):
         return ''
     text = str(value or '').upper().strip().replace('(', '_').replace(')', '')
-    text = re.sub(r'[\s/-]+', '_', text).strip('_')
+    text = re.sub(r'[\s/_-]+', '_', text).strip('_')
     if text in ('UNKNOWN', 'NONE', 'NAN', 'NULL'):
         return ''
     return text.replace('BJDTDB', 'BJD_TDB').replace('BJDUTC', 'BJD_UTC')
@@ -93,6 +131,7 @@ def normalise_ephemeris(parameters, archive_parameters=None, lookup=None):
         'source_standard': standard or 'UNKNOWN', 'source_reference': source,
         'standard_origin': origin if standard else 'unverified_legacy_input',
         'legacy_label_hint': result.get('midTLegacyLabel'),
+        'input_epoch_key': result.get('midTInputKey'),
         'model_epoch': result['midT'], 'model_standard': 'BJD_TDB',
         'status': 'verified' if verified else 'unverified_assumed_model_standard',
         'conversion_applied': bool(verified and standard != 'BJD_TDB'),
@@ -110,19 +149,14 @@ def normalise_ephemeris(parameters, archive_parameters=None, lookup=None):
 
 def input_ephemeris_metadata(values):
     standard = values.get('Published Mid-Transit Time Standard', values.get('midTStandard'))
-    legacy = None
-    # New explicit keys are trustworthy; the old BJD-UTC key is ambiguous.
-    for key in values:
-        match = re.fullmatch(r'Published Mid-Transit Time \(([^)]+)\)', key)
-        if not match or values[key] is None:
-            continue
-        declared = time_standard(match[1])
-        if key == 'Published Mid-Transit Time (BJD-UTC)':
-            legacy = key
-        elif not standard:
-            standard = declared
-    return {'midTStandard': standard, 'midTSource': values.get('Published Mid-Transit Time Reference'),
-            'midTLegacyLabel': legacy}
+    key = input_ephemeris_epoch_key(values)
+    legacy = key if key == 'Published Mid-Transit Time (BJD-UTC)' else None
+    match = re.fullmatch(r'Published Mid-Transit Time \(([^)]+)\)', key or '')
+    if match and not legacy and not time_standard(standard):
+        standard = time_standard(match[1])
+    return {'midTStandard': standard,
+            'midTSource': values.get('Published Mid-Transit Time Reference', values.get('midTSource')),
+            'midTLegacyLabel': legacy, 'midTInputKey': key}
 
 
 def _stored_number(header, key):

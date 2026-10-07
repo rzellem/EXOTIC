@@ -7913,6 +7913,54 @@ def test_noise_budget_config_reads_inits_and_header_values():
     assert "flat" in config["enabled_terms"]
 
 
+@pytest.mark.parametrize('creator', ['MicroObservatory2014-05-23', 'microobservatory2014-05-23'])
+def test_noise_budget_config_defaults_microobservatory_gain(creator):
+    config = noise_budget_config_from_info(
+        {'gain_electrons_per_adu': None}, header={'CREATOR': creator},
+    )
+
+    assert config['gain_e_per_adu'] == pytest.approx(53.6)
+    assert config['source_by_term']['gain'] == 'microobservatory_default'
+    assert np.isnan(config['read_noise_electrons'])
+    budget = compute_photometry_noise_budget(5360.0, 0.0, 1.0, 1.0, noise_config=config)
+    assert budget['source'] == pytest.approx(10.0)
+
+
+def test_noise_budget_config_retains_microobservatory_gain_without_header():
+    config = noise_budget_config_from_info({'microobservatory_dataset': True})
+
+    assert config['gain_e_per_adu'] == pytest.approx(53.6)
+    assert config['source_by_term']['gain'] == 'microobservatory_default'
+
+
+@pytest.mark.parametrize('gain_key', ['EGAIN', 'EPERADU', 'E_PER_ADU', 'GAIN_EAD', 'CCDGAIN', 'GAIN'])
+def test_noise_budget_config_microobservatory_preserves_header_gain(gain_key):
+    config = noise_budget_config_from_info(
+        {}, header={'CREATOR': 'MicroObservatory2014-05-23', gain_key: 27.0},
+    )
+
+    assert config['gain_e_per_adu'] == pytest.approx(27.0)
+    assert config['source_by_term']['gain'] == 'fits_header'
+
+
+def test_noise_budget_config_microobservatory_preserves_explicit_gain():
+    config = noise_budget_config_from_info(
+        {'gain_electrons_per_adu': 12.0, 'microobservatory_dataset': True},
+        header={'CREATOR': 'MicroObservatory2014-05-23', 'GAIN': 27.0},
+    )
+
+    assert config['gain_e_per_adu'] == pytest.approx(12.0)
+    assert config['source_by_term']['gain'] == 'inits'
+
+
+@pytest.mark.parametrize('header', [None, {}, {'CREATOR': 'Other camera'}])
+def test_noise_budget_config_other_datasets_keep_existing_gain_default(header):
+    config = noise_budget_config_from_info({}, header=header)
+
+    assert config['gain_e_per_adu'] == pytest.approx(1.0)
+    assert config['source_by_term']['gain'] == 'default'
+
+
 def test_prepare_lightcurve_fit_input_series_clips_prefit_raw_ratio_outliers(monkeypatch):
     monkeypatch.setattr(
         "exotic.exotic.sigma_clip",

@@ -400,7 +400,7 @@ def display_entries(data):
         "TIC ID": ["Planet Name", "Host Star Name"], 
         "Per (days)": "Orbital Period (days)", 
         "Per_err (days)": "Orbital Period Uncertainty", 
-        "Epoch (BJD)": "Published Mid-Transit Time (BJD-UTC)", 
+        "Epoch (BJD)": "Published Mid-Transit Time",
         "Epoch_err (BJD)": "Mid-Transit Time Uncertainty", 
         "Rp/Rs": "Ratio of Planet to Stellar Radius (Rp/Rs)", 
         "Rp/Rs err": "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty", 
@@ -452,7 +452,7 @@ def print_relevant_parameters(selected_entry):
         "TIC ID": ["Planet Name", "Host Star Name"], 
         "Per (days)": "Orbital Period (days)", 
         "Per_err (days)": "Orbital Period Uncertainty", 
-        "Epoch (BJD)": "Published Mid-Transit Time (BJD-UTC)", 
+        "Epoch (BJD)": "Published Mid-Transit Time",
         "Epoch_err (BJD)": "Mid-Transit Time Uncertainty", 
         "Rp/Rs": "Ratio of Planet to Stellar Radius (Rp/Rs)", 
         "Rp/Rs err": "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty", 
@@ -499,6 +499,7 @@ def extract_host_star_name(planet_name):
 
 # Function to create the inits file with the new directory structure and file naming
 def create_inits_file(parameters, target_directory):
+    from exotic.timing import ephemeris_export_fields
     Teff_err = parameters.get("Teff_err (K)", [None, None])
     if not isinstance(Teff_err, list):
         Teff_err = [Teff_err, Teff_err]
@@ -515,6 +516,11 @@ def create_inits_file(parameters, target_directory):
 
     planet_name = parameters["TIC ID"]
     host_star_name = extract_host_star_name(planet_name)
+    epoch_fields = ephemeris_export_fields({
+        "midT": parameters["Epoch (BJD)"],
+        "midTStandard": parameters.get("Epoch Time Standard"),
+        "midTSource": parameters.get("Epoch Reference"),
+    })
 
     inits = {
         "pl_name": planet_name,
@@ -532,6 +538,8 @@ def create_inits_file(parameters, target_directory):
         "pl_orbeccen": parameters.get("Orbital Eccentricity", 0.0),
         "pl_orblper": parameters.get("omega (deg)", 0.0),
         "pl_tranmid": parameters["Epoch (BJD)"],
+        "pl_tsystemref": epoch_fields["Published Mid-Transit Time Standard"],
+        "pl_refname": epoch_fields["Published Mid-Transit Time Reference"],
         "pl_tranmiderr1": parameters["Epoch_err (BJD)"],
         "pl_tranmiderr2": -parameters["Epoch_err (BJD)"],
         "st_teff": parameters["Teff (K)"],

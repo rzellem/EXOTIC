@@ -2,6 +2,11 @@ import math
 
 import numpy as np
 
+try:
+    from .timing import EPHEMERIS_EPOCH_KEYS
+except ImportError:
+    from timing import EPHEMERIS_EPOCH_KEYS
+
 
 AREA_DEPTH_LABEL = "Radius-ratio area depth (Rp/R*)^2"
 OBSERVABLE_DEPTH_LABEL = "Observable model transit depth"
@@ -81,9 +86,7 @@ def planet_dict_transit_parameters(planet_dict, limb_darkening=None, fallback=No
             "midT",
             "pl_tranmid",
             "tmid",
-            "Published Mid-Transit Time",
-            "Published Mid-Transit Time (BJD-UTC)",
-            "Published Mid-Transit Time (BJD_UTC)",
+            *EPHEMERIS_EPOCH_KEYS,
         ),
     }
     for target, names in aliases.items():

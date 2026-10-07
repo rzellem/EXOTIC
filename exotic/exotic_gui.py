@@ -79,6 +79,11 @@ except ImportError:  # package import
     from version import __version__
 
 try:
+    from .timing import ephemeris_export_fields
+except ImportError:
+    from timing import ephemeris_export_fields
+
+try:
     from .inputs import parse_aavso_comp_star, parse_aavso_prereduced_overrides
 except ImportError:
     from inputs import parse_aavso_comp_star, parse_aavso_prereduced_overrides
@@ -609,7 +614,7 @@ def main():
             i += 1
 
             #            # "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": "BJD_TDB",
-            pretime_label = tk.Label(root, text="Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)",
+            pretime_label = tk.Label(root, text="Pre-reduced File Time Format (BJD_TDB, BJD_UTC, JD_UTC, MJD_UTC)",
                                      justify=tk.LEFT)
             pretime_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             pretime_entry.insert(tk.END, "")
@@ -1174,8 +1179,8 @@ def main():
             perioderr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
-            #         "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
-            Tmid_label = tk.Label(root, text="Published Mid-Transit Time (BJD-UTC)", justify=tk.LEFT)
+            #         "Published Mid-Transit Time": 2455867.402743,
+            Tmid_label = tk.Label(root, text="Published Mid-Transit Time", justify=tk.LEFT)
             Tmid_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
             Tmid_entry.insert(tk.END, "2455867.402743")
             Tmid_label.grid(row=i, column=j, sticky=tk.W, pady=2)
@@ -1188,6 +1193,20 @@ def main():
             Tmiderr_entry.insert(tk.END, "4.9e-05")
             Tmiderr_label.grid(row=i, column=j, sticky=tk.W, pady=2)
             Tmiderr_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            Tmidstandard_label = tk.Label(root, text="Time standard (e.g. BJD_TDB, BJD_UTC, UNKNOWN)", justify=tk.LEFT)
+            Tmidstandard_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            Tmidstandard_entry.insert(tk.END, input_data.get('midTStandard') or 'UNKNOWN')
+            Tmidstandard_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            Tmidstandard_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
+            i += 1
+
+            Tmidreference_label = tk.Label(root, text="Published epoch reference (optional)", justify=tk.LEFT)
+            Tmidreference_entry = tk.Entry(root, font="Helvetica 12", justify=tk.LEFT)
+            Tmidreference_entry.insert(tk.END, input_data.get('midTSource') or '')
+            Tmidreference_label.grid(row=i, column=j, sticky=tk.W, pady=2)
+            Tmidreference_entry.grid(row=i, column=j + 1, sticky=tk.W, pady=2)
             i += 1
 
             #         "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14886235252742716,
@@ -1339,6 +1358,8 @@ def main():
                 input_data['pPerUnc'] = perioderr_entry.get()
                 input_data['midT'] = Tmid_entry.get()
                 input_data['midTUnc'] = Tmiderr_entry.get()
+                input_data['midTStandard'] = Tmidstandard_entry.get()
+                input_data['midTSource'] = Tmidreference_entry.get() or None
                 input_data['rprs'] = rprs_entry.get()
                 input_data['rprsUnc'] = rprserr_entry.get()
                 input_data['aRs'] = aRs_entry.get()
@@ -1727,7 +1748,7 @@ def main():
                 new_inits['optional_info'] = {
                     "quick_look_mode": reduction_opt.get() == 3,
                     "Pre-reduced File:": prered_file.file_path,
-                    "Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)": input_data['file_time'],
+                    "Pre-reduced File Time Format (BJD_TDB, BJD_UTC, JD_UTC, MJD_UTC)": input_data['file_time'],
                     "Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)": input_data['file_units'],
                     "Comparison Star used in Photometry (blank if none)": input_data['phot_comp_star'],
                     "Exposure Time (s)": input_data['exp'],
@@ -1775,7 +1796,7 @@ def main():
                     "Host Star Name": input_data['sName'],
                     "Orbital Period (days)": float(input_data['pPer']),
                     "Orbital Period Uncertainty": float(input_data['pPerUnc']),
-                    "Published Mid-Transit Time (BJD-UTC)": float(input_data['midT']),
+                    **ephemeris_export_fields(input_data),
                     "Mid-Transit Time Uncertainty": float(input_data['midTUnc']),
                     "Ratio of Planet to Stellar Radius (Rp/Rs)": float(input_data['rprs']),
                     "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": float(input_data['rprsUnc']),

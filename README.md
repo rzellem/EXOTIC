@@ -139,7 +139,8 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "Host Star Name": "HAT-P-32",
             "Orbital Period (days)": 2.1500082,
             "Orbital Period Uncertainty": 1.3e-07,
-            "Published Mid-Transit Time (BJD-UTC)": 2455867.402743,
+            "Published Mid-Transit Time": 2455867.402743,
+            "Published Mid-Transit Time Standard": "UNKNOWN",
             "Mid-Transit Time Uncertainty": 4.9e-05,
             "Ratio of Planet to Stellar Radius (Rp/Rs)": 0.14886235252742716,
             "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": 0.0005539487393037134,
@@ -310,6 +311,15 @@ FITS timing compares the stored precision of usable numeric and date timestamps 
 Archive ephemerides retain `pl_tsystemref` and their publication. New initialization files use `Published Mid-Transit Time`, `Published Mid-Transit Time Standard` (for example `BJD_TDB` or `BJD_UTC`), and `Published Mid-Transit Time Reference`. Existing qualified epoch keys remain accepted. Old EXOTIC's `BJD-UTC` label was also applied to TDB archive values, so legacy epochs are checked against a matching published archive epoch before conversion. A known BJD receives only a clock conversion; JD/HJD references also require their position-reference conversion. Source epoch, standard, correction and verification status are retained. An unverifiable standard is reported explicitly and the existing numeric model convention continues; no timing error distribution is invented.
 
 Final JSON (`TIMING REFERENCE AND TIMESTAMP SELECTION`) and AAVSO (`TIMING-XC`) include this provenance. When both `MJD-OBS` and `DATE-OBS` exist for every retained observation, paired deterministic transit fits calculate their actual Tmid difference using identical photometry, errors, baseline masks, parameter bounds, exposure integration and duration prior. Eccentricity and periastron remain fixed. The report contains both BJD-TDB Tmid values, `date_obs_minus_mjd_obs_seconds`, optimizer diagnostics and the free parameters. These are joint point estimates, not posterior medians or histogram/Gaussian peaks; they do not overwrite the production fit. Missing comparison data or a calculation error is reported rather than replaced by an average timestamp shift.
+
+Colab and GUI initialization writers preserve epoch standards and publication references as metadata. The selected epoch alias determines its metadata; a different epoch field cannot supply its time standard. Pre-reduced `BJD_UTC` receives a clock conversion only, and hyphenated `BJD-TDB`/`BJD-UTC` names are accepted. JD/MJD still require the observer and target for their barycentric correction. After updating EXOTIC within an already-running Colab notebook, reload the helper and rebind any earlier function import before rerunning the initialization cell:
+
+```python
+import importlib
+import exotic.api.colab as colab
+importlib.reload(colab)
+fix_planetary_params = colab.fix_planetary_params
+```
 
 ## Exoplanet Watch
 

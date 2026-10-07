@@ -474,7 +474,7 @@ def fix_planetary_params (p_param_dict):
     if param in metadata_fields or param == "Argument of Periastron (deg)":
       continue
     val = p_param_dict[param]
-    if val == 0.0 or np.isnan(float(val)):
+    if val is None or val == 0.0 or np.isnan(float(val)):
       if param == "Orbital Eccentricity (0 if null)":
         continue
       if param == "Ratio of Planet to Stellar Radius (Rp/Rs)":

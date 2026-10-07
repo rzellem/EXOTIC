@@ -92,10 +92,10 @@ from astropy.wcs import WCS, FITSFixedWarning
 from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 try:
     from .timing import (select_exposure_timestamp, public_timestamp_selection,
-                         normalise_ephemeris)
+                         normalise_ephemeris, copy_ephemeris_metadata, is_ephemeris_metadata_key, time_standard)
 except ImportError:
     from timing import (select_exposure_timestamp, public_timestamp_selection,
-                        normalise_ephemeris)
+                        normalise_ephemeris, copy_ephemeris_metadata, is_ephemeris_metadata_key, time_standard)
 # julian conversion imports
 import dateutil.parser as dup
 import imreg_dft as ird
@@ -411,6 +411,7 @@ NOISE_BUDGET_SKY_MEDIAN_VARIANCE_FACTOR = np.pi / 2.0
 SCINTILLATION_COEFFICIENT_DEFAULT = 0.09
 PSF_EFFECTIVE_NOISE_AREA_FACTOR = 4.0 * np.pi
 NOISE_GAIN_HEADER_KEYS = ('EGAIN', 'EPERADU', 'E_PER_ADU', 'GAIN_EAD', 'CCDGAIN', 'GAIN')
+MOBS_GAIN_ELECTRONS_PER_ADU = 53.6
 NOISE_READ_HEADER_KEYS = ('RDNOISE', 'READNOI', 'READNOIS', 'READNSE', 'RN_E', 'RON')
 NOISE_DARK_HEADER_KEYS = ('DARKCUR', 'DARKCURR', 'DARKRATE', 'DCURR', 'DARK_EPS', 'PBDKCURR')
 NOISE_FLAT_HEADER_KEYS = ('FLATERR', 'FLATFR', 'FLATFRAC', 'FFERR', 'FLATUNC')
@@ -15283,7 +15284,7 @@ def check_parameters(init_parameters, parameters):
     uncert = 1 / 36
 
     for key, value in parameters.items():
-        if (key.startswith('midT') and key not in ('midT', 'midTUnc')) or key == 'ephemeris_timing':
+        if is_ephemeris_metadata_key(key):
             continue
         if key in ['ra', 'dec'] and init_parameters[key]:
             if not parameters[key] - uncert <= init_parameters[key] <= parameters[key] + uncert:
@@ -15366,8 +15367,7 @@ def resolve_required_transit_ephemeris(planet_dict, archive_planet_dict=None, ar
             original_value = resolved.get(key)
             resolved[key] = archive_value
             if key == 'midT':
-                for metadata_key in ('midTStandard', 'midTSource'):
-                    resolved[metadata_key] = archive_planet_dict.get(metadata_key)
+                copy_ephemeris_metadata(resolved, archive_planet_dict)
             log_info(
                 f"Required ephemeris fallback for {target_name or 'the target'}: "
                 f"{field['label']} was missing or invalid ({original_value!r}); using NASA Exoplanet "
@@ -15412,6 +15412,28 @@ def resolve_required_transit_ephemeris(planet_dict, archive_planet_dict=None, ar
     for key in REQUIRED_TRANSIT_EPHEMERIS_FIELDS:
         resolved[key] = _positive_finite_ephemeris_value(resolved[key])
     return resolved
+
+
+def repair_missing_planetary_numeric_values(parameters):
+    """Retain the existing numeric repairs without changing timing metadata."""
+    for key in parameters:
+        if is_ephemeris_metadata_key(key):
+            continue
+        if key == 'rprs' and (parameters[key] == 0 or np.isnan(parameters[key])):
+            log_info(f"Error: {key} value is 0 or NaN. Please use a non-zero value in inits.json", error=True)
+            parameters[key] = 0.8
+            log_info("EXOTIC will override the Rp/Rs value.")
+        if "Unc" in key:
+            if not parameters[key]:
+                log_info(f"Warning: {key} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
+                parameters[key] = 1
+            elif parameters[key] == 0 or np.isnan(parameters[key]):
+                log_info(f"Warning: {key} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
+                parameters[key] = 1
+        elif parameters[key] is None:
+            log_info(f"Warning: {key} is None. Please use a numeric value in inits.json", warn=True)
+            parameters[key] = 0
+    return parameters
 
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
@@ -15492,8 +15514,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
         log_info(f"*** Here are the values scraped from the NASA Exoplanet Archive for {pdict['pName']} that were not "
                  "set (or set to null) in your initialization file. ***")
 
-        for i, key in enumerate(userpdict):
-            if key in ('ra', 'dec') or (key.startswith('midT') and key not in ('midT', 'midTUnc')):
+        for i, key in enumerate(tuple(userpdict)):
+            if key in ('ra', 'dec') or is_ephemeris_metadata_key(key):
                 continue
             if key in ('pName', 'sName'):
                 userpdict[key] = pdict[key]
@@ -15513,6 +15535,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 option = user_input("Which option do you choose? (1/2/3): ", type_=int, values=[1, 2, 3])
                 if option == 1:
                     userpdict[key] = pdict[key]
+                    if key == 'midT':
+                        copy_ephemeris_metadata(userpdict, pdict)
                 elif option == 2:
                     continue
                 else:
@@ -15523,13 +15547,15 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                 agreement = user_input("Do you agree? (y/n): ", type_=str, values=['y', 'n'])
                 if agreement == 'y':
                     userpdict[key] = pdict[key]
+                    if key == 'midT':
+                        copy_ephemeris_metadata(userpdict, pdict)
                 else:
                     userpdict[key] = user_input(f"Enter the {planet_params[i]}: ", type_=type(pdict[key]))
 
     # Exoplanet not confirmed in NASA Exoplanet Archive
     else:
-        for i, key in enumerate(userpdict):
-            if key in ('ra', 'dec') or (key.startswith('midT') and key not in ('midT', 'midTUnc')):
+        for i, key in enumerate(tuple(userpdict)):
+            if key in ('ra', 'dec') or is_ephemeris_metadata_key(key):
                 continue
             # Used initialization file and is not empty
             if userpdict[key] is not None:
@@ -22803,6 +22829,11 @@ def resolve_noise_budget_value(info_dict, aliases, header=None, header_keys=(),
     return np.nan, None
 
 
+def is_microobservatory_header(header):
+    """Recognize the MicroObservatory creator recorded in incoming FITS data."""
+    return header is not None and 'microobservatory' in str(header.get('CREATOR', '')).casefold()
+
+
 def noise_budget_config_from_info(info_dict, header=None):
     info_dict = info_dict if isinstance(info_dict, dict) else {}
     gain, gain_source = resolve_noise_budget_value(
@@ -22819,8 +22850,12 @@ def noise_budget_config_from_info(info_dict, header=None):
         require_positive=True,
     )
     if not np.isfinite(gain) or gain <= 0:
-        gain = 1.0
-        gain_source = 'default'
+        if is_microobservatory_header(header) or info_dict.get('microobservatory_dataset', False):
+            gain = MOBS_GAIN_ELECTRONS_PER_ADU
+            gain_source = 'microobservatory_default'
+        else:
+            gain = 1.0
+            gain_source = 'default'
 
     read_noise, read_source = resolve_noise_budget_value(
         info_dict,
@@ -24255,6 +24290,20 @@ def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
         goodTimes = time_barycentre.value
 
     return goodTimes
+
+
+def convert_prereduced_to_bjd_tdb(times, p_dict, info_dict):
+    """An existing BJD changes clocks only; JD/MJD also change reference frame."""
+    standard = time_standard(info_dict['file_time'])
+    values = np.asarray(times, dtype=float)
+    if standard == 'BJD_TDB':
+        return values.copy()
+    if standard == 'BJD_UTC':
+        return np.asarray(Time(values, format='jd', scale='utc').tdb.jd)
+    if standard in ('JD_UTC', 'MJD_UTC'):
+        offset = 2400000.5 if standard == 'MJD_UTC' else 0.
+        return np.asarray(convert_jd_to_bjd(values+offset, p_dict, info_dict))
+    raise ValueError(f"Unsupported pre-reduced time format: {info_dict['file_time']!r}")
 
 
 def calculate_variablility(fit_lc_ref, fit_lc_best):
@@ -35822,22 +35871,7 @@ def _main_impl():
                 demosaic_out, exotic_infoDict.get('demosaic_algorithm'),
             )
 
-        # check for Nans + Zeros
-        for k in pDict:
-            if k == 'rprs' and (pDict[k] == 0 or np.isnan(pDict[k])):
-                log_info(f"Error: {k} value is 0 or NaN. Please use a non-zero value in inits.json", error=True)
-                pDict[k] = 0.8 # instead of 1 since priors on RpRs are 0 to RpRs*1.25
-                log_info("EXOTIC will override the Rp/Rs value.")
-            if "Unc" in k:
-                if not pDict[k]:
-                    log_info(f"Warning: {k} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
-                    pDict[k] = 1
-                elif pDict[k] == 0 or np.isnan(pDict[k]):
-                    log_info(f"Warning: {k} uncertainty is 0. Please use a non-zero value in inits.json", warn=True)
-                    pDict[k] = 1
-            elif pDict[k] is None:
-                log_info(f"Warning: {k} is None. Please use a numeric value in inits.json", warn=True)
-                pDict[k] = 0
+        repair_missing_planetary_numeric_values(pDict)
 
         if fitsortext == 1:
             log_info("\n**************************"
@@ -35910,6 +35944,9 @@ def _main_impl():
                 header = fits.getheader(filename=inputfiles[0], ext=extension)
 
             # checks for MOBS data
+            if is_microobservatory_header(header):
+                # Carry detection into noise calculations that have no frame header.
+                exotic_infoDict['microobservatory_dataset'] = True
             if 'CREATOR' in header:
                 if 'MicroObservatory' in header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
                     if exotic_infoDict['second_obs'].upper() != "":
@@ -39731,13 +39768,13 @@ def _main_impl():
             goodNormUnc = np.array(goodNormUnc)
             goodAirmasses = np.array(goodAirmasses)
             # Keep the source JD/UTC values for AID serialization before any
-            # conversion to the BJD_TDB model time base.  BJD_TDB input has no
-            # separate geocentric series, so it remains the compatibility
-            # fallback when no original JD was supplied.
+            # conversion to the BJD_TDB model time base. BJD inputs have no
+            # separate geocentric series; retain their source-series
+            # compatibility fallback when no original JD was supplied.
             time_offset = 2400000.5 if exotic_infoDict['file_time'] == 'MJD_UTC' else 0.0
             good_jd_times = goodTimes + time_offset
 
-            if exotic_infoDict['file_time'] != 'BJD_TDB':
+            if exotic_infoDict['file_time'] in ('JD_UTC', 'MJD_UTC'):
                 missing_location = [
                     label for key, label in (('long', 'longitude'), ('lat', 'latitude'), ('elev', 'elevation'))
                     if exotic_infoDict.get(key) is None
@@ -39746,7 +39783,7 @@ def _main_impl():
                     log_info("Error: Longitude, latitude, and elevation are required to convert "
                              f"pre-reduced {exotic_infoDict['file_time']} timestamps to BJD_TDB.", error=True)
                     return
-                goodTimes = convert_jd_to_bjd([time_ + time_offset for time_ in goodTimes], pDict, exotic_infoDict)
+            goodTimes = convert_prereduced_to_bjd_tdb(goodTimes, pDict, exotic_infoDict)
 
             if exotic_infoDict['file_units'] != 'flux':
                 print("check flux convert")

@@ -12,6 +12,11 @@ import astropy.units as u
 import re
 
 try:
+    from .timing import EPHEMERIS_EPOCH_KEYS, input_ephemeris_epoch_key, input_ephemeris_metadata, time_standard, copy_ephemeris_metadata
+except ImportError:
+    from timing import EPHEMERIS_EPOCH_KEYS, input_ephemeris_epoch_key, input_ephemeris_metadata, time_standard, copy_ephemeris_metadata
+
+try:
     from utils import coerce_boolean_config_value, user_input, init_params, typecast_check, \
         process_lat_long, find, open_elevation
 except ImportError:
@@ -63,7 +68,7 @@ AAVSO_EXPOSURE_HEADER_KEYS = ('EXPOSURE_TIME', 'EXPTIME', 'EXPOSURE', 'EXP')
 AAVSO_TIME_FORMAT_HEADER_KEYS = ('DATE_TYPE',)
 AAVSO_MEASUREMENT_TYPE_HEADER_KEYS = ('MEASUREMENT_TYPE',)
 AAVSO_DETREND_PARAMETER_HEADER_KEYS = ('DETREND_PARAMETERS',)
-AAVSO_ALLOWED_FILE_TIME_FORMATS = {'BJD_TDB', 'JD_UTC', 'MJD_UTC'}
+AAVSO_ALLOWED_FILE_TIME_FORMATS = {'BJD_TDB', 'BJD_UTC', 'JD_UTC', 'MJD_UTC'}
 CALIBRATION_MASTER_FILENAMES = {
     'bias': 'MasterBias.fits',
     'dark': 'MasterDark.fits',
@@ -525,10 +530,7 @@ class Inputs:
         planet_params = {
             'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'pName': "Planet Name", 'sName': "Host Star Name",
             'pPer': 'Orbital Period (days)', 'pPerUnc': 'Orbital Period Uncertainty',
-            'midT': ('Published Mid-Transit Time (BJD-UTC)', 'Published Mid-Transit Time',
-                     'Published Mid-Transit Time (BJD-TDB)', 'Published Mid-Transit Time (BJD_TDB)',
-                     'Published Mid-Transit Time (BJD_UTC)', 'Published Mid-Transit Time (HJD-UTC)',
-                     'Published Mid-Transit Time (HJD-TDB)', 'Published Mid-Transit Time (JD-UTC)'),
+            'midT': tuple(reversed(EPHEMERIS_EPOCH_KEYS)),
             'midTUnc': 'Mid-Transit Time Uncertainty',
             'rprs': ('Ratio of Planet to Stellar Radius (Rp/Rs)', 'Rp/Rs', 'Rp/R*'),
             'rprsUnc': (
@@ -572,7 +574,9 @@ class Inputs:
                 'Quick Look Mode',
                 'Quick Look Reduction',
             ),
-            'prered_file': 'Pre-reduced File:', 'file_time': 'Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
+            'prered_file': 'Pre-reduced File:',
+            'file_time': ('Pre-reduced File Time Format (BJD_TDB, JD_UTC, MJD_UTC)',
+                          'Pre-reduced File Time Format (BJD_TDB, BJD_UTC, JD_UTC, MJD_UTC)'),
             'file_units': 'Pre-reduced File Units of Flux (flux, magnitude, millimagnitude)',
             'phot_comp_star': (
                 "Comparison Star used in Photometry (leave blank if none)",
@@ -955,11 +959,12 @@ class Inputs:
         self.info_dict['demosaic_algorithm'] = normalize_demosaic_algorithm(
             self.info_dict.get('demosaic_algorithm'))
         planet_dict = init_params(planet_params, planet_dict, data['planetary_parameters'])
-        try:
-            from .timing import input_ephemeris_metadata
-        except ImportError:
-            from timing import input_ephemeris_metadata
-        planet_dict.update(input_ephemeris_metadata(data['planetary_parameters']))
+        epoch_key = input_ephemeris_epoch_key(data['planetary_parameters'])
+        if epoch_key is not None:
+            metadata = input_ephemeris_metadata(data['planetary_parameters'])
+            copy_ephemeris_metadata(planet_dict, metadata)
+            planet_dict['midT'] = data['planetary_parameters'][epoch_key]
+            planet_dict.update(metadata)
         return populate_missing_gaia_astrometry(planet_dict)
 
 
@@ -1652,7 +1657,7 @@ def parse_aavso_time_format_from_metadata(metadata):
     if is_blank_value(value):
         return None
 
-    normalized = value.upper().strip().replace('-', '_').replace(' ', '_')
+    normalized = time_standard(value)
     if normalized in AAVSO_ALLOWED_FILE_TIME_FORMATS:
         return normalized
     if normalized == 'BJD':
@@ -1788,6 +1793,7 @@ def first_prereduced_timestamp(prereduced_file_path):
 
 
 def obs_date_from_first_prereduced_entry(prereduced_file_path, time_format):
+    time_format = time_standard(time_format)
     first_timestamp = first_prereduced_timestamp(prereduced_file_path)
     if first_timestamp is None:
         return None
@@ -1797,7 +1803,7 @@ def obs_date_from_first_prereduced_entry(prereduced_file_path, time_format):
             return Time(first_timestamp, format='mjd', scale='utc').to_value('iso', subfmt='date')
         if time_format == 'BJD_TDB':
             return Time(first_timestamp, format='jd', scale='tdb').to_value('iso', subfmt='date')
-        if time_format == 'JD_UTC':
+        if time_format in ('JD_UTC', 'BJD_UTC'):
             return Time(first_timestamp, format='jd', scale='utc').to_value('iso', subfmt='date')
     except (TypeError, ValueError):
         return None
@@ -1828,10 +1834,10 @@ def data_file_time(time_format):
                      "\nplease re-reduce your data into one of the time formats recognized by EXOTIC.")
 
             time_format = user_input("\nWhich of the following time formats is your data file stored in? "
-                                     "\nBJD_TDB / JD_UTC / MJD_UTC: ", type_=str)
-        time_format = time_format.upper().strip()
+                                     "\nBJD_TDB / BJD_UTC / JD_UTC / MJD_UTC: ", type_=str)
+        time_format = time_standard(time_format)
 
-        if time_format not in ['BJD_TDB', 'JD_UTC', 'MJD_UTC']:
+        if time_format not in AAVSO_ALLOWED_FILE_TIME_FORMATS:
             log_info("Warning: Invalid entry; please try again.", warn=True)
             time_format = None
         else:

@@ -150,7 +150,7 @@ def test_timing_metadata_survives_colab_inits_file(monkeypatch, tmp_path):
         assert json.load(handle)['planetary_parameters'] == parameters
 
 
-@pytest.mark.parametrize('missing', [0., float('nan')])
+@pytest.mark.parametrize('missing', [None, 0., float('nan')])
 def test_fix_planetary_params_retains_existing_qatar6_radius_repair(monkeypatch, missing):
     colab = import_colab(monkeypatch)
     parameters = _qatar2_parameters()

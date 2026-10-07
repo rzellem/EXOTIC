@@ -53,6 +53,10 @@ try:
     from orbital_uncertainty import archive_orbital_records, nominal_eccentricity
 except ImportError:
     from ..orbital_uncertainty import archive_orbital_records, nominal_eccentricity
+try:
+    from ..timing import time_standard
+except ImportError:
+    from timing import time_standard
 
 # constants
 AU = const.au # m
@@ -66,6 +70,16 @@ SA = lambda m, p: (G * m * p ** 2. / (4. * np.pi ** 2.)) ** (1. / 3.)  # Kepleri
 
 def result_if_max_retry_count(retry_state):
     pass
+
+
+def _metadata_text(*values):
+    for value in values:
+        if value is None or isinstance(value, (float, np.floating)) and not np.isfinite(value):
+            continue
+        text = str(value).strip()
+        if text and text.upper() not in ('NAN', 'NONE', 'NULL', 'UNKNOWN'):
+            return text
+    return None
 
 
 def _strip_observation_phase_suffix(name):
@@ -136,8 +150,8 @@ class NASAExoplanetArchive:
                 "Orbital Period (days)": self.pl_dict['pPer'],
                 "Orbital Period Uncertainty": self.pl_dict['pPerUnc'],
                 "Published Mid-Transit Time": self.pl_dict['midT'],
-                "Published Mid-Transit Time Standard": self.pl_dict.get('midTStandard') or 'UNKNOWN',
-                "Published Mid-Transit Time Reference": self.pl_dict.get('midTSource'),
+                "Published Mid-Transit Time Standard": _metadata_text(self.pl_dict.get('midTStandard')) or 'UNKNOWN',
+                "Published Mid-Transit Time Reference": _metadata_text(self.pl_dict.get('midTSource')),
                 "Mid-Transit Time Uncertainty": self.pl_dict['midTUnc'],
                 "Ratio of Planet to Stellar Radius (Rp/Rs)": self.pl_dict['rprs'],
                 "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": self.pl_dict['rprsUnc'],
@@ -335,7 +349,7 @@ class NASAExoplanetArchive:
                 "from https://exoplanetarchive.ipac.caltech.edu and run again.")
 
         if dataframe:
-            return pandas.read_csv(StringIO(response.text))
+            return pandas.read_csv(StringIO(response.text), float_precision='round_trip')
         else:
             return response.text
 
@@ -521,12 +535,13 @@ class NASAExoplanetArchive:
             paired = matches[matches['pl_orbper'] == float(period)]
             if not paired.empty:
                 matches = paired
-        standards = matches['pl_tsystemref'].dropna().unique()
+        normalized = matches['pl_tsystemref'].map(time_standard)
+        standards = normalized[normalized != ''].unique()
         if len(standards) != 1:
             return None
-        row = matches[matches['pl_tsystemref'] == standards[0]].iloc[0]
-        return {'midT': float(row['pl_tranmid']), 'midTStandard': str(standards[0]),
-                'midTSource': str(row['pl_refname'])}
+        row = matches[normalized == standards[0]].iloc[0]
+        return {'midT': float(row['pl_tranmid']), 'midTStandard': _metadata_text(row['pl_tsystemref']),
+                'midTSource': _metadata_text(row['pl_refname'])}
 
     def _get_params(self, data):
         self.orbital_constraints = data.get('orbital_constraints') or archive_orbital_records([data])
@@ -596,8 +611,8 @@ class NASAExoplanetArchive:
             'dist': float(data['sy_dist']) if 'sy_dist' in data and data['sy_dist'] is not None else np.nan,
             'pm_dec': float(data['sy_pmdec']) if 'sy_pmdec' in data and data['sy_pmdec'] is not None else np.nan,
             'pm_ra': float(data['sy_pmra']) if 'sy_pmra' in data and data['sy_pmra'] is not None else np.nan,
-            'midTStandard': data.get('pl_tsystemref') or data.get('pl_tranmid_systemref'),
-            'midTSource': data.get('pl_refname') or data.get('pl_tranmid_reflink'),
+            'midTStandard': _metadata_text(data.get('pl_tsystemref'), data.get('pl_tranmid_systemref')),
+            'midTSource': _metadata_text(data.get('pl_refname'), data.get('pl_tranmid_reflink')),
         }
 
         if self.pl_dict['aRsUnc'] == 0:

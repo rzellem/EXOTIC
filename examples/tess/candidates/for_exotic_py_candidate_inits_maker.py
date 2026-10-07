@@ -392,7 +392,7 @@ def display_entries(data):
         "TIC ID": ["Planet Name", "Host Star Name"], 
         "Per (days)": "Orbital Period (days)", 
         "Per_err (days)": "Orbital Period Uncertainty", 
-        "Epoch (BJD)": "Published Mid-Transit Time (BJD-UTC)", 
+        "Epoch (BJD)": "Published Mid-Transit Time",
         "Epoch_err (BJD)": "Mid-Transit Time Uncertainty", 
         "Rp/Rs": "Ratio of Planet to Stellar Radius (Rp/Rs)", 
         "Rp/Rs err": "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty", 
@@ -441,7 +441,7 @@ def print_relevant_parameters(selected_entry):
         "TIC ID": ["Planet Name", "Host Star Name"], 
         "Per (days)": "Orbital Period (days)", 
         "Per_err (days)": "Orbital Period Uncertainty", 
-        "Epoch (BJD)": "Published Mid-Transit Time (BJD-UTC)", 
+        "Epoch (BJD)": "Published Mid-Transit Time",
         "Epoch_err (BJD)": "Mid-Transit Time Uncertainty", 
         "Rp/Rs": "Ratio of Planet to Stellar Radius (Rp/Rs)", 
         "Rp/Rs err": "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty", 
@@ -485,6 +485,7 @@ def extract_host_star_name(planet_name):
     return str(planet_name).split('.')[0]
 
 def create_inits_file(parameters, file_name):
+    from exotic.timing import ephemeris_export_fields
     Teff_err = parameters.get("Teff_err (K)", [None, None])
     if not isinstance(Teff_err, list):
         Teff_err = [Teff_err, Teff_err]
@@ -510,7 +511,11 @@ def create_inits_file(parameters, file_name):
             "Host Star Name": host_star_name,
             "Orbital Period (days)": parameters["Per (days)"],
             "Orbital Period Uncertainty": parameters["Per_err (days)"],
-            "Published Mid-Transit Time (BJD-UTC)": parameters["Epoch (BJD)"],
+            **ephemeris_export_fields({
+                "midT": parameters["Epoch (BJD)"],
+                "midTStandard": parameters.get("Epoch Time Standard"),
+                "midTSource": parameters.get("Epoch Reference"),
+            }),
             "Mid-Transit Time Uncertainty": parameters["Epoch_err (BJD)"],
             "Ratio of Planet to Stellar Radius (Rp/Rs)": parameters.get("Rp/Rs"),
             "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": parameters.get("Rp/Rs err", 0.1),

@@ -10,6 +10,11 @@ import numpy as np
 from pathlib import Path
 
 try:
+    from posterior import fit_posterior_summary, format_posterior_interval
+except ImportError:
+    from .posterior import fit_posterior_summary, format_posterior_interval
+
+try:
     from utils import (
         filename_date_token,
         format_value_with_uncertainty,
@@ -1847,6 +1852,11 @@ def _prior_posterior_comparison_rows(fit, planet_dict):
             empirical_uncertainty,
         )
 
+        summary = fit_posterior_summary(fit, parameter_key)
+        if summary is not None:
+            posterior_value = summary['median']
+            posterior_error = summary['stdev']
+
         if parameter_key == 'b':
             prior_value, prior_error = _prior_impact_parameter_value_error(planet_dict)
             prior_label = "Prior"
@@ -1889,13 +1899,19 @@ def _prior_posterior_comparison_rows(fit, planet_dict):
             "posterior_offset": float(posterior_offset),
             "prior_error_sigma": float(prior_error_sigma),
             "posterior_error_sigma": float(posterior_error_sigma),
+            "posterior_error_minus_sigma": (
+                summary['error_minus'] / combined_sigma if summary else float(posterior_error_sigma)
+            ),
+            "posterior_error_plus_sigma": (
+                summary['error_plus'] / combined_sigma if summary else float(posterior_error_sigma)
+            ),
             "prior_text": _format_parameter_value(
                 prior_value,
                 prior_error,
                 unit=unit,
                 split_error=split_error,
             ),
-            "posterior_text": _format_parameter_value(
+            "posterior_text": format_posterior_interval(summary, unit, include_limit=parameter_key) if summary else _format_parameter_value(
                 posterior_value,
                 posterior_error,
                 unit=unit,
@@ -1921,10 +1937,13 @@ def plot_prior_posterior_comparison(fit, planet_dict, targ_name, save, date):
     y_positions = np.arange(len(rows), dtype=float) * row_spacing
     posterior_offsets = np.array([row["posterior_offset"] for row in rows], dtype=float)
     prior_errors = np.array([row["prior_error_sigma"] for row in rows], dtype=float)
-    posterior_errors = np.array([row["posterior_error_sigma"] for row in rows], dtype=float)
+    posterior_errors = np.array([
+        [row["posterior_error_minus_sigma"] for row in rows],
+        [row["posterior_error_plus_sigma"] for row in rows],
+    ], dtype=float)
 
-    xmin = min(-3.5, np.nanmin(np.r_[posterior_offsets - posterior_errors, -prior_errors]) - 0.45)
-    xmax = max(3.5, np.nanmax(np.r_[posterior_offsets + posterior_errors, prior_errors]) + 0.45)
+    xmin = min(-3.5, np.nanmin(np.r_[posterior_offsets - posterior_errors[0], -prior_errors]) - 0.45)
+    xmax = max(3.5, np.nanmax(np.r_[posterior_offsets + posterior_errors[1], prior_errors]) + 0.45)
 
     ax.axvspan(-1.0, 1.0, color='#2e7d32', alpha=0.08, linewidth=0)
     ax.axvspan(-3.0, 3.0, color='#f9a825', alpha=0.06, linewidth=0)
@@ -2003,7 +2022,7 @@ def plot_prior_posterior_comparison(fit, planet_dict, targ_name, save, date):
         ],
         loc='lower right',
     )
-    fig.subplots_adjust(right=0.64)
+    fig.subplots_adjust(right=0.54)
 
     Path(save).mkdir(parents=True, exist_ok=True)
     png_path = Path(save) / _dated_plot_filename(

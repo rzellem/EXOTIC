@@ -3,6 +3,57 @@ import shutil
 from numpy import mean, std
 from pathlib import Path
 import numpy as np
+try:
+    from .timing import timing_reporting_metadata
+except ImportError:
+    from timing import timing_reporting_metadata
+
+try:
+    from posterior import fit_posterior_summary, format_posterior_interval, fit_posterior_distribution_estimates
+    from orbital_uncertainty import orbital_uncertainty_budget
+except ImportError:
+    from .posterior import fit_posterior_summary, format_posterior_interval, fit_posterior_distribution_estimates
+    from .orbital_uncertainty import orbital_uncertainty_budget
+
+
+def posterior_reporting_metadata(fit, orbital_budget=None):
+    """Keep posterior intervals, model estimates and error adjustments distinct."""
+    estimates = fit_posterior_distribution_estimates(fit)
+    timing_comparison = {}
+    if 'tmid' in estimates:
+        peak = estimates['tmid']['posterior_histogram_peak']['value']
+        gaussian = estimates['tmid']['gaussian_fit']['center']
+        timing_comparison['histogram_peak_minus_gaussian_centre'] = (peak - gaussian) * 86400
+        summary = fit_posterior_summary(fit, 'tmid')
+        model_value = (getattr(fit, 'parameters', {}) or {}).get('tmid')
+        if summary is not None:
+            median = summary['median']
+            timing_comparison['histogram_peak_minus_median'] = (peak - median) * 86400
+            timing_comparison['gaussian_centre_minus_median'] = (gaussian - median) * 86400
+            if model_value is not None:
+                timing_comparison['best_fit_minus_median'] = (model_value - median) * 86400
+    return {
+        'posterior_summaries': getattr(fit, 'posterior_summaries', {}) or {},
+        'posterior_summary_status': getattr(fit, 'posterior_summary_status', 'unavailable'),
+        'posterior_distribution_estimates': estimates,
+        'timing_estimator_differences_seconds': timing_comparison,
+        'model_values': dict(getattr(fit, 'parameters', {}) or {}),
+        'model_errors': dict(getattr(fit, 'errors', {}) or {}),
+        'local_fit_uncertainty_approximations': getattr(fit, 'ultranest_error_fallbacks', {}) or {},
+        'external_orbital_uncertainty': orbital_budget,
+        'description': (
+            'Posterior summaries use full marginal distributions under the fitted model and priors. '
+            'Model values are best-fit estimates, not posterior medians. '
+            'Local fit approximations and empirical red-noise adjustments are separate diagnostics; '
+            'neither replaces or rescales the posterior credible intervals. '
+            'Geometry limits are 95% one-sided posterior quantiles, reported without a central-transit cutoff.'
+            ' Histogram peaks and Gaussian approximations are separate summaries of the full weighted posterior. '
+            'The Gaussian centre and sigma maximise the normal-model weighted likelihood; sigma is not a '
+            'replacement for an asymmetric credible interval. Histogram bin width is a resolution diagnostic, '
+            'not an error bar. Neither estimate changes the fitted transit model.'
+            ' No Gaussian is fitted to impact parameter or inclination.'
+        ),
+    }
 
 try:
     from utils import (
@@ -2564,6 +2615,9 @@ class OutputFiles:
         self.i_dict = i_dict
         self.durs = durs
         self.dir = Path(self.i_dict['save'])
+        self.orbital_budget = orbital_uncertainty_budget(
+            fit, self.i_dict.get('orbital_constraints', []),
+        )
 
     def final_lightcurve(self, phase):
         params_file = self.dir / "working_artifacts" / safe_output_filename(
@@ -3255,7 +3309,63 @@ class OutputFiles:
         params_num["Transit Duration (day)"] = format_value_with_uncertainty(
             mean(self.durs), std(self.durs)
         )
-        final_params = {'FINAL PLANETARY PARAMETERS': params_num}
+        posterior_labels = {
+            'tmid': ('Mid-Transit Time (Tmid)', 'BJD_TDB'),
+            'rprs': ('Ratio of Planet to Stellar Radius (Rp/R*)', ''),
+            'ars': ('Ratio of Distance to Stellar Radius (a/Rs)', ''),
+            'inc': ('Orbital Inclination (inc)', 'deg'),
+            'b': ('Impact Parameter (b)', ''),
+        }
+        for key, (label, unit) in posterior_labels.items():
+            summary = fit_posterior_summary(self.fit, key)
+            if summary is not None:
+                if label in params_num:
+                    params_num[label + ' best-fit with adjusted uncertainty'] = params_num[label]
+                params_num[label] = format_posterior_interval(
+                    summary, unit, include_limit=key, include_probability=False,
+                )
+        distribution_estimates = fit_posterior_distribution_estimates(self.fit)
+        for key, estimates in distribution_estimates.items():
+            label, unit = posterior_labels.get(key, (key, ''))
+            peak = estimates['posterior_histogram_peak']
+            gaussian = estimates['gaussian_fit']
+            params_num[label + ' posterior histogram peak'] = f"{peak['value']:.10f}" + (f' {unit}' if unit else '')
+            if key not in ('b', 'inc') and 'center' in gaussian:
+                params_num[label + ' Gaussian posterior centre +/- sigma'] = (
+                    format_value_with_uncertainty(gaussian['center'], gaussian['sigma']) + (f' {unit}' if unit else '')
+                )
+        orbital_components = []
+        for entry in self.orbital_budget['constraints']:
+            sensitivity = entry.get('posterior_sensitivity', {})
+            orbital_components.append({
+                'source': entry['constraint'].get('source'),
+                'nominal_orbit': entry.get('nominal_orbit'),
+                'eccentricity_region': entry.get('ecc_range'),
+                'confidence_probability': entry.get('quoted_confidence_probability'),
+                'random_orbital_component': sensitivity.get('orbital_random_uncertainty', {'status': 'unavailable'}),
+                'random_and_systematic_components': sensitivity.get('parameters', {}),
+                'geometry_and_duration_assumption_envelopes': {
+                    key: entry[key] for key in ('inclination_endpoint_summaries_degrees',
+                                               'duration_preserving_ars_factor_approximate',
+                                               'duration_preserving_stellar_density_factor_approximate') if key in entry
+                },
+            })
+        timing_metadata = timing_reporting_metadata(self.p_dict, self.i_dict, self.fit)
+        timestamp_comparison = timing_metadata.get('calculated_mjd_obs_vs_date_obs_tmid') or {}
+        if timestamp_comparison.get('status') == 'calculated':
+            params_num['Calculated Tmid using DATE-OBS'] = f"{timestamp_comparison['date_obs']['tmid_bjd_tdb']:.10f} BJD_TDB"
+            params_num['Calculated Tmid using MJD-OBS'] = f"{timestamp_comparison['mjd_obs']['tmid_bjd_tdb']:.10f} BJD_TDB"
+            params_num['Calculated Tmid change (DATE-OBS minus MJD-OBS)'] = (
+                f"{timestamp_comparison['date_obs_minus_mjd_obs_seconds']:+.4f} s; "
+                'paired deterministic fits to identical retained photometry'
+            )
+
+        final_params = {
+            'FINAL PLANETARY PARAMETERS': params_num,
+            'TIMING REFERENCE AND TIMESTAMP SELECTION': timing_metadata,
+            'ORBITAL RANDOM AND SYSTEMATIC UNCERTAINTY': orbital_components,
+            'POSTERIOR UNCERTAINTY REPORTING': posterior_reporting_metadata(self.fit, self.orbital_budget),
+        }
 
         with params_file.open('w') as f:
             dump(final_params, f, indent=4)
@@ -3370,6 +3480,8 @@ class OutputFiles:
                     f"#RESULTS-XC={dumps(results_dict)}\n")  # code yields
             f.write(format_aavso_json_header("QC-XC", qc_metadata))
             f.write(format_aavso_json_header("FIT_QUALITY-XC", fit_quality_metadata))
+            f.write(format_aavso_json_header("POSTERIOR-XC", posterior_reporting_metadata(self.fit, self.orbital_budget), preserve_nulls=True))
+            f.write(format_aavso_json_header("TIMING-XC", timing_reporting_metadata(self.p_dict, self.i_dict, self.fit), preserve_nulls=True))
             f.write(format_aavso_json_header("KTMF_DECISION-XC", ktmf_decision_metadata))
             f.write(format_aavso_json_header("PHOTOMETRY-XC", photometry_metadata))
             f.write(format_aavso_json_header("APERTURE-XC", aperture_metadata))

@@ -1151,22 +1151,61 @@ def test_plot_triangle_clips_ranges_to_parameter_bounds(monkeypatch, tmp_path):
     fig = fit.plot_triangle()
 
     assert fig == "figure"
-    assert captured["labels"][1] == r"$\Delta i$"
+    assert captured["labels"][1] == r"Inclination $i$ [deg]"
     assert captured["range"][0][0] == pytest.approx(0.0)
     assert captured["range"][0][1] == pytest.approx(0.125)
-    expected_inc_distance_limit = np.max(np.abs(np.array([84.0, 90.0]) - fit.parameters["inc"]))
-    assert captured["range"][1][0] == pytest.approx(-expected_inc_distance_limit)
-    assert captured["range"][1][1] == pytest.approx(expected_inc_distance_limit)
+    assert captured["range"][1][0] <= points[:, 1].min()
+    assert captured["range"][1][1] >= points[:, 1].max()
     assert captured["range"][2][0] == pytest.approx(0.95)
     assert captured["range"][2][1] == pytest.approx(1.05)
-    assert captured["points"].shape == (10, 3)
-    expected_inc_distance = np.abs(points[:, 1] - fit.parameters["inc"])
-    np.testing.assert_allclose(captured["points"][:5, 1], expected_inc_distance)
-    np.testing.assert_allclose(captured["points"][5:, 1], -expected_inc_distance)
-    assert captured["titles"][1].startswith("b=")
-    assert "\ni=" in captured["titles"][1]
+    np.testing.assert_allclose(captured["points"], points)
+    assert captured["titles"][1].endswith('deg')
     assert captured["title_kwargs"]["loc"] == "left"
     assert captured["label_kwargs"]["labelpad"] == 10
+
+
+@pytest.mark.parametrize('geometry_key', ['b', 'inc'])
+def test_inclination_triangle_preserves_joint_samples_and_weights(monkeypatch, tmp_path, geometry_key):
+    from exotic.posterior import summarize_posterior, format_posterior_interval
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.ns_type = 'ultranest'
+    fit.prior = make_prior()
+    fit.bounds = {'ars': [5, 20], geometry_key: [0, 90], 'ecc': [0, 0.5], 'omega': [0, 180]}
+    fit.sampled_keys = list(fit.bounds)
+    points = np.array([[8, 0.0, 0.01, 20], [12, 0.3, 0.2, 70], [10, 0.8, 0.4, 120]], dtype=float)
+    expected_inc = np.rad2deg(np.arccos(points[:, 1] / points[:, 0]
+        * (1 + points[:, 2] * np.sin(np.deg2rad(points[:, 3]))) / (1 - points[:, 2] ** 2)))
+    if geometry_key == 'inc':
+        points[:, 1] = expected_inc
+    weights = np.array([0.05, 0.8, 0.15])
+    logl = np.array([-8., -2., -5.])
+    fit.results = {'weighted_samples': {'points': points, 'weights': weights, 'logl': logl}}
+    fit.parameters = {'inc': 87.0}
+    fit.errors = {'inc': 1.0}
+    payload = {
+        'sampled_keys': list(fit.sampled_keys), 'labels': list(fit.sampled_keys),
+        'titles': ['old'] * 4, 'ranges': [[0, 1]] * 4,
+        'mask_centers': [0.] * 4, 'mask_errors': [1.] * 4, 'truths': [0.] * 4,
+        'geometry_summary': {},
+    }
+    updated = fit._triangle_plot_inclination_payload(payload)
+    expected_points = points.copy()
+    expected_points[:, 1] = expected_inc
+    np.testing.assert_allclose(updated['display_points'], expected_points)
+    np.testing.assert_array_equal(updated['display_weights'], weights)
+    np.testing.assert_array_equal(updated['display_logl'], logl)
+    np.testing.assert_allclose(updated['mask_values'], expected_points)
+    assert updated['sampled_keys'][1] == 'inc'
+    assert updated['labels'][1] == r'Inclination $i$ [deg]'
+    assert updated['display_spec']['mirror'] is False
+    assert updated['geometry_overlay'] is None
+    assert updated['ranges'][1][1] == 90.0
+    assert updated['titles'][1] == format_posterior_interval(summarize_posterior(expected_inc, weights), 'deg', include_probability=False)
+    assert payload['sampled_keys'] == fit.sampled_keys
+    np.testing.assert_array_equal(fit.results['weighted_samples']['points'], points)
+    zoomed = dict(updated, ranges=fit._triangle_plot_sigma_window_ranges(updated, 5))
+    assert fit._recenter_triangle_plot_payload_for_visible_ranges(zoomed)['titles'][1] == updated['titles'][1]
 
 
 def test_internal_impact_parameter_transform_round_trips_inclination(monkeypatch, tmp_path):
@@ -2068,7 +2107,7 @@ def test_rprs_posterior_recenter_diagnostics_ignores_lower_edge_below_twenty_per
     assert "not treated as truncated" in diagnostics["reason"]
 
 
-def test_plot_triangle_uses_direct_fitted_impact_parameter_axis(monkeypatch, tmp_path):
+def test_plot_triangle_displays_inclination_from_internal_impact_parameter(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     fit = elca.lc_fitter.__new__(elca.lc_fitter)
 
@@ -2123,13 +2162,15 @@ def test_plot_triangle_uses_direct_fitted_impact_parameter_axis(monkeypatch, tmp
     fig = fit.plot_triangle()
 
     assert fig == "figure"
-    assert captured["labels"][1] == r"Impact parameter $b$"
-    assert captured["range"][1] == pytest.approx([0.0, 1.25434156])
+    assert captured["labels"][1] == r"Inclination $i$ [deg]"
     assert captured["points"].shape == (5, 3)
-    np.testing.assert_allclose(captured["points"][:, 1], points[:, 1])
-    assert captured["truths"][1] == pytest.approx(fit.sample_parameters["b"])
-    assert captured["titles"][1].startswith("b=")
-    assert "\ni=" in captured["titles"][1]
+    expected = elca.inclination_from_impact_parameter(fit.prior, points[:, 1])
+    np.testing.assert_allclose(captured["points"][:, 1], expected)
+    assert captured["range"][1][0] <= expected.min()
+    assert captured["range"][1][1] >= expected.max()
+    assert captured["range"][1][1] <= 90
+    assert captured["truths"][1] > 80
+    assert captured["titles"][1].endswith('deg')
     assert captured["label_kwargs"]["labelpad"] == 10
 
 
@@ -2212,7 +2253,7 @@ def test_plot_triangle_accepts_zoom_sigma(monkeypatch, tmp_path):
     assert captured["range"][0][0] > 0.0
     assert captured["range"][0][1] < 1.0
     assert captured["range"][1][0] > 0.0
-    assert captured["range"][1][1] < 1.2
+    assert captured["range"][1][1] <= 90
 
 
 def test_triangle_payload_recenter_uses_visible_zoom_peak(monkeypatch, tmp_path):
@@ -2241,6 +2282,89 @@ def test_triangle_payload_recenter_uses_visible_zoom_peak(monkeypatch, tmp_path)
     assert updated["truths"][0] == pytest.approx(5.3)
     assert updated["mask_centers"][0] == pytest.approx(5.3)
     assert updated["titles"][0].startswith("5.3 +/-")
+
+
+def test_triangle_zoom_retains_full_posterior_interval_title(monkeypatch, tmp_path):
+    from exotic.posterior import summarize_posterior, format_posterior_interval
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    values = np.r_[np.linspace(5.2, 5.3, 60), np.linspace(8, 10, 40)]
+    summary = summarize_posterior(values)
+    fit.posterior_summaries = {'ars': summary}
+    payload = {
+        'sampled_keys': ['ars'], 'display_points': values[:, None],
+        'ranges': [[5, 6]], 'titles': ['initial'], 'truths': [5.25],
+        'mask_centers': [5.25], 'mask_errors': [1],
+        'display_spec': None, 'geometry_summary': {},
+    }
+    updated = fit._recenter_triangle_plot_payload_for_visible_ranges(payload)
+    assert updated['titles'] == [format_posterior_interval(summary, include_probability=False)]
+    assert summary['upper'] > 8  # the full posterior includes the tail outside the zoom
+
+
+def test_triangle_gaussian_and_peak_references_do_not_change_when_zoomed(monkeypatch, tmp_path):
+    from exotic.posterior import summarize_posterior
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    # This check exercises rendered reference lines, so use the real renderer
+    # instead of the shared fixture's no-op corner function.
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location('corner_for_estimator_test', Path(elca.__file__).with_name('plotting.py'))
+    plotting_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plotting_module)
+    monkeypatch.setattr(elca, 'corner', plotting_module.corner)
+    fit, keys, sigmas = _make_gaussian_nested_fit(elca, [.005, .02], count=400)
+    points = fit.results['weighted_samples']['points']
+    points[:, 1] += .15
+    fit.results['weighted_samples']['weights'] = np.ones(400)
+    fit.results['samples'] = points.copy()
+    fit.ns_type = 'ultranest'
+    fit.sampled_keys = keys
+    fit.parameters = dict(fit.prior, tmid=0., rprs=.15)
+    fit.errors = dict(zip(keys, sigmas))
+    fit.sample_parameters = {key: fit.parameters[key] for key in keys}
+    fit.sample_errors = dict(fit.errors)
+    fit.bounds['rprs'] = [.01, .4]
+    fit.sample_bounds = dict(fit.bounds)
+    fit.posterior_summaries = {key: summarize_posterior(points[:, i]) for i, key in enumerate(keys)}
+    original_model = dict(fit.parameters)
+    figures = [fit.plot_triangle(zoom_sigma=zoom) for zoom in (None, 2)]
+    try:
+        for index, key in enumerate(keys):
+            axes = [fig.axes[index * 2 + index] for fig in figures]
+            assert all('CrI' not in ax.get_title(loc='left') for ax in axes)
+            gaussian_centres = [next(line.get_xdata()[0] for line in ax.lines
+                                     if line.get_label() == 'Gaussian centre') for ax in axes]
+            assert gaussian_centres[0] == gaussian_centres[1]
+            peaks = [next(line.get_xdata()[0] for line in ax.lines
+                          if line.get_color() == '#4682b4') for ax in axes]
+            assert peaks[0] == peaks[1]
+            assert any(line.get_label() == 'Gaussian approximation' for line in axes[0].lines)
+        assert fit.parameters == original_model
+    finally:
+        for fig in figures:
+            plt.close(fig)
+
+
+@pytest.mark.parametrize('geometry_key', ['b', 'inc'])
+def test_geometry_diagonal_never_draws_a_gaussian(monkeypatch, tmp_path, geometry_key):
+    from exotic.posterior import fit_posterior_distribution_estimates, fit_posterior_sample_values
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = dict(make_prior(), ars=10.)
+    fit.parameters = dict(fit.prior)
+    fit.sampled_keys = ['b']
+    fit.results = {'weighted_samples': {'points': np.linspace(.3, .5, 51)[:, None], 'weights': np.ones(51)}}
+    values, _, _ = fit_posterior_sample_values(fit)
+    payload = {'sampled_keys': [geometry_key], 'display_points': values[geometry_key][:, None],
+               'ranges': [[float(values[geometry_key].min()), float(values[geometry_key].max())]],
+               'posterior_distribution_estimates': fit_posterior_distribution_estimates(fit)}
+    fig, ax = plt.subplots()
+    try:
+        fit._overlay_single_parameter_triangle_gaussian(fig, payload)
+        assert ax.patches  # The empirical posterior remains visible.
+        assert not any(line.get_label() in ('Gaussian approximation', 'Gaussian centre') for line in ax.lines)
+    finally:
+        plt.close(fig)
 
 
 def test_triangle_payload_expands_degenerate_error_ranges_to_sample_cloud(monkeypatch, tmp_path):
@@ -2365,7 +2489,9 @@ def test_plot_triangle_passes_ultranest_weights_to_visible_histograms(monkeypatc
 
     assert fig == "figure"
     np.testing.assert_allclose(captured["weights"], weights)
-    np.testing.assert_allclose(captured["truths"], [0.1018961, 1.00037922], rtol=1e-6)
+    # These markers are the full-posterior histogram peaks, not the median or
+    # Gaussian centres; they use the same fixed edges as the diagonal curves.
+    np.testing.assert_allclose(captured["truths"], [.1, 1.], rtol=1e-6)
     assert captured["data_kwargs"]["s"] == pytest.approx(1.6)
     assert captured["data_kwargs"]["alpha"] == pytest.approx(0.38)
 
@@ -2738,6 +2864,97 @@ def test_triangle_geometry_overlay_reuses_shared_title_and_label_kwargs(monkeypa
             reference_offsets.append(float(xdata[0]))
     assert sorted(reference_offsets) == pytest.approx([-0.18, -0.08, 0.08, 0.18])
     plt.close(fig)
+
+
+def test_derived_inclination_uses_posterior_weights_and_joint_geometry(monkeypatch, tmp_path):
+    from exotic.posterior import summarize_posterior
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = make_prior()
+    fit.bounds = {'ars': [5, 20], 'inc': [80, 90]}
+    fit.mode = 'ns'
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.fixed_parameter_errors = {}
+    # Correlated a/Rs and b: separate marginal propagation would lose this.
+    points = np.array([[5, 0.5], [10, 1.0], [20, 0.01]])
+    weights = np.array([0.49, 0.49, 0.02])
+    fit.results = {
+        'maximum_likelihood': {'point': points[0]},
+        'posterior': {'stdev': [1, 0.1], 'errlo': [5, 0.5], 'errup': [10, 1]},
+        'weighted_samples': {'points': points, 'logl': [0, 0, -10], 'weights': weights},
+    }
+    def physical(point):
+        sample = dict(fit.prior, ars=point[0], b=point[1])
+        sample['inc'] = float(elca.inclination_from_impact_parameter(sample, sample['b']))
+        return sample
+    fit._finalize_ultranest_fit_results(['ars', 'inc'], ['ars', 'b'], physical)
+    inc = np.degrees(np.arccos(points[:, 1] / points[:, 0]))
+    expected = summarize_posterior(inc, weights)
+    assert fit.errors['inc'] == pytest.approx(expected['stdev'])
+    assert fit.errors['inc'] < np.std(inc)
+    assert fit.posterior_summaries['inc']['median'] == pytest.approx(expected['median'])
+    assert fit.posterior_summaries['b']['sample_source'] == 'weighted_samples'
+    assert fit.posterior_distribution_estimates['b']['gaussian_fit']['status'] == 'not_fitted_bounded_geometry'
+    assert fit.posterior_distribution_estimates['inc']['gaussian_fit']['status'] == 'not_fitted_bounded_geometry'
+    assert fit.parameters['inc'] == pytest.approx(inc[0])
+
+
+def test_inclination_sampling_derives_b_from_current_joint_samples(monkeypatch, tmp_path):
+    from exotic.posterior import summarize_posterior
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = dict(make_prior(), b=0.9)
+    points = np.array([[8, 88], [10, 89], [12, 90]])
+    fit.results = {
+        'maximum_likelihood': {'point': points[1]},
+        'weighted_samples': {'points': points, 'weights': [0.1, 0.8, 0.1]},
+    }
+    fit._update_posterior_summaries(['ars', 'inc'], ['ars', 'inc'], lambda p: {'ars': p[0], 'inc': p[1]})
+    expected = summarize_posterior(points[:, 0] * np.cos(np.deg2rad(points[:, 1])), [0.1, 0.8, 0.1])
+    assert fit.posterior_summaries['b']['median'] == pytest.approx(expected['median'])
+    assert fit.posterior_summaries['b']['maximum_likelihood'] == pytest.approx(10 * np.cos(np.deg2rad(89)))
+    assert 'center' not in fit.posterior_distribution_estimates['inc']['gaussian_fit']
+    assert 'center' not in fit.posterior_distribution_estimates['b']['gaussian_fit']
+
+
+def test_missing_weights_never_summarize_dead_points_as_equal_posterior_samples(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = make_prior()
+    fit.results = {
+        'maximum_likelihood': {'point': [0.1]},
+        'weighted_samples': {'points': np.array([[0.01], [0.3]])},
+    }
+    physical = lambda p: {'rprs': p[0]}
+    fit._update_posterior_summaries(['rprs'], ['rprs'], physical)
+    assert fit.posterior_summaries == {}
+    assert 'unavailable' in fit.posterior_summary_status
+    fit.results['samples'] = np.array([[0.09], [0.1], [0.11]])
+    fit._update_posterior_summaries(['rprs'], ['rprs'], physical)
+    assert fit.posterior_summaries['rprs']['median'] == pytest.approx(0.1)
+    assert fit.posterior_summaries['rprs']['sample_source'] == 'equal_weight_samples'
+
+
+def test_posterior_interval_is_not_replaced_by_local_error_approximation(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    fit = elca.lc_fitter.__new__(elca.lc_fitter)
+    fit.prior = make_prior()
+    fit.bounds = {'rprs': [0, 0.3]}
+    fit.mode = 'ns'
+    fit.use_impactparameter_rather_than_inclination_to_fit = True
+    fit.fixed_parameter_errors = {}
+    values = np.linspace(0.05, 0.25, 1000)
+    fit.results = {
+        'maximum_likelihood': {'point': [0.15]},
+        'posterior': {'stdev': [1e-15], 'errlo': [0.15], 'errup': [0.15]},
+        'weighted_samples': {'points': values[:, None], 'weights': np.ones(1000), 'logl': np.zeros(1000)},
+    }
+    monkeypatch.setattr(fit, '_ultranest_error_needs_sample_fallback', lambda *a, **k: True)
+    monkeypatch.setattr(fit, '_loglike_neighborhood_uncertainty', lambda *a, **k: {'error': 0.001, 'quantiles': [0.149, 0.151]})
+    fit._finalize_ultranest_fit_results(['rprs'], ['rprs'], lambda p: {'rprs': p[0]})
+    assert fit.errors['rprs'] == pytest.approx(0.001)
+    assert fit.posterior_summaries['rprs']['error_plus'] > 0.06
+    assert 'rprs' in fit.ultranest_error_fallbacks
 
 
 def test_nested_fit_keeps_posterior_summary_on_real_ultranest_dead_points(monkeypatch, tmp_path):

@@ -16,6 +16,37 @@ class DummyResponse:
         return self._payload
 
 
+def test_legacy_epoch_standard_lookup_uses_matching_publication_and_preserves_precision(monkeypatch):
+    nea = NASAExoplanetArchive('WASP-16 b')
+    captured = {}
+    def tap(base, query, dataframe=True):
+        captured.update(query)
+        assert dataframe is False
+        return ('pl_tranmid,pl_orbper,pl_tsystemref,pl_refname\n'
+                '2456355.79653,3.11860349,BJD-TDB,Kokori 2023\n'
+                '2454584.42878,3.1186009,HJD,Lister 2009\n')
+    monkeypatch.setattr(nea,'_tap_query',tap)
+    result=nea.lookup_ephemeris_time_standard('WASP-16 b',2456355.79653,3.11860349)
+    assert result=={'midT':2456355.79653,'midTStandard':'BJD-TDB','midTSource':'Kokori 2023'}
+    assert 'pl_tsystemref' in captured['select']
+    assert nea.lookup_ephemeris_time_standard('WASP-16 b',2456355.7,3.11860349) is None
+
+
+def test_archive_fancy_export_does_not_mislabel_epoch_utc():
+    import json
+    nea=NASAExoplanetArchive('WASP-16 b')
+    data={'pl_name':'WASP-16 b','hostname':'WASP-16','ra':214.68301,'dec':-20.27544,
+          'pl_ratror':.12,'pl_ratrorerr1':.001,'pl_ratrorerr2':-.001,
+          'pl_ratdor':8.21,'pl_tranmid':2456355.79653,'pl_tsystemref':'BJD-TDB',
+          'pl_refname':'Kokori 2023'}
+    nea._get_params(data)
+    result=json.loads(nea.planet_info(fancy=True))
+    assert result['Published Mid-Transit Time Standard']=='BJD-TDB'
+    assert result['Published Mid-Transit Time Reference']=='Kokori 2023'
+    assert result['Published Mid-Transit Time']==2456355.79653
+    assert 'Published Mid-Transit Time (BJD-UTC)' not in result
+
+
 def test_planet_info_uses_nextastro_fallback_when_nasa_archive_unavailable(monkeypatch):
     nea = NASAExoplanetArchive('WASP-12 b')
 

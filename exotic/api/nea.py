@@ -49,6 +49,10 @@ import time
 import urllib.parse
 from tenacity import RetryError, retry, retry_if_exception_type, stop_after_attempt, \
     wait_exponential
+try:
+    from orbital_uncertainty import archive_orbital_records, nominal_eccentricity
+except ImportError:
+    from ..orbital_uncertainty import archive_orbital_records, nominal_eccentricity
 
 # constants
 AU = const.au # m
@@ -111,6 +115,7 @@ class NASAExoplanetArchive:
         self.planet = planet
         # self.candidate = candidate
         self.pl_dict = None
+        self.orbital_constraints = []
         self.non_interactive = bool(non_interactive)
 
         # CONFIGURATIONS
@@ -130,7 +135,9 @@ class NASAExoplanetArchive:
                 "Host Star Name": self.pl_dict['sName'],
                 "Orbital Period (days)": self.pl_dict['pPer'],
                 "Orbital Period Uncertainty": self.pl_dict['pPerUnc'],
-                "Published Mid-Transit Time (BJD-UTC)": self.pl_dict['midT'],
+                "Published Mid-Transit Time": self.pl_dict['midT'],
+                "Published Mid-Transit Time Standard": self.pl_dict.get('midTStandard') or 'UNKNOWN',
+                "Published Mid-Transit Time Reference": self.pl_dict.get('midTSource'),
                 "Mid-Transit Time Uncertainty": self.pl_dict['midTUnc'],
                 "Ratio of Planet to Stellar Radius (Rp/Rs)": self.pl_dict['rprs'],
                 "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": self.pl_dict['rprsUnc'],
@@ -230,11 +237,14 @@ class NASAExoplanetArchive:
         rprs, rprs_ep, rprs_em = self._extract_value_and_errors(params.get('rpOverRs'))
         ars, ars_ep, ars_em = self._extract_value_and_errors(params.get('aOverRs'))
         incl, incl_ep, incl_em = self._extract_value_and_errors(params.get('inclinationDeg'))
+        ecc, ecc_ep, ecc_em = self._extract_value_and_errors(params.get('eccentricity'))
+        omega, omega_ep, omega_em = self._extract_value_and_errors(params.get('argPeriastronDeg'))
         teff, teff_ep, teff_em = self._extract_value_and_errors(params.get('starTeffK'))
         feh, feh_ep, feh_em = self._extract_value_and_errors(params.get('starFeh'))
         logg, logg_ep, logg_em = self._extract_value_and_errors(params.get('starLogg'))
 
         mapped_data = {
+            'orbital_constraints': params.get('orbitalConstraints'),
             'pl_name': params.get('name', self.planet),
             'hostname': params.get('hostStarName'),
             'ra': params.get('raDeg'),
@@ -245,6 +255,10 @@ class NASAExoplanetArchive:
             'pl_tranmid': midt,
             'pl_tranmiderr1': midt_ep,
             'pl_tranmiderr2': self._negative_error(midt_em),
+            'pl_tsystemref': params.get('midTransitTimeStandard') or (
+                params['midTransitTimeDays'].get('timeStandard')
+                if isinstance(params.get('midTransitTimeDays'), dict) else None),
+            'pl_refname': params.get('midTransitTimeReference'),
             'pl_ratror': rprs,
             'pl_ratrorerr1': rprs_ep,
             'pl_ratrorerr2': self._negative_error(rprs_em),
@@ -254,8 +268,14 @@ class NASAExoplanetArchive:
             'pl_orbincl': incl,
             'pl_orbinclerr1': incl_ep,
             'pl_orbinclerr2': self._negative_error(incl_em),
-            'pl_orbeccen': params.get('eccentricity'),
-            'pl_orblper': params.get('argPeriastronDeg'),
+            'pl_orbeccen': ecc,
+            'pl_orbeccenerr1': ecc_ep,
+            'pl_orbeccenerr2': self._negative_error(ecc_em),
+            'pl_orbeccenlim': (params.get('eccentricity') or {}).get('limitFlag') if isinstance(params.get('eccentricity'), dict) else None,
+            'pl_orblper': omega,
+            'pl_orblpererr1': omega_ep,
+            'pl_orblpererr2': self._negative_error(omega_em),
+            'pl_orblperlim': (params.get('argPeriastronDeg') or {}).get('limitFlag') if isinstance(params.get('argPeriastronDeg'), dict) else None,
             'st_teff': teff,
             'st_tefferr1': teff_ep,
             'st_tefferr2': self._negative_error(teff_em),
@@ -373,8 +393,10 @@ class NASAExoplanetArchive:
         uri_ipac_query = {
             "select": "pl_name,hostname,tran_flag,pl_massj,pl_radj,pl_radjerr1,pl_radjerr2,"
                       "pl_ratdor,pl_ratdorerr1,pl_ratdorerr2,pl_orbincl,pl_orbinclerr1,pl_orbinclerr2,"
-                      "pl_orbper,pl_orbpererr1,pl_orbpererr2,pl_orbeccen,"
-                      "pl_orblper,pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,"
+                      "pl_orbper,pl_orbpererr1,pl_orbpererr2,"
+                      "pl_orbeccen,pl_orbeccenerr1,pl_orbeccenerr2,pl_orbeccenlim,"
+                      "pl_orblper,pl_orblpererr1,pl_orblpererr2,pl_orblperlim,pl_refname,"
+                      "pl_tranmid,pl_tranmiderr1,pl_tranmiderr2,pl_tsystemref,"
                       "pl_trandep,pl_trandeperr1,pl_trandeperr2,"
                       "pl_ratror,pl_ratrorerr1,pl_ratrorerr2,"
                       "st_teff,st_tefferr1,st_tefferr2,st_met,st_meterr1,st_meterr2,"
@@ -439,6 +461,14 @@ class NASAExoplanetArchive:
             # replaces NEA default with most recent publication
             default.iloc[0] = extra.iloc[0]
 
+            # Preserve orbital constraints before the legacy scalar-value merge.
+            # An upper-limit value may remain the historical fixed model value,
+            # but it must not become a measurement in uncertainty reporting.
+            default['orbital_constraints'] = pandas.Series(
+                [archive_orbital_records(extra.loc[extra.pl_name == name].to_dict('records'))
+                 for name in default.pl_name], index=default.index, dtype=object,
+            )
+
             # for each planet
             for i in default.pl_name:
 
@@ -449,6 +479,9 @@ class NASAExoplanetArchive:
                 # for each nan column in default
                 nans = ddata.isna()
                 for k in ddata.keys():
+                    if k in {'orbital_constraints', 'pl_refname', 'pl_orbeccenerr1', 'pl_orbeccenerr2',
+                             'pl_orbeccenlim', 'pl_orblpererr1', 'pl_orblpererr2', 'pl_orblperlim'}:
+                        continue
                     if nans[k].iloc[0]:  # if col value is nan
                         if not edata[k].isna().all():  # if replacement data exists
                             # replace with first index
@@ -476,7 +509,27 @@ class NASAExoplanetArchive:
             NASAExoplanetArchive.dataframe_to_jsonfile(default, filename)
             return self.planet, False
 
+    def lookup_ephemeris_time_standard(self, planet, epoch, period=None):
+        """Verify a legacy epoch against its publication, not today's default row."""
+        safe_name = str(planet or '').replace("'", "''")
+        query = {'select': 'pl_tranmid,pl_orbper,pl_tsystemref,pl_refname',
+                 'from': 'ps', 'where': f"pl_name = '{safe_name}'", 'format': 'csv'}
+        text = self._tap_query('https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=', query, dataframe=False)
+        table = pandas.read_csv(StringIO(text), float_precision='round_trip')
+        matches = table[table['pl_tranmid'] == float(epoch)]
+        if period is not None and 'pl_orbper' in matches:
+            paired = matches[matches['pl_orbper'] == float(period)]
+            if not paired.empty:
+                matches = paired
+        standards = matches['pl_tsystemref'].dropna().unique()
+        if len(standards) != 1:
+            return None
+        row = matches[matches['pl_tsystemref'] == standards[0]].iloc[0]
+        return {'midT': float(row['pl_tranmid']), 'midTStandard': str(standards[0]),
+                'midTSource': str(row['pl_refname'])}
+
     def _get_params(self, data):
+        self.orbital_constraints = data.get('orbital_constraints') or archive_orbital_records([data])
         # Initialize variables with default values
         rprs = np.nan
         rprserr = np.nan
@@ -530,7 +583,7 @@ class NASAExoplanetArchive:
             'inc': float(data['pl_orbincl']) if 'pl_orbincl' in data and data['pl_orbincl'] is not None else np.nan,
             'incUnc': float(np.sqrt(np.abs(data['pl_orbinclerr1'] * data['pl_orbinclerr2']))) if 'pl_orbinclerr1' in data and 'pl_orbinclerr2' in data and data['pl_orbinclerr1'] is not None and data['pl_orbinclerr2'] is not None else 0.1,
             'omega': float(data.get('pl_orblper') or 0),
-            'ecc': float(data.get('pl_orbeccen') or 0),
+            'ecc': float(nominal_eccentricity(data.get('pl_orbeccen') or 0, self.orbital_constraints)),
             'teff': float(data['st_teff']) if 'st_teff' in data and data['st_teff'] is not None else np.nan,
             'teffUncPos': float(data['st_tefferr1']) if 'st_tefferr1' in data and data['st_tefferr1'] is not None else np.nan,
             'teffUncNeg': float(data['st_tefferr2']) if 'st_tefferr2' in data and data['st_tefferr2'] is not None else np.nan,
@@ -542,7 +595,9 @@ class NASAExoplanetArchive:
             'loggUncNeg': float(data['st_loggerr2']) if 'st_loggerr2' in data and data['st_loggerr2'] is not None else np.nan,
             'dist': float(data['sy_dist']) if 'sy_dist' in data and data['sy_dist'] is not None else np.nan,
             'pm_dec': float(data['sy_pmdec']) if 'sy_pmdec' in data and data['sy_pmdec'] is not None else np.nan,
-            'pm_ra': float(data['sy_pmra']) if 'sy_pmra' in data and data['sy_pmra'] is not None else np.nan
+            'pm_ra': float(data['sy_pmra']) if 'sy_pmra' in data and data['sy_pmra'] is not None else np.nan,
+            'midTStandard': data.get('pl_tsystemref') or data.get('pl_tranmid_systemref'),
+            'midTSource': data.get('pl_refname') or data.get('pl_tranmid_reflink'),
         }
 
         if self.pl_dict['aRsUnc'] == 0:

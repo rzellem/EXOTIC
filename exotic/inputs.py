@@ -525,7 +525,10 @@ class Inputs:
         planet_params = {
             'ra': 'Target Star RA', 'dec': 'Target Star Dec', 'pName': "Planet Name", 'sName': "Host Star Name",
             'pPer': 'Orbital Period (days)', 'pPerUnc': 'Orbital Period Uncertainty',
-            'midT': ('Published Mid-Transit Time (BJD-UTC)', 'Published Mid-Transit Time'),
+            'midT': ('Published Mid-Transit Time (BJD-UTC)', 'Published Mid-Transit Time',
+                     'Published Mid-Transit Time (BJD-TDB)', 'Published Mid-Transit Time (BJD_TDB)',
+                     'Published Mid-Transit Time (BJD_UTC)', 'Published Mid-Transit Time (HJD-UTC)',
+                     'Published Mid-Transit Time (HJD-TDB)', 'Published Mid-Transit Time (JD-UTC)'),
             'midTUnc': 'Mid-Transit Time Uncertainty',
             'rprs': ('Ratio of Planet to Stellar Radius (Rp/Rs)', 'Rp/Rs', 'Rp/R*'),
             'rprsUnc': (
@@ -560,6 +563,7 @@ class Inputs:
             'pm_dec': 'Star Proper Motion DEC (mas/yr)'
         }
         opt_info = {
+            'orbital_constraints': ('orbital_constraints', 'Orbital Constraints'),
             'demosaic_fmt': 'Demosaic Format',
             'demosaic_out': 'Demosaic Output',
             'demosaic_algorithm': ('Demosaic Algorithm', 'demosaic_algorithm'),
@@ -951,6 +955,11 @@ class Inputs:
         self.info_dict['demosaic_algorithm'] = normalize_demosaic_algorithm(
             self.info_dict.get('demosaic_algorithm'))
         planet_dict = init_params(planet_params, planet_dict, data['planetary_parameters'])
+        try:
+            from .timing import input_ephemeris_metadata
+        except ImportError:
+            from timing import input_ephemeris_metadata
+        planet_dict.update(input_ephemeris_metadata(data['planetary_parameters']))
         return populate_missing_gaia_astrometry(planet_dict)
 
 

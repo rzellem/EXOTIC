@@ -1391,8 +1391,8 @@ def test_img_time_bjd_tdb_prefers_direct_mid_exposure_bjd(monkeypatch):
 
     header = exotic_module.fits.Header()
     header["BJD_TDB"] = 2461152.1287422837
-    header["DATE-AVG"] = "2026-04-22T15:05:23.333333"
-    header["DATE-UTC"] = "2026-04-22T15:05:08.333333"
+    header["DATE-AVG"] = "2026-04-22T15:05:23.333"
+    header["DATE-UTC"] = "2026-04-22T15:05:08.333"
     header["EXPTIME"] = 30.0
 
     monkeypatch.setattr(

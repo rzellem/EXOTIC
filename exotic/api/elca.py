@@ -2258,13 +2258,60 @@ class lc_fitter(object):
 
         return physical
 
-    def _summarize_derived_parameter(self, samples, point_estimate):
-        samples = np.asarray(samples, dtype=float)
-        center = float(point_estimate)
-        std = float(np.nanstd(samples))
-        lower = float(np.nanpercentile(samples, 16))
-        upper = float(np.nanpercentile(samples, 84))
-        return center, std, [lower - center, upper - center]
+    def _update_posterior_summaries(self, bound_keys, sampled_keys, physical_from_sample_point):
+        from exotic.posterior import summarize_posterior, posterior_distribution_estimates
+
+        self.posterior_summaries = {}
+        self.posterior_distribution_estimates = {}
+        weighted = self.results.get('weighted_samples', {})
+        points = np.asarray(weighted.get('points', []), dtype=float)
+        weights = np.asarray(weighted.get('weights', []), dtype=float)
+        if (points.ndim == 2 and weights.shape == (points.shape[0],)
+                and np.all(np.isfinite(weights)) and np.all(weights >= 0)
+                and np.sum(weights) > 0):
+            source = 'weighted_samples'
+        else:
+            # UltraNest's samples are already resampled to equal posterior weight.
+            # Never treat unweighted nested-sampling dead points as a posterior.
+            points = np.asarray(self.results.get('samples', []), dtype=float)
+            weights = None
+            source = 'equal_weight_samples'
+        if points.ndim != 2 or not points.shape[0] or points.shape[1] < len(sampled_keys):
+            self.posterior_summary_status = 'Posterior samples with usable weights are unavailable.'
+            return
+        physical_ml = dict(self.prior)
+        physical_ml.update(physical_from_sample_point(self.results['maximum_likelihood']['point']))
+        if 'b' in sampled_keys:
+            physical_ml['inc'] = float(inclination_from_impact_parameter(physical_ml, physical_ml['b']))
+        elif 'inc' in bound_keys:
+            physical_ml['b'] = float(impact_parameter_from_inclination(physical_ml, physical_ml['inc']))
+        values = {key: points[:, index] for index, key in enumerate(sampled_keys)}
+        if 'inc' in bound_keys or 'b' in sampled_keys:
+            physical = []
+            for point in points:
+                sample = dict(self.prior)
+                sample.update(physical_from_sample_point(point))
+                if 'b' in sampled_keys:
+                    sample['inc'] = float(inclination_from_impact_parameter(sample, sample['b']))
+                else:
+                    sample['b'] = float(impact_parameter_from_inclination(sample, sample['inc']))
+                physical.append(sample)
+            values['inc'] = np.asarray([sample['inc'] for sample in physical])
+            values['b'] = np.asarray([
+                sample['b'] if 'b' in sample else impact_parameter_from_inclination(sample, sample['inc'])
+                for sample in physical
+            ])
+        for key, samples in values.items():
+            summary = summarize_posterior(samples, weights)
+            if summary is not None:
+                summary['sample_source'] = source
+                summary['maximum_likelihood'] = float(physical_ml.get(key, self.prior.get(key, np.nan)))
+                self.posterior_summaries[key] = summary
+                estimate = posterior_distribution_estimates(samples, weights, parameter_key=key)
+                if estimate is not None:
+                    estimate['sample_source'] = source
+                    self.posterior_distribution_estimates[key] = estimate
+        self.posterior_summary_status = 'available' if self.posterior_summaries else 'No finite posterior samples.'
 
     def _get_ultranest_weighted_sample_arrays(self):
         try:
@@ -3447,6 +3494,12 @@ class lc_fitter(object):
             f"b={self._format_triangle_plot_geometry_value(b_center, b_error)}\n"
             f"i={self._format_triangle_plot_geometry_value(inc_center, inc_error, ' deg')}"
         )
+        from exotic.posterior import fit_posterior_summary, format_posterior_interval
+        b_summary = fit_posterior_summary(self, 'b')
+        inc_summary = fit_posterior_summary(self, 'inc')
+        if b_summary is not None and inc_summary is not None:
+            title = (f"b={format_posterior_interval(b_summary, include_probability=False)}\n"
+                     f"i={format_posterior_interval(inc_summary, 'deg', include_probability=False)}")
         return {
             'b_center': b_center,
             'b_error': b_error,
@@ -3609,6 +3662,10 @@ class lc_fitter(object):
                     weights=sample_weights,
                 )
             title = self._format_triangle_plot_parameter_title(center, error)
+            from exotic.posterior import fit_posterior_summary, format_posterior_interval
+            summary = fit_posterior_summary(self, key)
+            if summary is not None:
+                title = format_posterior_interval(summary, include_probability=False)
             truth = center
 
             if display_spec is not None and key == display_spec['key']:
@@ -3762,7 +3819,20 @@ class lc_fitter(object):
             if i < len(mask_errors):
                 mask_errors[i] = error
             if i < len(titles):
-                if display_spec is not None and key == display_spec.get('key'):
+                from exotic.posterior import fit_posterior_summary, format_posterior_interval
+                summary = fit_posterior_summary(self, key)
+                if (display_spec is not None and key == 'inc'
+                        and display_spec.get('key') == 'inc'
+                        and not display_spec.get('mirror', False)):
+                    titles[i] = geometry_summary['title']
+                elif summary is not None:
+                    # Zooming changes the displayed histogram, not the marginal
+                    # posterior whose credible interval appears in its title.
+                    if display_spec is not None and key == display_spec.get('key'):
+                        titles[i] = geometry_summary['title']
+                    else:
+                        titles[i] = format_posterior_interval(summary, include_probability=False)
+                elif display_spec is not None and key == display_spec.get('key'):
                     inc_center = geometry_summary.get('inc_center')
                     inc_error = geometry_summary.get('inc_error')
                     titles[i] = (
@@ -3882,57 +3952,58 @@ class lc_fitter(object):
                     self._draw_triangle_plot_geometry_reference_lines(panel, display_spec, axis='y')
 
     def _overlay_single_parameter_triangle_gaussian(self, fig, payload):
-        if not hasattr(fig, 'axes') or len(fig.axes) != 1:
+        """Draw fixed full-posterior bins; normal approximations exclude geometry."""
+        from exotic.posterior import fit_posterior_sample_values
+        if not hasattr(fig, 'axes'):
             return
         sampled_keys = list(payload.get('sampled_keys', []))
-        if len(sampled_keys) != 1:
+        if not sampled_keys or len(fig.axes) != len(sampled_keys) ** 2:
             return
-
-        ax = fig.axes[0]
         display_points = np.asarray(payload.get('display_points', []), dtype=float)
-        if display_points.ndim != 2 or display_points.shape[1] != 1:
+        if display_points.ndim != 2 or not display_points.shape[0]:
             return
-
-        values = display_points[:, 0]
-        values = values[np.isfinite(values)]
-        if values.size < 2:
-            return
-
-        try:
-            center = float(payload.get('mask_centers', [np.nan])[0])
-            sigma = float(payload.get('mask_errors', [np.nan])[0])
-            lower, upper = [
-                float(value)
-                for value in np.asarray(payload.get('ranges', [[np.nan, np.nan]])[0], dtype=float).reshape(-1)[:2]
-            ]
-        except (TypeError, ValueError, IndexError):
-            return
-
-        if not np.isfinite(center):
-            center = float(np.nanmedian(values))
-        if not np.isfinite(sigma) or sigma <= 0:
-            sigma = float(np.nanstd(values))
-        if not np.isfinite(sigma) or sigma <= 0:
-            return
-        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
-            lower, upper = float(np.nanmin(values)), float(np.nanmax(values))
-        if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
-            return
-
-        x_values = np.linspace(lower, upper, 300)
-        y_values = np.exp(-0.5 * ((x_values - center) / sigma) ** 2)
-        y_max = y_values.max() if y_values.size else np.nan
-        if not np.isfinite(y_max) or y_max <= 0:
-            return
-        axis_top = ax.get_ylim()[1]
-        if not np.isfinite(axis_top) or axis_top <= 0:
-            axis_top = 1.0
-        y_values = y_values / y_max * axis_top * 0.90
-
-        ax.plot(x_values, y_values, color='#c2410c', linewidth=1.5, label='Gaussian')
-        ax.axvline(center, color='#c2410c', linestyle='--', linewidth=1.0, label='Peak fit')
-        ax.set_ylim(0, max(axis_top, float(np.nanmax(y_values)) * 1.05))
-        ax.legend(loc='best', fontsize=8, frameon=False)
+        full_values, weights, _ = fit_posterior_sample_values(self)
+        axes = np.asarray(fig.axes).reshape(len(sampled_keys), len(sampled_keys))
+        for index, key in enumerate(sampled_keys):
+            estimate = (payload.get('posterior_distribution_estimates') or {}).get(key)
+            if estimate is None:
+                continue
+            histogram = estimate['posterior_histogram_peak']
+            ax = axes[index, index]
+            parameter_values = np.asarray(full_values.get(key, []), dtype=float)
+            valid = np.isfinite(parameter_values)
+            parameter_weights = None if weights is None else np.asarray(weights)[valid]
+            parameter_values = parameter_values[valid]
+            if histogram['bin_width'] > 0 and key in full_values:
+                # Fixed full-posterior bin edges keep the plotted peak identical
+                # to the reported peak, even when the axes are zoomed.
+                edges = np.linspace(*histogram['range'], histogram['bin_count'] + 1)
+                for artist in list(ax.patches):
+                    artist.remove()
+                counts, _, _ = ax.hist(parameter_values, bins=edges, weights=parameter_weights,
+                                       histtype='step', color='black')
+                ax.set_ylim(0, max(float(np.max(counts)) * 1.1, np.finfo(float).tiny))
+            gaussian = estimate['gaussian_fit']
+            if key in ('b', 'inc') or 'center' not in gaussian or gaussian['sigma'] <= 0:
+                continue
+            center, sigma = gaussian['center'], gaussian['sigma']
+            lower, upper = sorted(payload['ranges'][index])
+            x_values = np.linspace(lower, upper, 400)
+            total_weight = len(parameter_values) if parameter_weights is None else float(np.sum(parameter_weights))
+            bin_width = histogram['bin_width']
+            y_values = np.exp(-.5 * ((x_values - center) / sigma) ** 2)
+            y_values *= total_weight * bin_width / (sigma * np.sqrt(2 * np.pi))
+            ax.plot(x_values, y_values, color='#c2410c', linewidth=1.4, label='Gaussian approximation')
+            ax.axvline(center, color='#c2410c', linestyle='--', linewidth=1., label='Gaussian centre')
+            ax.set_ylim(0, max(ax.get_ylim()[1], float(np.max(y_values)) * 1.05))
+        if payload.get('posterior_distribution_estimates'):
+            from matplotlib.lines import Line2D
+            fig.legend(handles=[
+                Line2D([], [], color='black', label='Weighted posterior'),
+                Line2D([], [], color='#4682b4', label='Posterior histogram peak'),
+                Line2D([], [], color='#c2410c', label='Gaussian approximation'),
+                Line2D([], [], color='#c2410c', linestyle='--', label='Gaussian centre'),
+            ], loc='lower center', bbox_to_anchor=(.5, .005), ncol=4, frameon=False, fontsize=8)
 
     def _adjust_triangle_plot_layout(self, fig):
         if not hasattr(fig, 'subplots_adjust'):
@@ -4247,30 +4318,14 @@ class lc_fitter(object):
             self.errors[bound_key] = self.sample_errors[sampled_key]
             self.quantiles[bound_key] = self.sample_quantiles[sampled_key]
 
-        if 'inc' in bound_keys and 'b' in sampled_keys and weighted_points is not None:
-            bound_index = {key: index for index, key in enumerate(bound_keys)}
-
-            def weighted_sample_values(key, default=0.0):
-                index = bound_index.get(key)
-                if index is not None and index < weighted_points.shape[1] and sampled_keys[index] != 'b':
-                    return weighted_points[:, index]
-                value = physical_ml.get(key, self.prior.get(key, default))
-                return np.full(weighted_points.shape[0], float(value), dtype=float)
-
-            b_index = sampled_keys.index('b')
-            scale_values = {
-                'ars': weighted_sample_values('ars', np.nan),
-                'ecc': weighted_sample_values('ecc', 0.0),
-                'omega': weighted_sample_values('omega', 0.0),
-            }
-            inc_samples = np.asarray(
-                inclination_from_impact_parameter(scale_values, weighted_points[:, b_index]),
-                dtype=float,
-            )
-            center, std, quantiles = self._summarize_derived_parameter(inc_samples, physical_ml['inc'])
-            self.parameters['inc'] = center
-            self.errors['inc'] = std
-            self.quantiles['inc'] = quantiles
+        self._update_posterior_summaries(bound_keys, sampled_keys, physical_from_sample_point)
+        inc_summary = self.posterior_summaries.get('inc')
+        if 'inc' in bound_keys and 'b' in sampled_keys and inc_summary is not None:
+            self.errors['inc'] = inc_summary['stdev']
+            self.quantiles['inc'] = [
+                inc_summary['lower'] - physical_ml['inc'],
+                inc_summary['upper'] - physical_ml['inc'],
+            ]
         self._apply_fixed_parameter_errors()
 
     def extend_ultranest_fit(self, min_num_live_points=None, max_ncalls=None):
@@ -4410,6 +4465,23 @@ class lc_fitter(object):
             and np.isfinite(sigma_log_duration)
             and sigma_log_duration > 0
         )
+
+        # Serializable snapshot of the likelihood actually used by this fit.
+        # Post-fit orbit sensitivity reuses it without running an optimiser or
+        # sampler, including exposure integration, baseline and duration prior.
+        self.orbital_likelihood_context = {
+            'base_physical': base_physical.copy(), 'time': np.array(time, copy=True),
+            'data': data.copy(), 'inverse_dataerr': inverse_dataerr.copy(),
+            'centered_airmass': np.array(centered_airmass, copy=True),
+            'baseline_static_mask': np.array(baseline_static_mask, copy=True),
+            'baseline_weights': baseline_weights.copy(),
+            'uses_fixed_flux_baseline': uses_fixed_flux_baseline,
+            'has_free_flux_baseline': has_free_flux_baseline,
+            'fixed_flux_baseline_value': fixed_flux_baseline_value,
+            'free_flux_baseline_key': sampled_keys[free_flux_baseline_index] if free_flux_baseline_index is not None else None,
+            'duration_prior_valid': duration_prior_valid,
+            'expected_duration': expected_duration, 'sigma_log_duration': sigma_log_duration,
+        }
 
         def solve_flux_baseline_for_model(model):
             mask = baseline_static_mask & np.isfinite(model) & (model != 0)
@@ -4821,6 +4893,10 @@ class lc_fitter(object):
             tmid_text,
             tmid_error_text,
         )
+        from exotic.posterior import fit_posterior_summary, format_posterior_interval
+        tmid_summary = fit_posterior_summary(self, 'tmid')
+        if tmid_summary is not None:
+            lclabel2 = r"$T_{mid}$ = " + format_posterior_interval(tmid_summary, 'BJD_TDB')
 
         lclabel = lclabel1 + "\n" + lclabel2
         if show_flux_baseline_label and 'a0' in self.parameters:
@@ -4949,12 +5025,90 @@ class lc_fitter(object):
         axs[1].set_ylim(residual_plot_limits(self.residuals / np.median(self.data) * 1e2))
         return f, axs
 
+    def _triangle_plot_inclination_payload(self, payload):
+        """Display the joint posterior in inclination without changing sampling."""
+        from exotic.posterior import fit_posterior_summary, summarize_posterior, format_posterior_interval
+
+        sampled_keys = list(payload['sampled_keys'])
+        if 'b' not in sampled_keys and 'inc' not in sampled_keys:
+            return payload
+        index = sampled_keys.index('b' if 'b' in sampled_keys else 'inc')
+        points, logl, weights = self._get_triangle_plot_samples()
+        display_points = np.array(points, copy=True)
+        if sampled_keys[index] == 'b':
+            # Transform every joint sample, including its own a/Rs, e and omega.
+            physical = [self._physical_values_from_sample_point(
+                point, list(self.bounds), sampled_keys,
+            ) for point in points]
+            inclinations = np.asarray([
+                inclination_from_impact_parameter(sample, point[index])
+                for sample, point in zip(physical, points)
+            ], dtype=float)
+            display_points[:, index] = inclinations
+        else:
+            inclinations = display_points[:, index]
+        summary = fit_posterior_summary(self, 'inc')
+        if summary is None and weights is not None:
+            summary = summarize_posterior(inclinations, weights)
+        if summary is not None:
+            center, error = summary['median'], summary['stdev']
+            title = format_posterior_interval(summary, 'deg', include_probability=False)
+        else:
+            # A histogram estimate from unweighted dead points is not a
+            # posterior credible interval.
+            center, error = self._triangle_plot_display_estimate(
+                inclinations, self.parameters.get('inc', np.median(inclinations)),
+                self.errors.get('inc', np.std(inclinations)), weights=weights,
+            )
+            title = self._format_triangle_plot_parameter_title(center, error) + ' deg'
+        lower, upper = float(np.min(inclinations)), float(np.max(inclinations))
+        padding = max(0.05 * (upper - lower), np.finfo(float).eps * 90)
+        # Respect the physical boundary for the usual folded inclination, while
+        # retaining any directly sampled retrograde inclinations.
+        plot_range = [max(0.0, lower - padding), min(90.0 if upper <= 90 else 180.0, upper + padding)]
+        updated = dict(payload)
+        for key in ('labels', 'titles', 'ranges', 'mask_centers', 'mask_errors', 'truths'):
+            updated[key] = list(payload[key])
+        sampled_keys[index] = 'inc'
+        updated['sampled_keys'] = sampled_keys
+        updated['labels'][index] = r'Inclination $i$ [deg]'
+        updated['titles'][index] = title
+        updated['ranges'][index] = plot_range
+        updated['mask_centers'][index] = center
+        updated['mask_errors'][index] = error
+        updated['truths'][index] = center
+        updated['display_points'] = display_points
+        updated['display_logl'] = logl
+        updated['display_weights'] = weights
+        updated['mask_values'] = display_points.copy()
+        updated['geometry_overlay'] = None
+        updated['geometry_summary'] = dict(payload.get('geometry_summary') or {},
+                                           inc_center=center, inc_error=error, title=title)
+        updated['display_spec'] = {
+            'key': 'inc', 'index': index, 'label': updated['labels'][index],
+            'mirror': False, 'center': center, 'mask_center': center,
+            'mask_error': error, 'range': plot_range, 'truth': center,
+            'reference_lines': [],
+        }
+        return updated
+
     def plot_triangle(self, plot_title=None, zoom_sigma=None):
+        from exotic.posterior import fit_posterior_distribution_estimates
         payload = self._get_triangle_plot_payload()
+        payload = self._triangle_plot_inclination_payload(payload)
         if zoom_sigma is not None:
             payload = dict(payload)
             payload['ranges'] = self._triangle_plot_sigma_window_ranges(payload, zoom_sigma)
             payload = self._recenter_triangle_plot_payload_for_visible_ranges(payload)
+        # Both reference estimates use the FULL posterior, independent of zoom.
+        # They affect only display; the model remains the joint likelihood fit.
+        payload = dict(payload)
+        estimates = fit_posterior_distribution_estimates(self)
+        payload['posterior_distribution_estimates'] = estimates
+        payload['truths'] = [
+            estimates[key]['posterior_histogram_peak']['value'] if key in estimates else value
+            for key, value in zip(payload['sampled_keys'], payload['truths'])
+        ]
 
         chi2 = payload['display_logl'] * -2
         parameter_count = max(1, len(payload['sampled_keys']))
@@ -4993,16 +5147,24 @@ class lc_fitter(object):
             'pad': 4,
             'fontsize': 11,
         }
+        # The full BJD and asymmetric interval need separate lines to fit the
+        # final diagonal panel without clipping the exported caption.
+        plot_titles = [
+            title.replace(' -', '\n-', 1) if key == 'tmid' else title
+            for key, title in zip(payload['sampled_keys'], payload['titles'])
+        ]
 
         fig = corner(payload['display_points'],
                      labels=payload['labels'],
-                     bins=int(np.sqrt(payload['display_points'].shape[0])),
+                     bins=[estimates[key]['posterior_histogram_peak']['bin_count']
+                           if key in estimates else int(np.sqrt(payload['display_points'].shape[0]))
+                           for key in payload['sampled_keys']],
                      range=payload['ranges'],
                       weights=payload['display_weights'],
                       plot_contours=True,
                       levels=self._triangle_contour_levels(chi2, mask1, mask2, mask3),
                       plot_density=False,
-                      titles=payload['titles'],
+                      titles=plot_titles,
                       truths=payload['truths'],
                       data_kwargs={
                           'c': chi2,
@@ -5022,6 +5184,9 @@ class lc_fitter(object):
             fig.set_size_inches(fig_size, fig_size, forward=True)
         if plot_title and hasattr(fig, 'suptitle'):
             fig.suptitle(plot_title, fontsize=13, y=0.99)
+        if getattr(self, 'posterior_summaries', None) and hasattr(fig, 'text'):
+            fig.text(.5, .955, 'Titles show posterior medians and asymmetric intervals (68%).',
+                     ha='center', va='bottom', fontsize=9)
         self._overlay_single_parameter_triangle_gaussian(fig, payload)
         self._adjust_triangle_plot_layout(fig)
         self._overlay_triangle_plot_geometry_histograms(

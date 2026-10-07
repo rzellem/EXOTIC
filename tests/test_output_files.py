@@ -653,6 +653,9 @@ def test_observable_depth_is_separate_from_area_depth_for_grazing_geometry():
 
 def test_aavso_output_includes_observatory_location_headers(tmp_path):
     fit = DummyFit()
+    fit.sampled_keys = ['tmid']
+    fit.results = {'weighted_samples': {'points': np.array(fit.parameters['tmid'] + np.linspace(-.001, .004, 100))[:, None],
+                                       'weights': np.linspace(1, .1, 100)}}
     fit.oot_baseline_detrending_applied = True
     fit.oot_baseline_detrending_note = "Applied weighted linear out-of-transit baseline detrending."
     fit.oot_baseline_reference_time_bjd_tdb = fit.time[0]
@@ -777,6 +780,15 @@ def test_aavso_output_includes_observatory_location_headers(tmp_path):
         ).read_bytes() == diagnostic_source.name.encode("utf-8")
 
     assert "#OBSDATE=2020-01-01" in output_text
+    timing_meta = aavso_json_header(output_text, 'TIMING-XC')
+    assert timing_meta['model_time_standard'] == 'BJD_TDB'
+    assert 'calculated_mjd_obs_vs_date_obs_tmid' in timing_meta
+    posterior_meta = aavso_json_header(output_text, 'POSTERIOR-XC')
+    estimates = posterior_meta['posterior_distribution_estimates']['tmid']
+    assert estimates['posterior_histogram_peak']['value'] != estimates['gaussian_fit']['center']
+    assert estimates['gaussian_fit']['sigma'] > 0
+    assert posterior_meta['model_values']['tmid'] == fit.parameters['tmid']
+    assert posterior_meta['external_orbital_uncertainty'] == OutputFiles(fit, p_dict, i_dict, [0.1]).orbital_budget
     assert "#DATE_TYPE=BJD_TDB" in output_text
     assert "#EXOPLANET_NAME=HAT-P-32 b" in output_text
     assert "#OBSNAME=Whipple Observatory" in output_text
@@ -1452,6 +1464,47 @@ def test_final_planetary_params_reports_ars_and_impact_parameter_under_inclinati
     assert final_params["Impact Parameter (b)"] == "0.314 +/- 0.043"
 
 
+def test_final_params_preserves_posterior_intervals_limits_and_error_provenance(tmp_path):
+    from exotic.posterior import summarize_posterior
+    fit = DummyFit()
+    fit.posterior_summaries = {
+        'b': summarize_posterior(np.linspace(0, 0.8, 1001) ** 2),
+        'inc': summarize_posterior(np.linspace(87, 90, 1001)),
+        'rprs': summarize_posterior(np.linspace(0.1, 0.15, 1001)),
+    }
+    fit.ultranest_error_fallbacks = {'rprs': {'reason': 'degenerate_posterior_summary', 'error': 0.001}}
+    fit.sampled_keys = ['tmid']
+    fit.results = {'weighted_samples': {'points': (fit.parameters['tmid'] + np.linspace(-.001, .004, 100))[:, None],
+                                       'weights': np.linspace(1, .1, 100)}}
+    fit.posterior_summary_status = 'available'
+    (tmp_path / 'working_artifacts').mkdir()
+    orbital_constraints = [{'source': 'published upper limit',
+                            'ecc': {'value': .025, 'kind': 'upper_limit', 'confidence_probability': .9545}}]
+    OutputFiles(fit, {'pName': 'WASP-16 b'},
+                {'save': str(tmp_path), 'date': '2021-06-11', 'orbital_constraints': orbital_constraints}, [0.1]).final_planetary_params(
+        phot_opt=False, vsp_params=[],
+    )
+    payload = json.loads((tmp_path / 'working_artifacts' / 'FinalParams_WASP-16b_2021-06-11.json').read_text())
+    params = payload['FINAL PLANETARY PARAMETERS']
+    assert '68% CrI' not in params['Impact Parameter (b)']
+    assert '; <' in params['Impact Parameter (b)']
+    assert '; >' in params['Orbital Inclination (inc)']
+    assert '/+' in params['Ratio of Planet to Stellar Radius (Rp/R*)']
+    meta = payload['POSTERIOR UNCERTAINTY REPORTING']
+    assert meta['posterior_summaries']['b'] == fit.posterior_summaries['b']
+    assert meta['local_fit_uncertainty_approximations'] == fit.ultranest_error_fallbacks
+    assert meta['model_values']['rprs'] == fit.parameters['rprs']
+    assert meta['posterior_summaries']['rprs']['median'] != fit.parameters['rprs']
+    orbit = meta['external_orbital_uncertainty']['constraints'][0]
+    assert orbit['nominal_orbit'] == 'circular_assumed'
+    assert orbit['quoted_confidence_probability'] == .9545
+    assert orbit['duration_preserving_stellar_density_factor_approximate'][1] > 1
+    assert 'Mid-Transit Time (Tmid) posterior histogram peak' in params
+    assert 'Mid-Transit Time (Tmid) Gaussian posterior centre +/- sigma' in params
+    assert meta['posterior_distribution_estimates']['tmid']['gaussian_fit']['sigma'] > 0
+    assert meta['timing_estimator_differences_seconds']['histogram_peak_minus_gaussian_centre'] != 0
+
+
 def test_final_planetary_params_matches_values_to_two_sigfig_uncertainties(tmp_path):
     fit = DummyFit()
     fit.errors["a1"] = 0.00023
@@ -1824,8 +1877,12 @@ def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
     fit = DummyFit()
     (tmp_path / "working_artifacts").mkdir()
 
-    p_dict = {"pName": "HAT-P-32 b"}
-    i_dict = {"save": str(tmp_path), "date": "2020-01-01"}
+    p_dict = {"pName": "HAT-P-32 b", 'ephemeris_timing':{'source_standard':'BJD_TDB','conversion_applied':False}}
+    i_dict = {"save": str(tmp_path), "date": "2020-01-01",
+              'timestamp_selection_summary':{'selected_sources':{'DATE-OBS/DATE-END':6}}}
+    fit.timestamp_tmid_comparison={'status':'calculated','date_obs_minus_mjd_obs_seconds':-3.5,
+                                   'date_obs':{'tmid_bjd_tdb':2450000.1234},
+                                   'mjd_obs':{'tmid_bjd_tdb':2450000.123440509}}
 
     OutputFiles(fit, p_dict, i_dict, [0.1]).final_planetary_params(
         phot_opt=False,
@@ -1839,6 +1896,11 @@ def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
     assert temp_file.exists()
     assert root_file.exists()
     assert root_file.read_text(encoding="utf-8") == temp_file.read_text(encoding="utf-8")
+    timing=json.loads(root_file.read_text())['TIMING REFERENCE AND TIMESTAMP SELECTION']
+    assert timing['ephemeris']['source_standard']=='BJD_TDB'
+    assert timing['image_timestamps']['selected_sources']=={'DATE-OBS/DATE-END':6}
+    assert timing['calculated_mjd_obs_vs_date_obs_tmid']['date_obs_minus_mjd_obs_seconds']==-3.5
+    assert json.loads(root_file.read_text())['FINAL PLANETARY PARAMETERS']['Calculated Tmid change (DATE-OBS minus MJD-OBS)'].startswith('-3.5000 s')
 
 
 def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):

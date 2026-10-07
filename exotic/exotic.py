@@ -90,6 +90,12 @@ from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
 # UTC to BJD converter import
 from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
+try:
+    from .timing import (select_exposure_timestamp, public_timestamp_selection,
+                         normalise_ephemeris)
+except ImportError:
+    from timing import (select_exposure_timestamp, public_timestamp_selection,
+                        normalise_ephemeris)
 # julian conversion imports
 import dateutil.parser as dup
 import imreg_dft as ird
@@ -15094,19 +15100,9 @@ def utc_end_exposure_jd(hdr):
 
 
 def utc_exposure_midpoint_jd(hdr, exp):
-    key, jd_mid = utc_mid_exposure_jd(hdr)
-    if jd_mid is not None:
-        return key, jd_mid
-
-    start_key, jd_start = utc_start_exposure_jd(hdr)
-    end_key, jd_end = utc_end_exposure_jd(hdr)
-    if jd_start is not None and jd_end is not None and jd_end >= jd_start:
-        return f"{start_key}/{end_key}", 0.5 * (jd_start + jd_end)
-
-    if jd_start is None:
-        return None, None
-
-    return start_key, jd_start + exp / (2.0 * 60.0 * 60.0 * 24.0)
+    selection = select_exposure_timestamp(hdr, exp)
+    raw = next((row for row in selection['candidates'] if row['frame'] == 'JD'), None)
+    return (raw['source'], raw['jd_utc']) if raw else (None, None)
 
 
 def exp_offset(hdr, time_unit, exp):
@@ -15186,16 +15182,44 @@ def img_time_bjd_tdb(hdr, p_dict, info_dict):
     float
         Time of when the image was taken in BJD-TDB with exposure offset
     """
-    exp = get_exp_time(hdr)
+    return image_timestamp_solution(hdr, p_dict, info_dict)[0]
 
-    _, bjd_time = direct_bjd_tdb_mid_exposure(hdr)
-    if bjd_time is not None:
-        return bjd_time
 
-    _, jd_time = utc_exposure_midpoint_jd(hdr, exp)
-    if jd_time is None:
-        return np.nan
-    return convert_jd_to_bjd([jd_time], p_dict, info_dict)[0]
+def image_timestamp_solution(hdr, p_dict, info_dict):
+    selection = select_exposure_timestamp(hdr, get_exp_time(hdr))
+    chosen = selection['selected']
+    raw = next((row for row in selection['candidates'] if row['frame'] == 'JD'), None)
+    jd_utc = raw['jd_utc'] if raw else np.nan
+    if chosen is None:
+        bjd_tdb = np.nan
+    elif chosen['frame'] == 'BJD':
+        bjd_tdb = float(chosen['_instant'].tdb.jd)
+    else:
+        bjd_tdb = float(convert_jd_to_bjd([chosen['jd_utc']], p_dict, info_dict)[0])
+    diagnostic = public_timestamp_selection(selection)
+    diagnostic['bjd_tdb'] = bjd_tdb if np.isfinite(bjd_tdb) else None
+    diagnostic['jd_utc'] = jd_utc if np.isfinite(jd_utc) else None
+    if chosen:
+        diagnostic['conversion'] = ('barycentric_clock_only' if chosen['frame'] == 'BJD'
+                                    else 'observatory_to_barycentre_and_clock')
+        diagnostic['total_conversion_seconds'] = (bjd_tdb-chosen['jd_in_source_scale'])*86400
+        rows = selection['candidates']
+        date = next((row for row in rows if row['source'] == 'DATE-OBS/DATE-END'), None)
+        mjd = next((row for row in rows if row['source'] == 'MJD-OBS/DATE-END'), None)
+        if date is None:
+            date = next((row for row in rows if row['source'].startswith('DATE-OBS+EXPTIME')), None)
+        if mjd is None:
+            mjd = next((row for row in rows if row['source'].startswith('MJD-OBS+EXPTIME')), None)
+        if date and mjd:
+            if date['frame'] == 'BJD' and mjd['frame'] == 'BJD':
+                converted = [date['_instant'].tdb.jd, mjd['_instant'].tdb.jd]
+            else:
+                converted = convert_jd_to_bjd([date['jd_utc'], mjd['jd_utc']], p_dict, info_dict)
+            diagnostic['mjd_date_comparison'] = {
+                'date_obs_source':date['source'], 'mjd_obs_source':mjd['source'],
+                'date_obs_bjd_tdb':float(converted[0]), 'mjd_obs_bjd_tdb':float(converted[1]),
+            }
+    return bjd_tdb, jd_utc, diagnostic
 
 def air_mass(hdr, ra, dec, lat, long, elevation, time):
     """Scrapes or calculates the airmass at the time of when the image was taken.
@@ -15259,6 +15283,8 @@ def check_parameters(init_parameters, parameters):
     uncert = 1 / 36
 
     for key, value in parameters.items():
+        if (key.startswith('midT') and key not in ('midT', 'midTUnc')) or key == 'ephemeris_timing':
+            continue
         if key in ['ra', 'dec'] and init_parameters[key]:
             if not parameters[key] - uncert <= init_parameters[key] <= parameters[key] + uncert:
                 different = True
@@ -15288,7 +15314,7 @@ REQUIRED_TRANSIT_EPHEMERIS_FIELDS = {
         'uncertainty_key': 'pPerUnc',
     },
     'midT': {
-        'label': 'Published Mid-Transit Time (BJD-UTC)',
+        'label': 'Published Mid-Transit Time',
         'uncertainty_key': 'midTUnc',
     },
 }
@@ -15339,6 +15365,9 @@ def resolve_required_transit_ephemeris(planet_dict, archive_planet_dict=None, ar
             field = REQUIRED_TRANSIT_EPHEMERIS_FIELDS[key]
             original_value = resolved.get(key)
             resolved[key] = archive_value
+            if key == 'midT':
+                for metadata_key in ('midTStandard', 'midTSource'):
+                    resolved[metadata_key] = archive_planet_dict.get(metadata_key)
             log_info(
                 f"Required ephemeris fallback for {target_name or 'the target'}: "
                 f"{field['label']} was missing or invalid ({original_value!r}); using NASA Exoplanet "
@@ -15398,8 +15427,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                      "Host Star's Name",
                      "Orbital Period (days)",
                      "Orbital Period Uncertainty (days) \n(Keep in mind that 1.2e-34 is the same as 1.2 x 10^-34)",
-                     "Published Mid-Transit Time (BJD_UTC)",
-                     "Mid-Transit Time Uncertainty (BJD-UTC)",
+                     "Published Mid-Transit Time (Julian days; standard recorded separately)",
+                     "Mid-Transit Time Uncertainty (days)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs)",
                      "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty",
                      "Ratio of Distance to Stellar Radius (a/Rs)",
@@ -15464,7 +15493,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
                  "set (or set to null) in your initialization file. ***")
 
         for i, key in enumerate(userpdict):
-            if key in ('ra', 'dec'):
+            if key in ('ra', 'dec') or (key.startswith('midT') and key not in ('midT', 'midTUnc')):
                 continue
             if key in ('pName', 'sName'):
                 userpdict[key] = pdict[key]
@@ -15500,7 +15529,7 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     # Exoplanet not confirmed in NASA Exoplanet Archive
     else:
         for i, key in enumerate(userpdict):
-            if key in ('ra', 'dec'):
+            if key in ('ra', 'dec') or (key.startswith('midT') and key not in ('midT', 'midTUnc')):
                 continue
             # Used initialization file and is not empty
             if userpdict[key] is not None:
@@ -35578,12 +35607,14 @@ def _main_impl():
         Path(Path(exotic_infoDict['save']) / "working_artifacts").mkdir(exist_ok=True)
 
         archive_planet_dict = None
+        archive_orbital_constraints = []
         if not args.override:
             nea_obj = NASAExoplanetArchive(
                 planet=userpDict['pName'],
                 non_interactive=args.non_interactive_run,
             )
             userpDict['pName'], CandidatePlanetBool, pDict = nea_obj.planet_info()
+            archive_orbital_constraints = getattr(nea_obj, 'orbital_constraints', [])
             if isinstance(pDict, dict):
                 archive_planet_dict = dict(pDict)
         else:
@@ -35681,6 +35712,34 @@ def _main_impl():
                 else userpDict.get('pName')
             ),
         )
+
+        pDict = normalise_ephemeris(
+            pDict, archive_parameters=archive_planet_dict,
+            lookup=lambda planet, epoch, period: NASAExoplanetArchive(
+                planet=planet, non_interactive=True).lookup_ephemeris_time_standard(planet, epoch, period),
+        )
+        ephemeris_timing = pDict['ephemeris_timing']
+        log_info(f"Ephemeris time standard: {ephemeris_timing['source_standard']} -> BJD_TDB; "
+                 f"status={ephemeris_timing['status']}; source={ephemeris_timing['source_reference']}; "
+                 f"correction_seconds={ephemeris_timing['conversion_seconds']}",
+                 warn=ephemeris_timing['status'] != 'verified')
+
+        # Supplemental post-fit uncertainty metadata does not participate in
+        # scalar planetary-parameter negotiation or alter the fitted e/omega.
+        if 'orbital_constraints' not in exotic_infoDict:
+            exotic_infoDict['orbital_constraints'] = archive_orbital_constraints
+        try:
+            from .orbital_uncertainty import nominal_eccentricity
+        except ImportError:
+            from orbital_uncertainty import nominal_eccentricity
+        orbital_constraints = exotic_infoDict.get('orbital_constraints') or []
+        pDict['ecc'] = nominal_eccentricity(pDict['ecc'], orbital_constraints)
+        nominal_constraint = next((record for record in orbital_constraints
+                                   if (record.get('ecc') or {}).get('value') is not None), {})
+        if (nominal_constraint.get('ecc') or {}).get('kind') == 'upper_limit':
+            log_info('Orbital eccentricity is an upper limit: adopting e=0 (circular) as the nominal model. '
+                     'The published limit is retained for a separate post-fit deviation envelope; '
+                     'it is not a measured eccentricity or a hard maximum.')
 
         target_search_restriction_prior = build_search_restriction_prior_from_planet_dict(pDict)
         if restrict_ars_range and is_toi_or_tic_target(target_search_restriction_prior):
@@ -35808,7 +35867,7 @@ def _main_impl():
                 userpDict['ra'] = pDict['ra']
                 userpDict['dec'] = pDict['dec']
             # time sort images
-            times, jd_times, header_exptimes = [], [], []
+            times, jd_times, header_exptimes, timestamp_selections = [], [], [], []
             log_info(f"Reading FITS timestamps and converting to BJD_TDB for {len(inputfiles)} frame(s).")
             for file_index, file in enumerate(inputfiles):
                 extension = 0
@@ -35817,14 +35876,31 @@ def _main_impl():
                 while header['NAXIS'] == 0:
                     extension += 1
                     header = fits.getheader(filename=file, ext=extension)
-                obsTime = img_time_bjd_tdb(header, pDict, exotic_infoDict)
+                obsTime, raw_jd_time, time_diagnostic = image_timestamp_solution(header, pDict, exotic_infoDict)
+                time_diagnostic['filename'] = str(file)
+                timestamp_selections.append(time_diagnostic)
                 times.append(obsTime)
                 plateStatus.setObsTime(obsTime)
-                jd_times.append(img_time_jd(header))
+                jd_times.append(raw_jd_time)
                 header_exptimes.append(get_exp_time(header))
                 completed = file_index + 1
                 if completed == len(inputfiles) or completed % 25 == 0:
                     log_info(f"Timestamp conversion progress: {completed}/{len(inputfiles)}")
+
+            timestamp_report_path = Path(exotic_infoDict['save']) / 'TimestampSelection.json'
+            timestamp_report_path.write_text(json.dumps(timestamp_selections, indent=2), encoding='utf-8')
+            selected_sources = {}
+            for record in timestamp_selections:
+                source = (record.get('selected') or {}).get('source', 'unavailable')
+                selected_sources[source] = selected_sources.get(source, 0) + 1
+            exotic_infoDict['timestamp_selection_summary'] = {
+                'report_path': str(timestamp_report_path), 'frame_count': len(timestamp_selections),
+                'selected_sources': selected_sources,
+                'ambiguous_standard_count': sum(bool((row.get('selected') or {}).get('ambiguous_standard'))
+                                                for row in timestamp_selections),
+                'precision_basis': 'Stored decimal resolution; physical clock/shutter accuracy is not calibrated.',
+            }
+            log_info(f"Timestamp selection by stored precision: {selected_sources}. Details: {timestamp_report_path}")
 
             extension = 0
             plateStatus.setCurrentFilename(inputfiles[0])

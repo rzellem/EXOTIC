@@ -1079,6 +1079,35 @@ def test_plot_prior_posterior_comparison_omits_prior_fallback_rprs(tmp_path, mon
     assert not any("Posterior (Prior)" in text for text in captured_text)
 
 
+def test_prior_posterior_comparison_draws_asymmetric_errors_and_geometry_limits(tmp_path, monkeypatch):
+    from exotic.posterior import summarize_posterior
+    captured = []
+    original = Axes.errorbar
+    def spy(self, *args, **kwargs):
+        if kwargs.get('label') == 'Posterior':
+            captured.append(np.asarray(kwargs['xerr']))
+        return original(self, *args, **kwargs)
+    monkeypatch.setattr(Axes, 'errorbar', spy)
+    fit = SimpleNamespace(
+        parameters={'inc': 89, 'ars': 10}, errors={'inc': 0.1, 'ars': 0.2},
+        posterior_summaries={
+            'inc': summarize_posterior(90 - np.linspace(0, 2, 1001) ** 2),
+            'b': summarize_posterior(np.linspace(0, 1, 1001) ** 2),
+        },
+        empirical_transit_uncertainty={'available': True},
+    )
+    planet = {'inc': 89, 'incUnc': 0.2, 'aRs': 10, 'aRsUnc': 0.2}
+    rows, _ = plots_module._prior_posterior_comparison_rows(fit, planet)
+    geometry = {row['parameter_key']: row for row in rows}
+    assert '; <' in geometry['b']['posterior_text']
+    assert '; >' in geometry['inc']['posterior_text']
+    assert geometry['b']['posterior_error_plus_sigma'] != geometry['b']['posterior_error_minus_sigma']
+    path = plot_prior_posterior_comparison(fit, planet, 'WASP-16 b', str(tmp_path), '2021-06-11')
+    assert path.exists()
+    assert captured[0].shape == (2, len(rows))
+    assert not np.allclose(captured[0][0], captured[0][1])
+
+
 def test_plot_ktmf_qc_metrics_writes_outputs_and_annotations(tmp_path, monkeypatch):
     captured_text = []
     original_text = Axes.text

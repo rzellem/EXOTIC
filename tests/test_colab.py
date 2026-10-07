@@ -94,3 +94,70 @@ def test_pixel_binning_from_header(monkeypatch, cards, expected):
     for key, value in cards.items():
         hdr[key] = value
     assert colab.pixel_binning_from_header(hdr) == expected
+
+
+def _qatar2_parameters(standard='BJD-TDB', reference=None):
+    return {
+        'Target Star RA': '13:50:37.318272',
+        'Target Star Dec': '-06:48:14.65704',
+        'Planet Name': 'Qatar-2 b', 'Host Star Name': 'Qatar-2',
+        'Orbital Period (days)': 1.33711644, 'Orbital Period Uncertainty': 3.2e-8,
+        'Published Mid-Transit Time': 2457218.1101306,
+        'Published Mid-Transit Time Standard': standard,
+        'Published Mid-Transit Time Reference': reference,
+        'Mid-Transit Time Uncertainty': 6.3e-6,
+        'Ratio of Planet to Stellar Radius (Rp/Rs)': .18257875013264824,
+        'Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty': .00011090259253393703,
+        'Ratio of Distance to Stellar Radius (a/Rs)': 6.45,
+        'Ratio of Distance to Stellar Radius (a/Rs) Uncertainty': .05477225575051661,
+        'Orbital Inclination (deg)': 88.99, 'Orbital Inclination (deg) Uncertainty': .2,
+        'Orbital Eccentricity (0 if null)': 0., 'Argument of Periastron (deg)': 0.,
+        'Star Effective Temperature (K)': 4645.,
+        'Star Effective Temperature (+) Uncertainty': 50.,
+        'Star Effective Temperature (-) Uncertainty': -50.,
+        'Star Metallicity ([FE/H])': .02,
+        'Star Metallicity (+) Uncertainty': .08,
+        'Star Metallicity (-) Uncertainty': -.08,
+        'Star Surface Gravity (log(g))': 4.601,
+        'Star Surface Gravity (+) Uncertainty': .018,
+        'Star Surface Gravity (-) Uncertainty': -.018,
+        'Star Distance (pc)': 181.374,
+        'Star Proper Motion RA (mas/yr)': -88.1844,
+        'Star Proper Motion DEC (mas/yr)': -15.2903,
+    }
+
+
+@pytest.mark.parametrize('standard', ['BJD-TDB', 'BJD-UTC', 'UNKNOWN'])
+@pytest.mark.parametrize('reference', [None, '<a href="https://example.org/paper">Yalcinkaya et al. 2024</a>'])
+def test_fix_planetary_params_preserves_timing_metadata(monkeypatch, standard, reference, capsys):
+    colab = import_colab(monkeypatch)
+    parameters = _qatar2_parameters(standard, reference)
+    original = parameters.copy()
+    fragment = colab.fix_planetary_params(parameters)
+    assert json.loads('{'+fragment+'}')['planetary_parameters'] == original
+    assert parameters == original
+    assert capsys.readouterr().out == ''
+
+
+def test_timing_metadata_survives_colab_inits_file(monkeypatch, tmp_path):
+    colab = import_colab(monkeypatch)
+    parameters = _qatar2_parameters(reference='<a href="https://example.org/paper">Published epoch</a>')
+    path = colab.make_inits_file(
+        colab.fix_planetary_params(parameters), tmp_path.as_posix(), f'{tmp_path.as_posix()}/',
+        _mobs_frame(tmp_path).as_posix(), '[424, 286]', '[[465, 183]]', 'MObs', 'RTZ', '', False,
+    )
+    with open(path) as handle:
+        assert json.load(handle)['planetary_parameters'] == parameters
+
+
+@pytest.mark.parametrize('missing', [0., float('nan')])
+def test_fix_planetary_params_retains_existing_qatar6_radius_repair(monkeypatch, missing):
+    colab = import_colab(monkeypatch)
+    parameters = _qatar2_parameters()
+    parameters['Host Star Name'] = 'Qatar-6'
+    parameters['Ratio of Planet to Stellar Radius (Rp/Rs)'] = missing
+    parameters['Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty'] = missing
+    repaired = json.loads('{'+colab.fix_planetary_params(parameters)+'}')['planetary_parameters']
+    assert repaired['Ratio of Planet to Stellar Radius (Rp/Rs)'] == .151
+    assert repaired['Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty'] == .01
+    assert repaired['Orbital Eccentricity (0 if null)'] == 0.

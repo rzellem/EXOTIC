@@ -466,8 +466,12 @@ def make_inits_file(planetary_params, image_dir, output_dir, first_image, targ_c
 ##############################################################
 
 def fix_planetary_params (p_param_dict):
+  metadata_fields = {
+    "Target Star RA", "Target Star Dec", "Planet Name", "Host Star Name",
+    "Published Mid-Transit Time Standard", "Published Mid-Transit Time Reference",
+  }
   for param in p_param_dict.keys():
-    if param == "Target Star RA" or param == "Target Star Dec" or param == "Planet Name" or param == "Host Star Name" or param == "Argument of Periastron (deg)":
+    if param in metadata_fields or param == "Argument of Periastron (deg)":
       continue
     val = p_param_dict[param]
     if val == 0.0 or np.isnan(float(val)):
@@ -480,19 +484,5 @@ def fix_planetary_params (p_param_dict):
         if p_param_dict["Host Star Name"] == "Qatar-6":
           p_param_dict[param] = 0.01
       print(f"\nIn the planetary parameters from the NASA Exoplanet Archive, \n\"{param}\" is listed as {val}.\n\n**** This might make EXOTIC crash. ****\n\nIf the parameter is *not* changed below, please edit it\nin the inits file before running EXOTIC.\n")
-  p_param_string = json.dumps(p_param_dict)
-
-  planetary_params = "\"planetary_parameters\": {\n"
-  num_done, num_total = 0, len(p_param_dict.keys())
-  for key, value in p_param_dict.items():
-    num_done += 1
-    if key == "Target Star RA" or key == "Target Star Dec" or key == "Planet Name" or key == "Host Star Name":
-      planetary_params = planetary_params + str(f"    \"{key}\": \"{value}\",\n")
-    else:
-      if num_done < num_total:
-        planetary_params = planetary_params + str(f"    \"{key}\": {value},\n")
-      else:
-        planetary_params = planetary_params + str(f"    \"{key}\": {value}\n")
-  planetary_params = planetary_params + "}"
-
-  return(planetary_params)
+  # Preserve metadata as JSON strings/nulls, including quoted HTML references.
+  return '"planetary_parameters": ' + json.dumps(p_param_dict, indent=4)

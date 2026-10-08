@@ -3105,6 +3105,9 @@ class OutputFiles:
         final_residual_note = getattr(self.fit, 'final_residual_rejection_note', None)
         if final_residual_note:
             params_num["Final residual rejection note"] = str(final_residual_note)
+        inflation_note = getattr(self.fit, 'final_fit_uncertainty_inflation_note', None)
+        if inflation_note:
+            params_num["Final-fit uncertainty inflation"] = str(inflation_note)
         if np.isfinite(qc_residual_scatter):
             params_num["Residual scatter around full model fit"] = f"{qc_residual_scatter * 100.0:.4f} %"
         params_num.update(format_fit_quality_final_params(fit_quality))

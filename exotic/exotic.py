@@ -6336,6 +6336,10 @@ def refit_selected_fast_comparison_on_full_lightcurve(
         base_filter_diagnostics.extend(residual_rejection_diagnostics)
     annotate_lightcurve_filter_diagnostics(fit, base_filter_diagnostics)
     annotate_final_residual_rejection(fit, residual_rejection_payload)
+    fit.final_fit_uncertainty_inflation = uncertainty_inflation
+    fit.final_fit_uncertainty_inflation_note = (
+        uncertainty_inflation.get('note') if isinstance(uncertainty_inflation, dict) else None
+    )
     selected_debug = getattr(previous_fit, 'selected_photometry_debug', None)
     if selected_debug is not None:
         fit.selected_photometry_debug = copy.deepcopy(selected_debug)

@@ -365,6 +365,12 @@ ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
 ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT = True
 ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED = False
+# Inflate the final light curve's per-point uncertainties so an LM fit's residuals give reduced chi2 = 1 before the
+# final UltraNest posterior (EXOTIC 1.0 behaviour; never deflated). The photon/read/dark budget omits scintillation,
+# comparison-star and flat-field noise, so on bright stars the residuals scatter ~2x the budget and the Tmid posterior
+# is ~2x too narrow (rzellem/EXOTIC#1417).
+FINAL_FIT_UNCERTAINTY_INFLATION_DEFAULT = True
+FINAL_FIT_UNCERTAINTY_INFLATION_ENABLED = FINAL_FIT_UNCERTAINTY_INFLATION_DEFAULT
 ULTRANEST_LM_BOUNDARY_SCOUT_MAX_ITERATIONS = 4
 ULTRANEST_LM_BOUNDARY_SCOUT_SIGMA_MARGIN = 4.0
 ULTRANEST_LM_BOUNDARY_SCOUT_EDGE_FRACTION = 0.15
@@ -5989,6 +5995,24 @@ def refit_selected_fast_comparison_on_full_lightcurve(
                 f"{int(times.size)}-point high-live-point posterior."
             )
 
+    uncertainty_inflation = None
+    if FINAL_FIT_UNCERTAINTY_INFLATION_ENABLED:
+        fit_unc, uncertainty_inflation = inflate_uncertainties_to_unit_reduced_chi2(
+            times,
+            fit_flux,
+            fit_unc,
+            airmass,
+            prior,
+            bounds,
+            jd_times=jd_times,
+            exposure_times_seconds=exposure_times,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+            fixed_parameter_errors=fixed_errors,
+            fixed_flux_baseline=True,
+        )
+        log_info(f"Final-fit uncertainty inflation: {uncertainty_inflation['note']}")
+
     base_live_points, target_live_points = selected_final_live_point_target(
         sparse_live_point_extension_enabled,
     )
@@ -10549,6 +10573,108 @@ def configure_lm_boundary_scout_before_ultranest(config_value):
     global ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
     ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED = should_use_lm_boundary_scout_before_ultranest(config_value)
     return ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
+
+
+def should_inflate_final_fit_uncertainties(config_value):
+    return parse_bool_config_value(
+        config_value,
+        FINAL_FIT_UNCERTAINTY_INFLATION_DEFAULT,
+        'inflate_uncertainties_to_unit_reduced_chi2',
+    )
+
+
+def configure_final_fit_uncertainty_inflation(config_value):
+    global FINAL_FIT_UNCERTAINTY_INFLATION_ENABLED
+    FINAL_FIT_UNCERTAINTY_INFLATION_ENABLED = should_inflate_final_fit_uncertainties(config_value)
+    return FINAL_FIT_UNCERTAINTY_INFLATION_ENABLED
+
+
+def inflate_uncertainties_to_unit_reduced_chi2(
+    times,
+    flux_values,
+    flux_errors,
+    airmass,
+    prior,
+    bounds,
+    *,
+    jd_times=None,
+    exposure_times_seconds=None,
+    use_impactparameter_rather_than_inclination_to_fit=True,
+    fixed_parameter_errors=None,
+    fixed_flux_baseline=False,
+):
+    """Scale per-point uncertainties so an LM fit's residuals give reduced chi2 = 1.
+
+    Uncertainties are only ever inflated, never deflated. A uniform scale leaves the best-fit
+    model unchanged; it widens the posterior to match the scatter the data actually show.
+    Returns (uncertainties, summary); on any failure the input uncertainties come back unchanged.
+    """
+    flux_errors = np.asarray(flux_errors, dtype=float)
+    summary = {
+        'enabled': True,
+        'applied': False,
+        'factor': 1.0,
+        'reduced_chi2': np.nan,
+        'note': 'Per-point uncertainties not inflated.',
+    }
+    times = np.asarray(times, dtype=float)
+    flux_values = np.asarray(flux_values, dtype=float)
+    airmass = np.asarray(airmass, dtype=float)
+    if not (times.shape == flux_values.shape == flux_errors.shape == airmass.shape):
+        summary['note'] = 'Skipped uncertainty inflation; light-curve arrays were not aligned.'
+        return flux_errors, summary
+    fit_kwargs = {
+        'jd_times': jd_times,
+        'mode': 'lm',
+        'use_impactparameter_rather_than_inclination_to_fit':
+        use_impactparameter_rather_than_inclination_to_fit,
+    }
+    add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, exposure_times_seconds)
+    if fixed_parameter_errors and callable_accepts_keyword(lc_fitter, 'fixed_parameter_errors'):
+        fit_kwargs['fixed_parameter_errors'] = dict(fixed_parameter_errors)
+    if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
+        fit_kwargs['fixed_flux_baseline'] = True
+    try:
+        lm_fit = lc_fitter(
+            times,
+            flux_values,
+            flux_errors,
+            airmass,
+            dict(prior),
+            clone_lightcurve_bounds(bounds),
+            **fit_kwargs,
+        )
+        residuals = np.asarray(lm_fit.residuals, dtype=float)
+    except Exception as exc:
+        summary['note'] = (
+            f"Skipped uncertainty inflation; the LM fit failed ({type(exc).__name__}: {exc})."
+        )
+        return flux_errors, summary
+    usable = np.isfinite(residuals) & np.isfinite(flux_errors) & (flux_errors > 0)
+    free_parameter_count = len(bounds)
+    dof = int(np.count_nonzero(usable)) - free_parameter_count
+    if residuals.shape != flux_errors.shape or dof <= 0:
+        summary['note'] = 'Skipped uncertainty inflation; too few usable points for the LM fit.'
+        return flux_errors, summary
+    reduced_chi2 = float(np.sum((residuals[usable] / flux_errors[usable]) ** 2) / dof)
+    summary['reduced_chi2'] = reduced_chi2
+    if not np.isfinite(reduced_chi2) or reduced_chi2 <= 1.0:
+        summary['note'] = (
+            f"Per-point uncertainties kept: LM reduced chi2 {reduced_chi2:.3f} <= 1 "
+            "(uncertainties are never deflated)."
+        )
+        return flux_errors, summary
+    factor = float(np.sqrt(reduced_chi2))
+    summary.update({
+        'applied': True,
+        'factor': factor,
+        'note': (
+            f"Inflated per-point uncertainties by x{factor:.3f} so the LM residuals give reduced "
+            f"chi2 = 1 (was {reduced_chi2:.3f}, {int(np.count_nonzero(usable))} points, "
+            f"{free_parameter_count} free parameters)."
+        ),
+    })
+    return flux_errors * factor, summary
 
 
 def should_pick_comparison_by_eebls_snr(config_value):
@@ -35512,6 +35638,16 @@ def _main_impl():
                 'use_lm_boundary_scout_before_ultranest',
                 ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT,
             )
+        )
+        inflate_final_fit_uncertainties = configure_final_fit_uncertainty_inflation(
+            exotic_infoDict.get(
+                'inflate_uncertainties_to_unit_reduced_chi2',
+                FINAL_FIT_UNCERTAINTY_INFLATION_DEFAULT,
+            )
+        )
+        log_info(
+            "Final-fit uncertainty inflation to reduced chi2 = 1: "
+            f"{'enabled' if inflate_final_fit_uncertainties else 'disabled'}."
         )
         ultranest_min_num_live_points = configure_ultranest_min_num_live_points(
             exotic_infoDict.get(

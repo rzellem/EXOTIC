@@ -5368,6 +5368,36 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     fit_prior = dict(prior)
     fit_bounds = clone_lightcurve_bounds(bounds)
     ensure_pre_final_ultranest_baseline_bounds(fit_prior, fit_bounds, fit_flux, fit_a2=True)
+    # Per-candidate inflation: KTMF, Delta BIC and the chi2 terms scale as 1/uncertainty^2, so a comparison whose noise
+    # the photon budget understates would otherwise score better than it is. Each candidate gets its own factor.
+    candidate_uncertainty_inflation = None
+    if FINAL_FIT_UNCERTAINTY_INFLATION_ENABLED:
+        inflated_unc, candidate_uncertainty_inflation = inflate_uncertainties_to_unit_reduced_chi2(
+            fit_times,
+            fit_flux,
+            fit_unc,
+            fit_airmass,
+            fit_prior,
+            fit_bounds,
+            jd_times=fit_jd_times,
+            exposure_times_seconds=fit_exposure_times,
+            use_impactparameter_rather_than_inclination_to_fit=
+            use_impactparameter_rather_than_inclination_to_fit,
+        )
+        if candidate_uncertainty_inflation.get('applied'):
+            factor = float(candidate_uncertainty_inflation['factor'])
+            fit_unc = inflated_unc
+            if not fast_binning.get('applied'):
+                # The unbinned series is also the one the residual-rejection refits and the outputs reuse, so it has
+                # to carry the same factor. A binned candidate is inflated again on full resolution by the selected
+                # refit, which computes its own factor.
+                good_unc = np.asarray(good_unc, dtype=float) * factor
+                full_good_unc = np.asarray(full_good_unc, dtype=float) * factor
+        log_info(
+            f"Comparison-candidate uncertainty inflation"
+            f"{' (binned fast-fit series)' if fast_binning.get('applied') else ''}: "
+            f"{candidate_uncertainty_inflation['note']}"
+        )
     pre_ultranest_coverage_assessment = build_expected_transit_coverage_assessment(
         full_good_times,
         prior,
@@ -5407,6 +5437,9 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     if final_fit is None:
         result['failure_reason'] = "the full comparison-candidate reduction did not converge."
         return result
+    if candidate_uncertainty_inflation is not None and not fast_binning.get('applied'):
+        final_fit.final_fit_uncertainty_inflation = candidate_uncertainty_inflation
+        final_fit.final_fit_uncertainty_inflation_note = candidate_uncertainty_inflation.get('note')
 
     final_fit_times = np.asarray(getattr(final_fit, 'time', good_times), dtype=float)
     if not fast_binning.get('applied') and (

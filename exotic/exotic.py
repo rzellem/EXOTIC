@@ -5437,9 +5437,6 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
     if final_fit is None:
         result['failure_reason'] = "the full comparison-candidate reduction did not converge."
         return result
-    if candidate_uncertainty_inflation is not None and not fast_binning.get('applied'):
-        final_fit.final_fit_uncertainty_inflation = candidate_uncertainty_inflation
-        final_fit.final_fit_uncertainty_inflation_note = candidate_uncertainty_inflation.get('note')
 
     final_fit_times = np.asarray(getattr(final_fit, 'time', good_times), dtype=float)
     if not fast_binning.get('applied') and (
@@ -5655,6 +5652,10 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         phase_clip_keep_mask_on_sigma_filtered=debug_phase_clip_keep_mask,
     )
 
+    if candidate_uncertainty_inflation is not None and not fast_binning.get('applied'):
+        # Set here, after any residual-rejection refit has replaced final_fit, so the note reaches FinalParams.
+        final_fit.final_fit_uncertainty_inflation = candidate_uncertainty_inflation
+        final_fit.final_fit_uncertainty_inflation_note = candidate_uncertainty_inflation.get('note')
     data_highres, duration_samples = estimate_transit_duration_samples_from_fit(final_fit)
     result.update({
         'applied': True,

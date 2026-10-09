@@ -4851,6 +4851,11 @@ class lc_fitter(object):
         axs[0].set_ylabel("Relative Flux", fontsize=14)
         axs[0].grid(True, ls='--')
 
+        from exotic.posterior import (
+            fit_posterior_summary, fit_posterior_sample_values,
+            summarize_posterior, format_posterior_interval,
+        )
+
         rprs2 = self.parameters['rprs'] ** 2
         rprs_error_for_depth = self._combined_rprs_uncertainty_for_reporting()
         rprs2err = 2 * self.parameters['rprs'] * rprs_error_for_depth
@@ -4881,6 +4886,16 @@ class lc_fitter(object):
                 lclabel1 += "\n" + r"$\pm$ %s (Data-based estimate)" % rprs2err_text
             else:
                 lclabel1 += "\nData-based estimate unavailable"
+        else:
+            # The displayed quantity is squared radius ratio. Transform each
+            # posterior draw before summarising, retaining its actual weight.
+            posterior_values, posterior_weights, _ = fit_posterior_sample_values(self)
+            if 'rprs' in posterior_values:
+                depth_summary = summarize_posterior(posterior_values['rprs'] ** 2, posterior_weights)
+                if depth_summary is not None:
+                    lclabel1 = r"$(R_{p}/R_{s})^{2}$ = " + format_posterior_interval(
+                        depth_summary, include_probability=False, mathtext=True,
+                    )
 
         tmid_error_for_plot = self._model_data_uncertainty_for_reporting('tmid')
         if not np.isfinite(tmid_error_for_plot):
@@ -4889,14 +4904,16 @@ class lc_fitter(object):
             self.parameters['tmid'],
             tmid_error_for_plot,
         )
-        lclabel2 = r"$T_{mid}$ = %s $\pm$ %s BJD$_{TDB}$" % (
+        lclabel2 = r"$T_{mid}$ = $%s^{+%s}_{-%s}$ BJD$_{TDB}$" % (
             tmid_text,
             tmid_error_text,
+            tmid_error_text,
         )
-        from exotic.posterior import fit_posterior_summary, format_posterior_interval
         tmid_summary = fit_posterior_summary(self, 'tmid')
         if tmid_summary is not None:
-            lclabel2 = r"$T_{mid}$ = " + format_posterior_interval(tmid_summary, 'BJD_TDB')
+            lclabel2 = r"$T_{mid}$ = " + format_posterior_interval(
+                tmid_summary, r'BJD$_{TDB}$', include_probability=False, mathtext=True,
+            )
 
         lclabel = lclabel1 + "\n" + lclabel2
         if show_flux_baseline_label and 'a0' in self.parameters:

@@ -564,6 +564,57 @@ def test_plot_bestfit_can_hide_flux_baseline_label(monkeypatch, tmp_path):
     plt.close(fig)
 
 
+@pytest.mark.parametrize('phase', [True, False])
+@pytest.mark.parametrize('with_posterior', [True, False])
+def test_bestfit_legend_stacks_timing_and_reports_weighted_depth_interval(
+    monkeypatch, tmp_path, phase, with_posterior,
+):
+    from exotic.posterior import summarize_posterior, format_posterior_interval
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-.03, .03, 61)
+    fit = elca.lc_fitter(
+        time, elca.transit(time, prior), np.full_like(time, .001),
+        np.zeros_like(time), prior.copy(),
+        {'rprs': [.08, .12], 'tmid': [-.005, .005]}, mode='lm', verbose=False,
+    )
+    if with_posterior:
+        radius_draws = np.array([.08, .10, .12, .16, .90])
+        weights = np.array([1., 4., 2., 1., 0.])
+        fit.sampled_keys = ['rprs', 'tmid']
+        fit.results = {'weighted_samples': {
+            'points': np.column_stack([radius_draws, np.linspace(-.001, .002, 5)]),
+            'weights': weights,
+        }}
+        fit.posterior_summaries = {'tmid': {
+            'median': 0., 'error_minus': .00077, 'error_plus': .00066,
+        }}
+    original_parameters, original_errors = dict(fit.parameters), dict(fit.errors)
+    fig, axes = fit.plot_bestfit(phase=phase, show_flux_baseline_label=False)
+    try:
+        text = '\n'.join(item.get_text() for item in axes[0].get_legend().get_texts())
+        assert 'CrI' not in text and '68%' not in text
+        depth_line, timing_line = text.splitlines()
+        assert '^{+' in timing_line and '}_{-' in timing_line
+        assert 'BJD$_{TDB}$' in timing_line
+        if with_posterior:
+            expected_depth = summarize_posterior(radius_draws ** 2, weights)
+            assert depth_line == r'$(R_{p}/R_{s})^{2}$ = ' + format_posterior_interval(
+                expected_depth, include_probability=False, mathtext=True,
+            )
+            assert '^{+0.00066}_{-0.00077}' in timing_line
+            assert expected_depth['error_plus'] != pytest.approx(expected_depth['error_minus'])
+            assert expected_depth['upper'] < .16 ** 2
+        else:
+            assert r'\pm' in depth_line
+        # Exercise MathText layout, including superscript/subscript font sizing.
+        fig.canvas.draw()
+        assert fit.parameters == original_parameters
+        assert fit.errors == original_errors
+    finally:
+        plt.close(fig)
+
+
 def test_format_value_error_for_plot_preserves_two_sigfig_uncertainty_places(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
 

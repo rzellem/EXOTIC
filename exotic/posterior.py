@@ -79,14 +79,20 @@ def summarize_posterior(values, weights=None):
     }
 
 
-def format_posterior_interval(summary, unit='', include_limit=None, include_probability=True):
-    """Format a median and asymmetric interval; optionally show a 95% limit."""
+def format_posterior_interval(summary, unit='', include_limit=None, include_probability=True,
+                              mathtext=False):
+    """Format a median and interval, with optional stacked plot uncertainties."""
     error = max(summary['error_minus'], summary['error_plus'])
     digits = max(0, 1 - int(np.floor(np.log10(error)))) if error > 0 else 6
     median = summary['median']
     # Retain precision when an error is smaller than the displayed unit.
-    text = (f"{median:.{digits}f} -{summary['error_minus']:.{digits}f}"
-            f"/+{summary['error_plus']:.{digits}f}")
+    if mathtext:
+        text = (f"${median:.{digits}f}"
+                f"^{{+{summary['error_plus']:.{digits}f}}}"
+                f"_{{-{summary['error_minus']:.{digits}f}}}$")
+    else:
+        text = (f"{median:.{digits}f} -{summary['error_minus']:.{digits}f}"
+                f"/+{summary['error_plus']:.{digits}f}")
     if unit:
         text += f" {unit}"
     if include_probability:

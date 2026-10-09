@@ -88,6 +88,14 @@ def test_plot_titles_can_omit_repeated_confidence_labels():
     assert 'CrI' in format_posterior_interval(summary)
 
 
+def test_mathtext_interval_stacks_upper_and_lower_errors_without_probability_label():
+    summary = {'median': 2457495.79043, 'error_minus': .00077, 'error_plus': .00066}
+    text = format_posterior_interval(
+        summary, r'BJD$_{TDB}$', include_probability=False, mathtext=True,
+    )
+    assert text == r'$2457495.79043^{+0.00066}_{-0.00077}$ BJD$_{TDB}$'
+
+
 def test_adaptive_bins_maximize_the_documented_weighted_objective():
     from scipy.special import gammaln
     from exotic.posterior import posterior_distribution_estimates

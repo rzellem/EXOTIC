@@ -328,6 +328,7 @@ class Inputs:
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,
             'use_lm_boundary_scout_before_ultranest': 'y',
+            'inflate_uncertainties_to_unit_reduced_chi2': 'y',
             'rprs_search_bound_max': 0.5,
             'restrict_rprs_range': 'y',
             'restrict_rprs_range_percentage': 10.0,
@@ -836,6 +837,11 @@ class Inputs:
                 'use_lm_boundary_scout_before_ultranest',
                 'Use LM Boundary Scout Before UltraNest? (y/n)',
                 'use lm boundary scout before ultranest',
+            ),
+            'inflate_uncertainties_to_unit_reduced_chi2': (
+                'inflate_uncertainties_to_unit_reduced_chi2',
+                'Inflate Uncertainties to Unit Reduced Chi2? (y/n)',
+                'inflate uncertainties to unit reduced chi2',
             ),
             'rprs_search_bound_max': (
                 'rprs_search_bound_max',

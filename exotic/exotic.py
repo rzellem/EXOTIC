@@ -24618,6 +24618,129 @@ def stellar_variability_raw_photometry(lc_fit):
     return target_flux, comp_flux, target_flux_error, comp_flux_error
 
 
+def stellar_variability_magnitude_outlier_mask(times, magnitudes, magnitude_errors=None,
+                                               sigma=3.0, window=21):
+    """Iteratively clip local magnitude residuals without flattening variability.
+
+    A leave-one-out median pairwise slope and median intercept keep an isolated
+    spike out of its own baseline. MAD measures the scatter about that local
+    line. Independent measurement errors supply the noise scale for flat or
+    heteroscedastic series; catalogue zero-point errors must not be included.
+    """
+    times = np.asarray(times, dtype=float)
+    magnitudes = np.asarray(magnitudes, dtype=float)
+    rejected = ~np.isfinite(times) | ~np.isfinite(magnitudes)
+    indices = np.flatnonzero(~rejected)
+    indices = indices[np.argsort(times[indices], kind='stable')]
+    errors = np.full(magnitudes.shape, np.nan, dtype=float)
+    if magnitude_errors is not None:
+        supplied_errors = np.asarray(magnitude_errors, dtype=float)
+        if supplied_errors.shape == errors.shape:
+            errors = supplied_errors
+
+    # Use the same five-cadence gap separation as the existing time clip.
+    gaps = np.diff(times[indices])
+    positive_gaps = gaps[gaps > 0]
+    boundaries = (
+        np.flatnonzero(gaps > 5.0 * np.median(positive_gaps)) + 1
+        if positive_gaps.size else np.array([], dtype=int)
+    )
+    for segment in np.split(indices, boundaries):
+        while True:
+            active = segment[~rejected[segment]]
+            # Five neighbours support a robust local slope/scatter estimate.
+            if active.size < 6:
+                break
+            # Curvature can depart from a local line without being an isolated
+            # spike. Also require a significant departure from interpolation
+            # between the immediate neighbours (extrapolation at the ends).
+            innovations = np.zeros(active.size, dtype=float)
+            for position, index in enumerate(active):
+                left = max(0, position - 1)
+                right = min(active.size - 1, position + 1)
+                if position == 0:
+                    left, right = 1, 2
+                elif position == active.size - 1:
+                    left, right = active.size - 3, active.size - 2
+                left, right = active[left], active[right]
+                span = times[right] - times[left]
+                fraction = (times[index] - times[left]) / span if span != 0 else 0.5
+                predicted = magnitudes[left] + fraction * (magnitudes[right] - magnitudes[left])
+                innovations[position] = magnitudes[index] - predicted
+            innovation_center = np.median(innovations)
+            innovation_scatter = 1.4826 * np.median(np.abs(innovations - innovation_center))
+            newly_rejected = []
+            for position, index in enumerate(active):
+                start = max(0, min(position - window // 2, active.size - window))
+                neighbours = active[start:start + window]
+                neighbours = neighbours[neighbours != index]
+                x = times[neighbours] - times[index]
+                y = magnitudes[neighbours]
+                first, second = np.triu_indices(neighbours.size, k=1)
+                delta_time = x[second] - x[first]
+                distinct = delta_time != 0
+                slope = (
+                    np.median((y[second][distinct] - y[first][distinct]) / delta_time[distinct])
+                    if np.any(distinct) else 0.0
+                )
+                intercept = np.median(y - slope * x)
+                residuals = y - (intercept + slope * x)
+                scatter = 1.4826 * np.median(np.abs(residuals - np.median(residuals)))
+                local_errors = errors[neighbours]
+                local_errors = local_errors[np.isfinite(local_errors) & (local_errors > 0)]
+                if local_errors.size:
+                    scatter = max(scatter, float(np.median(local_errors)))
+                if np.isfinite(errors[index]) and errors[index] > 0:
+                    scatter = max(scatter, float(errors[index]))
+                roundoff = 32.0 * np.finfo(float).eps * max(1.0, abs(intercept))
+                if (
+                    abs(magnitudes[index] - intercept) > max(float(sigma) * scatter, roundoff)
+                    and abs(innovations[position] - innovation_center)
+                    > max(float(sigma) * max(scatter, innovation_scatter), roundoff)
+                ):
+                    newly_rejected.append(index)
+            if not newly_rejected:
+                break
+            rejected[newly_rejected] = True
+    return rejected
+
+
+def clip_stellar_variability_magnitude_rows(vsp_params, lc_fit, save, target_name,
+                                           observation_date=None):
+    """Use one retained row set for the calibrated plot, CSV and AID report."""
+    times = np.array([row['time'] for row in vsp_params], dtype=float)
+    magnitudes = np.array([row['mag'] for row in vsp_params], dtype=float)
+    errors = np.array([row.get('differential_mag_err', np.nan) for row in vsp_params], dtype=float)
+    rejected = stellar_variability_magnitude_outlier_mask(times, magnitudes, errors)
+    diagnostic = build_time_rejection_diagnostic(
+        'Stellar-variability magnitude sigma clip', times, ~rejected,
+        note='Iterative 3-sigma clipping about a robust local linear magnitude trend, split at acquisition gaps.',
+    )
+    if diagnostic is not None:
+        diagnostics = list(getattr(lc_fit, 'frame_filter_diagnostics', []) or [])
+        diagnostics.append(diagnostic)
+        lc_fit.frame_filter_diagnostics = diagnostics
+    payload = {
+        'sigma': 3.0,
+        'diagnostic': diagnostic,
+        'rejected_rows': [row for row, reject in zip(vsp_params, rejected) if reject],
+    }
+    output_dir = Path(save)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / safe_output_filename(
+        'StellarVariabilitySigmaClip', target_name,
+        filename_date_token(observation_date) if observation_date else 'undated', extension='json',
+    )
+    with output_path.open('w', encoding='utf-8') as handle:
+        json.dump(stellar_variability_json_safe(payload), handle, indent=2, sort_keys=True)
+        handle.write('\n')
+    log_info(
+        f"Stellar-variability magnitude sigma clip rejected {np.count_nonzero(rejected)}/{len(vsp_params)} "
+        "point(s) at 3 sigma about the local trend."
+    )
+    return [row for row, reject in zip(vsp_params, rejected) if not reject]
+
+
 def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_label, save, s_name,
                                               observed_filter=None, observation_date=None):
     # Differential photometry is independent of catalogue calibration.  Emit
@@ -24784,6 +24907,9 @@ def build_stellar_variability_params_from_fit(lc_fit, comp_star, comp_pos, comp_
             'allow_high_error_catalog_reference': allow_high_error_catalog_reference,
         })
 
+    vsp_params = clip_stellar_variability_magnitude_rows(
+        vsp_params, lc_fit, save, s_name, observation_date=observation_date,
+    )
     try:
         lc_fit.stellar_variability_params = vsp_params
         lc_fit.stellar_variability_target_name = s_name
@@ -32066,6 +32192,9 @@ def build_stellar_variability_ensemble_params_from_fit(
             'ensemble_member_similarity_scores': member_similarity_scores,
         })
 
+    vsp_params = clip_stellar_variability_magnitude_rows(
+        vsp_params, lc_fit, save, s_name, observation_date=observation_date,
+    )
     try:
         lc_fit.stellar_variability_params = vsp_params
         lc_fit.stellar_variability_target_name = s_name

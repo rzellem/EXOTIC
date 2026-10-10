@@ -3167,6 +3167,103 @@ def test_calibrated_stellar_variability_ensemble_rejects_frame_missing_any_membe
     np.testing.assert_array_equal(finite_indices, [0, 1, 2, 4, 5, 6])
 
 
+@pytest.mark.parametrize('ensemble', [False, True])
+def test_stellar_variability_sigma_clip_removes_spikes_from_calibrated_products(
+        ensemble, monkeypatch, tmp_path):
+    # Like the reported plot: a short first segment, a gap, then a longer one.
+    times = 2457495.7 + np.r_[np.arange(18) * 0.003, 0.115 + np.arange(42) * 0.002]
+    magnitudes = 12.3 + 0.1 * (times - times[0]) + 0.002 * np.sin(np.arange(60))
+    spike_indices = [6, 44]
+    magnitudes[spike_indices] += [0.9, 3.6]
+    flux = 10000.0 * 10 ** (-0.4 * (magnitudes - 12.0))
+    fit = types.SimpleNamespace(
+        time=times, jd_times=times - 0.005, data=flux / 10000.0,
+        dataerr=flux / 10000.0 * 0.002, airmass=np.linspace(1.1, 1.8, 60),
+        transit=np.ones(60), airmass_model=np.ones(60),
+        stellar_variability_target_flux=flux,
+        stellar_variability_comp_flux=np.full(60, 10000.0),
+        stellar_variability_target_flux_error=flux * 0.002,
+        stellar_variability_comp_flux_error=np.full(60, 10.0),
+    )
+    captured = {}
+    monkeypatch.setattr(exotic_module, 'plot_stellar_variability',
+                        lambda params, *args: captured.update(params=params))
+    if ensemble:
+        fit.stellar_variability_ensemble_magnitudes = magnitudes
+        fit.stellar_variability_ensemble_magnitude_errors = np.full(60, 0.01)
+        fit.stellar_variability_ensemble_members = [
+            {'label': 'C1', 'star': {}}, {'label': 'C2', 'star': {}},
+        ]
+        params = exotic_module.build_stellar_variability_ensemble_params_from_fit(
+            fit, tmp_path, 'TrES-3', observed_filter='CV', observation_date='2026-10-11',
+        )
+    else:
+        params = exotic_module.build_stellar_variability_params_from_fit(
+            fit, {'mag': 12.0, 'error': 0.01, 'mag_band': 'V'}, [10, 20], 'C1',
+            tmp_path, 'TrES-3', observed_filter='CV', observation_date='2026-10-11',
+        )
+    expected = np.delete(np.arange(60), spike_indices)
+    assert len(params) == 58
+    assert captured['params'] == params
+    np.testing.assert_allclose([row['time'] for row in params], times[expected])
+    np.testing.assert_allclose([row['jd_time'] for row in params], fit.jd_times[expected])
+    np.testing.assert_allclose([row['mag'] for row in params], magnitudes[expected])
+    np.testing.assert_allclose([row['airmass'] for row in params], fit.airmass[expected])
+    csv_path = exotic_module.save_stellar_variability_magnitude_csv(
+        params, tmp_path, 'TrES-3', observation_date='2026-10-11',
+    )
+    assert len(csv_path.read_text().splitlines()) == 59
+    aid_path = exotic_module.AIDOutputFiles(
+        fit, {'sName': 'TrES-3'},
+        {'save': tmp_path, 'date': '2026-10-11', 'aavso_num': 'TEST', 'filter': 'CV',
+         'camera': 'CCD', 'lat': 0.0, 'long': 0.0, 'elev': 0.0},
+        'AUID-TEST', None, params,
+    ).aavso()
+    aid_rows = [line for line in aid_path.read_text().splitlines() if line and not line.startswith('#')]
+    assert len(aid_rows) == 58
+    np.testing.assert_allclose(
+        [float(line.split(',')[1]) for line in aid_rows], fit.jd_times[expected], rtol=0, atol=1e-5,
+    )
+    rejection_path = next(tmp_path.glob('StellarVariabilitySigmaClip*.json'))
+    diagnostic = json.loads(rejection_path.read_text())
+    assert diagnostic['diagnostic']['dropped_point_count'] == 2
+    np.testing.assert_allclose(
+        [row['mag'] for row in diagnostic['rejected_rows']], magnitudes[spike_indices],
+    )
+    # Clipping does not rewrite the raw photometry used for diagnostics.
+    np.testing.assert_array_equal(fit.stellar_variability_target_flux, flux)
+
+
+def test_stellar_variability_sigma_clip_preserves_trend_gaps_and_input_order():
+    times = np.r_[np.arange(15) * 0.003, 0.2 + np.arange(45) * 0.002]
+    magnitudes = 12.0 + 2.0 * times + 0.002 * np.sin(np.arange(60))
+    magnitudes[15:] += 0.8  # Do not extrapolate a baseline across the gap.
+    order = np.random.default_rng(1).permutation(times.size)
+    rejected = exotic_module.stellar_variability_magnitude_outlier_mask(
+        times[order], magnitudes[order], np.full(60, 0.005),
+    )
+    assert not np.any(rejected)
+
+
+@pytest.mark.parametrize('count', [3, 6, 15, 60])
+def test_stellar_variability_sigma_clip_preserves_exactly_flat_series(count):
+    rejected = exotic_module.stellar_variability_magnitude_outlier_mask(
+        np.arange(count), np.full(count, 12.3), np.zeros(count),
+    )
+    assert not np.any(rejected)
+
+
+def test_stellar_variability_sigma_clip_rejects_both_directions_and_respects_noise():
+    times = np.arange(60, dtype=float)
+    magnitudes = 12.3 + 0.002 * np.sin(times)
+    magnitudes[[0, 15, 45, 59]] += [-0.8, 0.9, -3.6, 1.0]
+    errors = np.full(60, 0.005)
+    magnitudes[30] += 0.03
+    errors[30] = 0.02  # A statistically compatible noisy observation remains.
+    rejected = exotic_module.stellar_variability_magnitude_outlier_mask(times, magnitudes, errors)
+    np.testing.assert_array_equal(np.flatnonzero(rejected), [0, 15, 45, 59])
+
+
 def test_build_stellar_variability_ensemble_params_preserves_member_metadata(monkeypatch, tmp_path):
     captured = {}
     monkeypatch.setattr(

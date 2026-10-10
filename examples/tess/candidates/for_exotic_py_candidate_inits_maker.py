@@ -392,7 +392,7 @@ def display_entries(data):
         "TIC ID": ["Planet Name", "Host Star Name"], 
         "Per (days)": "Orbital Period (days)", 
         "Per_err (days)": "Orbital Period Uncertainty", 
-        "Epoch (BJD)": "Published Mid-Transit Time (BJD-UTC)", 
+        "Epoch (BJD)": "Published Mid-Transit Time",
         "Epoch_err (BJD)": "Mid-Transit Time Uncertainty", 
         "Rp/Rs": "Ratio of Planet to Stellar Radius (Rp/Rs)", 
         "Rp/Rs err": "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty", 
@@ -441,7 +441,7 @@ def print_relevant_parameters(selected_entry):
         "TIC ID": ["Planet Name", "Host Star Name"], 
         "Per (days)": "Orbital Period (days)", 
         "Per_err (days)": "Orbital Period Uncertainty", 
-        "Epoch (BJD)": "Published Mid-Transit Time (BJD-UTC)", 
+        "Epoch (BJD)": "Published Mid-Transit Time",
         "Epoch_err (BJD)": "Mid-Transit Time Uncertainty", 
         "Rp/Rs": "Ratio of Planet to Stellar Radius (Rp/Rs)", 
         "Rp/Rs err": "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty", 
@@ -485,6 +485,7 @@ def extract_host_star_name(planet_name):
     return str(planet_name).split('.')[0]
 
 def create_inits_file(parameters, file_name):
+    from exotic.timing import ephemeris_export_fields
     Teff_err = parameters.get("Teff_err (K)", [None, None])
     if not isinstance(Teff_err, list):
         Teff_err = [Teff_err, Teff_err]
@@ -510,7 +511,11 @@ def create_inits_file(parameters, file_name):
             "Host Star Name": host_star_name,
             "Orbital Period (days)": parameters["Per (days)"],
             "Orbital Period Uncertainty": parameters["Per_err (days)"],
-            "Published Mid-Transit Time (BJD-UTC)": parameters["Epoch (BJD)"],
+            **ephemeris_export_fields({
+                "midT": parameters["Epoch (BJD)"],
+                "midTStandard": parameters.get("Epoch Time Standard"),
+                "midTSource": parameters.get("Epoch Reference"),
+            }),
             "Mid-Transit Time Uncertainty": parameters["Epoch_err (BJD)"],
             "Ratio of Planet to Stellar Radius (Rp/Rs)": parameters.get("Rp/Rs"),
             "Ratio of Planet to Stellar Radius (Rp/Rs) Uncertainty": parameters.get("Rp/Rs err", 0.1),
@@ -538,6 +543,7 @@ def create_inits_file(parameters, file_name):
             "Directory of Biases": parameters.get("Directory of Biases", None),
             "AAVSO Observer Code (N/A if none)": parameters.get("AAVSO Observer Code (N/A if none)", "N/A"),
             "Secondary Observer Codes (N/A if none)": parameters.get("Secondary Observer Codes (N/A if none)", "N/A"),
+            "Observatory Full Title": parameters.get("Observatory Full Title", ""),
             "Observation date": parameters.get("Observation date", None),
             "Obs. Latitude": parameters.get("Obs. Latitude", None),
             "Obs. Longitude": parameters.get("Obs. Longitude", None),
@@ -547,14 +553,28 @@ def create_inits_file(parameters, file_name):
             "Filter Name (aavso.org/filters)": parameters.get("Filter Name (aavso.org/filters)", None),
             "Observing Notes": parameters.get("Observing Notes", "N/A"),
             "Plate Solution? (y/n)": parameters.get("Plate Solution? (y/n)", None),
-            "Align Images? (y/n)": parameters.get("Align Images? (y/n)", None),
             "Target Star X & Y Pixel": parameters.get("Target Star X & Y Pixel", None),
-            "Comparison Star(s) X & Y Pixel": parameters.get("Comparison Star(s) X & Y Pixel", None)
+            "Comparison Star(s) X & Y Pixel": parameters.get("Comparison Star(s) X & Y Pixel", None),
+            "Comparison Star(s) RA & Dec": parameters.get("Comparison Star(s) RA & Dec", None)
         },    
         "optional_info": {
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": parameters.get("Pixel Scale (Ex: 5.21 arcsecs/pixel)", None),
             "Filter Minimum Wavelength (nm)": parameters.get("Filter Minimum Wavelength (nm)", None),
-            "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None)
+            "Filter Maximum Wavelength (nm)": parameters.get("Filter Maximum Wavelength (nm)", None),
+            "disable vertical flux normalization": parameters.get("disable vertical flux normalization", False),
+            "maximum_number_of_ensemble_comparisons_for_transit": parameters.get(
+                "maximum_number_of_ensemble_comparisons_for_transit", 5
+            ),
+            "maximum_number_of_ensemble_comparisons_for_stellar_variability": parameters.get(
+                "maximum_number_of_ensemble_comparisons_for_stellar_variability", 5
+            ),
+            "require_apparent_magnitudes": parameters.get(
+                "require_apparent_magnitudes", True
+            ),
+            "use_exactly_the_comps_provided": parameters.get(
+                "use_exactly_the_comps_provided", False
+            ),
+            "require_comp_star": parameters.get("require_comp_star", "y")
         }
     }
     # Update the filename to include the planet name
@@ -669,7 +689,6 @@ if observer_info == 'y':
     filter_name = input("Enter filter name: ").strip()
     observing_notes = input("Enter observing notes (or 'N/A' if none): ").strip()
     plate_solution = input("Plate solution? (y/n): ").strip()
-    align_images = input("Align images? (y/n): ").strip()
     target_star_xy = [int(coord) for coord in input("Enter target star X & Y Pixel (comma separated): ").strip().split(',')]
     comparison_stars_xy = [
         [int(coord) for coord in star.strip().split(',')]
@@ -695,7 +714,6 @@ if observer_info == 'y':
     stored_parameters["Filter Name (aavso.org/filters)"] = filter_name
     stored_parameters["Observing Notes"] = observing_notes
     stored_parameters["Plate Solution? (y/n)"] = plate_solution
-    stored_parameters["Align Images? (y/n)"] = align_images
     stored_parameters["Target Star X & Y Pixel"] = target_star_xy
     stored_parameters["Comparison Star(s) X & Y Pixel"] = comparison_stars_xy
     stored_parameters["Pixel Scale (Ex: 5.21 arcsecs/pixel)"] = pixel_scale

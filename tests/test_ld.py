@@ -1,3 +1,5 @@
+import logging
+
 from exotic.api.ld import LimbDarkening
 
 stellar_params = {
@@ -73,7 +75,7 @@ def test_existing_standard_filter_alias_name() -> None:
 
     assert observed_filter == expected_filter
 
-def test_existing_mobs_standard_filter_name() -> None:
+def test_legacy_mobs_filter_name_maps_to_cv() -> None:
     observed_filter = {
         'filter': "MObs CV",
         'name': None,
@@ -82,17 +84,17 @@ def test_existing_mobs_standard_filter_name() -> None:
     }
 
     expected_filter = {
-        'filter': "MObs CV",
+        'filter': "CV",
         'name': 'CV',
         'wl_min': '350.0',
-        'wl_max': '850.0'
+        'wl_max': '1000.0'
     }
 
     setting_filter_values(observed_filter)
 
     assert observed_filter == expected_filter
 
-def test_custom_nonspecific_standard_filter_abbreviation_1() -> None:
+def test_cv_standard_filter_abbreviation_uses_clearv() -> None:
     observed_filter = {
         'filter': "CV",
         'name': None,
@@ -102,7 +104,13 @@ def test_custom_nonspecific_standard_filter_abbreviation_1() -> None:
 
     ld_obj = LimbDarkening(stellar_params)
 
-    assert ld_obj.check_standard(observed_filter) == False
+    assert ld_obj.check_standard(observed_filter) is True
+    assert observed_filter == {
+        'filter': "CV",
+        'name': "CV",
+        'wl_min': "350.0",
+        'wl_max': "1000.0",
+    }
 
 def test_custom_nonspecific_standard_filter_abbreviation_2() -> None:
     observed_filter = {
@@ -147,19 +155,19 @@ def test_existing_standard_filter_fwhm() -> None:
 
     assert observed_filter == expected_filter
 
-def test_existing_mobs_standard_filter_mobs() -> None:
+def test_existing_clearv_standard_filter_wavelengths() -> None:
     observed_filter = {
         'filter': None,
         'name': None,
         'wl_min': '350.0',
-        'wl_max': '850.0'
+        'wl_max': '1000.0'
     }
 
     expected_filter = {
-        'filter': "MObs CV",
+        'filter': "CV",
         'name': 'CV',
         'wl_min': '350.0',
-        'wl_max': '850.0'
+        'wl_max': '1000.0'
     }
 
     setting_filter_values(observed_filter)
@@ -190,6 +198,21 @@ def test_valid_fwhm_range_swapped_min_max() -> None:
 
     assert ld_obj.check_fwhm(observed_filter) == True
 
+def test_missing_fwhm_values_do_not_log_errors(caplog) -> None:
+    observed_filter = {
+        'filter': None,
+        'name': None,
+        'wl_min': None,
+        'wl_max': None
+    }
+
+    ld_obj = LimbDarkening(stellar_params)
+
+    with caplog.at_level(logging.ERROR, logger="exotic.api.ld"):
+        assert ld_obj.check_fwhm(observed_filter) == False
+
+    assert "FWHM matching failed" not in caplog.text
+
 def test_invalid_fwhm_range_1() -> None:
     observed_filter = {
         'filter': None,
@@ -213,3 +236,104 @@ def test_invalid_fwhm_range_2() -> None:
     ld_obj = LimbDarkening(stellar_params)
 
     assert ld_obj.check_fwhm(observed_filter) == False
+
+
+def test_photographic_filter_aliases_in_filter_column() -> None:
+    alias_cases = [
+        ("pb", "Photographic B", "PB", "391.6", "480.6"),
+        ("G", "Photographic G", "PG", "502.8", "586.8"),
+        ("pg", "Photographic G", "PG", "502.8", "586.8"),
+        ("pr", "Photographic R", "PR", "590.0", "810.0"),
+    ]
+
+    for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+        setting_filter_values(observed_filter)
+        assert observed_filter == {
+            'filter': expected_filter,
+            'name': expected_name,
+            'wl_min': expected_min,
+            'wl_max': expected_max,
+        }
+
+
+def test_cbb_filter_uses_neutral_canonical_name() -> None:
+    observed_filter = {'filter': "CBB", 'name': None, 'wl_min': None, 'wl_max': None}
+
+    setting_filter_values(observed_filter)
+
+    assert observed_filter == {
+        'filter': "CBB",
+        'name': "CBB",
+        'wl_min': "500.0",
+        'wl_max': "1000.0",
+    }
+
+
+def test_cbb_brand_names_remain_accepted_as_input_aliases() -> None:
+    for alias in ("Astrodon ExoPlanet-BB", "Astrodon-Exo", "Exop", "exo"):
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+
+        setting_filter_values(observed_filter)
+
+        assert observed_filter == {
+            'filter': "CBB",
+            'name': "CBB",
+            'wl_min': "500.0",
+            'wl_max': "1000.0",
+        }
+
+
+def test_additional_standard_filter_aliases_in_filter_column() -> None:
+    alias_cases = [
+        ("bu", "Johnson U", "U", "333.8", "398.8"),
+        ("bi", "Johnson I", "IJ", "780.0", "1020.0"),
+        ("up", "Sloan u", "SU", "321.8", "386.8"),
+        ("gp", "Sloan g", "SG", "402.5", "551.5"),
+        ("rp", "Sloan r", "SR", "553.1", "693.1"),
+        ("ip", "Sloan i", "SI", "697.5", "827.5"),
+        ("zp", "Sloan z", "SZ", "841.2", "978.2"),
+        ("su", "Stromgren u", "STU", "336.3", "367.7"),
+        ("sv", "Stromgren v", "STV", "401.5", "418.5"),
+        ("sb", "Stromgren b", "STB", "459.55", "478.05"),
+        ("sy", "Stromgren y", "STY", "536.7", "559.3"),
+        ("hb", "Stromgren Hbw", "STHBW", "481.5", "496.5"),
+        ("zs", "PanSTARRS z-short", "ZS", "826.0", "920.0"),
+        ("CV", "CV", "CV", "350.0", "1000.0"),
+        ("clearV", "CV", "CV", "350.0", "1000.0"),
+        ("w", "CV", "CV", "350.0", "1000.0"),
+        ("pl", "CV", "CV", "350.0", "1000.0"),
+        ("exo", "CBB", "CBB", "500.0", "1000.0"),
+        ("Astrodon ExoPlanet-BB", "CBB", "CBB", "500.0", "1000.0"),
+        ("Astrodon-Exo", "CBB", "CBB", "500.0", "1000.0"),
+    ]
+
+    for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+        setting_filter_values(observed_filter)
+        assert observed_filter == {
+            'filter': expected_filter,
+            'name': expected_name,
+            'wl_min': expected_min,
+            'wl_max': expected_max,
+        }
+
+
+def test_osc_split_filter_aliases_in_filter_column() -> None:
+    alias_cases = [
+        ("B1", "Photographic B", "PB", "391.6", "480.6"),
+        ("G1", "Photographic G", "PG", "502.8", "586.8"),
+        ("G2", "Photographic G", "PG", "502.8", "586.8"),
+        ("R1", "Photographic R", "PR", "590.0", "810.0"),
+        ("R2", "Photographic R", "PR", "590.0", "810.0"),
+    ]
+
+    for alias, expected_filter, expected_name, expected_min, expected_max in alias_cases:
+        observed_filter = {'filter': alias, 'name': None, 'wl_min': None, 'wl_max': None}
+        setting_filter_values(observed_filter)
+        assert observed_filter == {
+            'filter': expected_filter,
+            'name': expected_name,
+            'wl_min': expected_min,
+            'wl_max': expected_max,
+        }

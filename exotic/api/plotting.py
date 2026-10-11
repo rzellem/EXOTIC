@@ -37,12 +37,9 @@
 # ########################################################################### #
 from astropy.io import fits
 # from astroscrappy import detect_cosmics
-from bokeh.io import output_notebook
-from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LinearColorMapper, LogColorMapper, \
+from bokeh.models import BoxZoomTool, ColorBar, FreehandDrawTool, HoverTool, LogColorMapper, \
   LogTicker, PanTool, ResetTool, WheelZoomTool
-from bokeh.palettes import Viridis256
 from bokeh.plotting import figure, output_file, show
-from io import BytesIO
 import json
 import logging
 import matplotlib.pyplot as plt
@@ -483,6 +480,35 @@ def quantile(x, q, weights=None):
         cdf = np.append(0, cdf)
         return np.interp(q, cdf, x[idx]).tolist()
 
+def _contour_levels_within_surface(levels, surface_min, surface_max):
+    levels = np.asarray(levels, dtype=float)
+    levels = np.unique(levels[np.isfinite(levels)])
+    if levels.size == 0:
+        return levels
+
+    if (
+        not np.isfinite(surface_min)
+        or not np.isfinite(surface_max)
+        or surface_min >= surface_max
+    ):
+        return np.array([], dtype=float)
+
+    valid_levels = levels[(levels > surface_min) & (levels < surface_max)]
+    if valid_levels.size > 0:
+        return valid_levels
+
+    surface_span = float(surface_max - surface_min)
+    epsilon = max(
+        surface_span * 1e-9,
+        np.finfo(float).eps * max(1.0, abs(float(surface_min)), abs(float(surface_max))),
+    )
+    lower = float(surface_min) + epsilon
+    upper = float(surface_max) - epsilon
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        return np.array([0.5 * (float(surface_min) + float(surface_max))], dtype=float)
+
+    return np.unique(np.clip(levels, lower, upper))
+
 def hist2d(x, y, bins=20, range=None, levels=[2],
            ax=None, plot_datapoints=True, plot_contours=True, 
            contour_kwargs=None, contourf_kwargs=None, data_kwargs=None,
@@ -502,18 +528,40 @@ def hist2d(x, y, bins=20, range=None, levels=[2],
         if contour_kwargs is None:
             contour_kwargs = dict()
 
+        contour_levels = np.asarray(levels, dtype=float)
+        contour_levels = np.unique(contour_levels[np.isfinite(contour_levels)])
+        if contour_levels.size == 0:
+            ax.set_xlim(range[0])
+            ax.set_ylim(range[1])
+            return
+
         # mask data in range + chi2
         maskx = (x > range[0][0]) & (x < range[0][1])
         masky = (y > range[1][0]) & (y < range[1][1])
         mask = maskx & masky & (data_kwargs['c'] < data_kwargs['vmax']*1.2)
-        
+
         try: # contour
+            if np.count_nonzero(mask) < 3:
+                raise ValueError("not enough in-range samples for contour plotting")
             # approx posterior + smooth
             xg, yg = np.meshgrid( np.linspace(x[mask].min(),x[mask].max(),256), np.linspace(y[mask].min(),y[mask].max(),256) )
             cg = griddata(np.vstack([x[mask],y[mask]]).T, data_kwargs['c'][mask], (xg,yg), method='nearest', rescale=True)
             scg = gaussian_filter(cg,sigma=15)
+            cg_min = np.nanmin(cg)
+            scg_min = np.nanmin(scg)
+            if not np.isfinite(cg_min) or not np.isfinite(scg_min) or np.isclose(scg_min, 0):
+                raise ValueError("degenerate contour surface")
 
-            ax.contour(xg, yg, scg*np.nanmin(cg)/np.nanmin(scg), np.sort(levels), **contour_kwargs, vmin=data_kwargs['vmin'], vmax=data_kwargs['vmax'])        
+            contour_surface = scg * cg_min / scg_min
+            surface_min = np.nanmin(contour_surface)
+            surface_max = np.nanmax(contour_surface)
+            if not np.isfinite(surface_min) or not np.isfinite(surface_max) or np.isclose(surface_min, surface_max):
+                raise ValueError("degenerate contour surface")
+            contour_levels = _contour_levels_within_surface(contour_levels, surface_min, surface_max)
+            if contour_levels.size == 0:
+                raise ValueError("no contour levels fall within the plotted surface")
+
+            ax.contour(xg, yg, contour_surface, contour_levels, **contour_kwargs, vmin=data_kwargs['vmin'], vmax=data_kwargs['vmax'])
         except Exception as err:
             print(err)
             print("contour plotting failed")

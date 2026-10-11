@@ -35,17 +35,41 @@
 #    EXOplanet Transit Interpretation Code (EXOTIC)
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
-from astropy.io.fits import PrimaryHDU, getdata, getheader
+from astropy.io.fits import BinTableHDU, Column, Header, PrimaryHDU, getdata, getheader
+from astropy.stats import sigma_clipped_stats
 from json import dumps
 from pathlib import Path
+import numpy as np
+from photutils.detection import DAOStarFinder
 import requests
+import time
 from tenacity import retry, retry_if_exception_type, retry_if_result, \
     stop_after_attempt, wait_exponential
+
+try:
+    from .http_compression import build_compressed_json_request
+except ImportError:
+    from http_compression import build_compressed_json_request
+
+try:
+    from ..version import __version__
+except ImportError:
+    try:
+        from version import __version__
+    except ImportError:
+        __version__ = "unknown"
 
 _R_MAX_STOPS_LOW = 7
 _R_MAX_STOPS = 10
 _R_MAX_SECS = 37
 _RQ_TIMEOUT = 16.0
+_MAX_SOURCES = 200
+_NEXTASTRO_MAX_SOURCES = _MAX_SOURCES
+_NOVA_XYLIST_FILENAME = "nova_sources.xyls"
+_NEXTASTRO_STATUS_MAX_POLLS = 60
+_NEXTASTRO_STATUS_POLL_SEC = 2
+_NEXTASTRO_IN_PROGRESS_STATUSES = {'queued', 'running'}
+_NEXTASTRO_SOFTWARE_NAME = f"EXOTIC/{__version__}"
 
 
 def is_false(value):
@@ -59,40 +83,55 @@ def result_if_max_retry_count(retry_state):
 class PlateSolution:
 
     def __init__(self, file=None, directory=None, api_key=None,
-                 api_url='http://nova.astrometry.net/api/'):
+                 api_url='http://nova.astrometry.net/api/', ra=None, dec=None,
+                 pixel_scale=None, radius=2.0, scale_err=25.0, suppress_fail_warning=False):
         if api_key is None:
             api_key = {'apikey': 'vfsyxlmdxfryhprq'}
         self.api_url = api_url
         self.api_key = api_key
         self.file = file
         self.directory = directory
+        self.ra = ra
+        self.dec = dec
+        self.pixel_scale = pixel_scale
+        self.radius = radius
+        self.scale_err = scale_err
+        self.suppress_fail_warning = suppress_fail_warning
+        self.last_error_type = None
 
     def plate_solution(self):
+        self.last_error_type = None
         session = self._login()
         if not session:
-            return PlateSolution.fail('Login')
+            return self._fail('Login')
 
         sub_id = self._upload(session)
         if not sub_id:
-            return PlateSolution.fail('Upload')
+            return self._fail('Upload')
 
         sub_url = self._get_url(f"submissions/{sub_id}")
         job_id = self._sub_status(sub_url)
         if not job_id:
-            return PlateSolution.fail('Submission ID')
+            return self._fail('Submission ID')
 
         job_url = self._get_url(f"jobs/{job_id}")
         download_url = self.api_url.replace("/api/", f"/wcs_file/{job_id}/")
-        wcs_file = Path(self.directory) / "temp" / "wcs.fits"
+        wcs_file = Path(self.directory) / "working_artifacts" / "wcs.fits"
         wcs_file = self._job_status(job_url, wcs_file, download_url)
         if not wcs_file:
-            return PlateSolution.fail('Job Status')
+            return self._fail('Job Status')
         else:
             print("WCS file creation successful.")
             return wcs_file
 
     def _get_url(self, service):
         return self.api_url + service
+
+    def _fail(self, error_type, service_name='nova.astrometry.net'):
+        self.last_error_type = error_type
+        if self.suppress_fail_warning:
+            return False
+        return PlateSolution.fail(error_type, service_name=service_name)
 
     @retry(stop=stop_after_attempt(_R_MAX_STOPS_LOW), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
@@ -109,15 +148,43 @@ class PlateSolution:
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
            retry_error_callback=result_if_max_retry_count)
     def _upload(self, session):
-        files = {'file': open(self.file, 'rb')}
-        headers = {'request-json': dumps({"session": session}), 'allow_commercial_use': 'n',
-                   'allow_modifications': 'n', 'publicly_visible': 'n'}
+        request_payload = self._upload_payload(session)
 
-        r = requests.post(self.api_url + 'upload', files=files, data=headers, timeout=_RQ_TIMEOUT)
+        with open(self._upload_file(), 'rb') as upload_file:
+            files = {'file': upload_file}
+            r = requests.post(self.api_url + 'upload', files=files,
+                              data={'request-json': dumps(request_payload)}, timeout=_RQ_TIMEOUT)
 
         if r.json()['status'] == 'success':
             return r.json()['subid']
         return False
+
+    def _upload_file(self):
+        return self.file
+
+    def _upload_payload(self, session):
+        # nova reads every option, including the license and visibility flags, from
+        # inside 'request-json' (net/api.py, upload); a bare form field beside it is
+        # ignored and the submission silently defaults to publicly_visible='y'.
+        request_payload = {"session": session, "allow_commercial_use": "n",
+                           "allow_modifications": "n", "publicly_visible": "n"}
+
+        if self.ra is not None and self.dec is not None:
+            request_payload.update({
+                "center_ra": float(self.ra),
+                "center_dec": float(self.dec),
+                "radius": float(self.radius)
+            })
+
+        if self.pixel_scale not in (None, ""):
+            request_payload.update({
+                "scale_units": "arcsecperpix",
+                "scale_type": "ev",
+                "scale_est": float(self.pixel_scale),
+                "scale_err": float(self.scale_err)
+            })
+
+        return request_payload
 
     @retry(stop=stop_after_attempt(_R_MAX_STOPS), wait=wait_exponential(multiplier=1, min=4, max=_R_MAX_SECS),
            retry=(retry_if_result(is_false) | retry_if_exception_type(requests.exceptions.RequestException)),
@@ -143,7 +210,323 @@ class PlateSolution:
         return False
 
     @staticmethod
-    def fail(error_type):
-        print("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from nova.astrometry.net"
-              f" due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
+    def fail(error_type, service_name='nova.astrometry.net'):
+        print("WARNING: After multiple attempts, EXOTIC could not retrieve a plate solution from "
+              f"{service_name} due to {error_type}. EXOTIC will continue reducing data without a plate solution.")
         return False
+
+
+class _SourceListExtractor:
+    """DAOStarFinder source list from ``self.file``: the brightest _MAX_SOURCES, 0-based pixels."""
+
+    def _generate_source_list(self):
+        image_data = np.asarray(getdata(filename=self.file), dtype=float)
+        if image_data.ndim > 2:
+            image_data = image_data.squeeze()
+
+        median, _, std = sigma_clipped_stats(image_data, sigma=3.0)
+        if std <= 0:
+            std = float(np.nanstd(image_data))
+            if std <= 0:
+                return None
+
+        finder = DAOStarFinder(fwhm=3.0, threshold=3.5 * std)
+        sources = finder(image_data - median)
+
+        if sources is not None and len(sources) > 0:
+            bright_sources = self._limit_to_brightest_sources(
+                x_coords=sources['xcentroid'],
+                y_coords=sources['ycentroid'],
+                fluxes=sources['flux']
+            )
+            if bright_sources is None:
+                return None
+            return {
+                "x": bright_sources["x"],
+                "y": bright_sources["y"],
+                "flux": bright_sources["flux"],
+                "origin": "exotic",
+                "pixel_indexing": "0-based"
+            }
+
+        return self._fallback_source_list(image_data, median, std)
+
+
+    def _fallback_source_list(self, image_data, median, std):
+        threshold = median + 3.5 * std
+        candidate_indices = np.argwhere(image_data > threshold)
+        if candidate_indices.size == 0:
+            return None
+
+        candidate_fluxes = image_data[candidate_indices[:, 0], candidate_indices[:, 1]]
+        bright_sources = self._limit_to_brightest_sources(
+            x_coords=candidate_indices[:, 1],
+            y_coords=candidate_indices[:, 0],
+            fluxes=candidate_fluxes
+        )
+        if bright_sources is None:
+            return None
+
+        return {
+            "x": bright_sources["x"],
+            "y": bright_sources["y"],
+            "flux": bright_sources["flux"],
+            "origin": "exotic",
+            "pixel_indexing": "0-based"
+        }
+
+    @staticmethod
+    def _limit_to_brightest_sources(x_coords, y_coords, fluxes):
+        fluxes = np.asarray(fluxes, dtype=float)
+        x_coords = np.asarray(x_coords, dtype=float)
+        y_coords = np.asarray(y_coords, dtype=float)
+
+        finite_flux_mask = np.isfinite(fluxes)
+        if not np.any(finite_flux_mask):
+            return None
+
+        fluxes = fluxes[finite_flux_mask]
+        x_coords = x_coords[finite_flux_mask]
+        y_coords = y_coords[finite_flux_mask]
+
+        sorted_indices = np.argsort(fluxes)[::-1][:_NEXTASTRO_MAX_SOURCES]
+
+        return {
+            "x": x_coords[sorted_indices].tolist(),
+            "y": y_coords[sorted_indices].tolist(),
+            "flux": fluxes[sorted_indices].tolist()
+        }
+
+
+class NextAstroPlateSolution(_SourceListExtractor):
+
+    def __init__(self, file=None, directory=None, api_url='https://astrometry.nextastro.org/', ra=None, dec=None,
+                 pixel_scale=None, suppress_fail_warning=False, message_logger=None):
+        self.api_url = api_url.rstrip('/')
+        self.file = file
+        self.directory = directory
+        self.ra = ra
+        self.dec = dec
+        self.pixel_scale = pixel_scale
+        self.suppress_fail_warning = suppress_fail_warning
+        self.message_logger = message_logger
+        self.last_error_type = None
+        self.last_http_status = None
+
+    def plate_solution(self):
+        self.last_error_type = None
+        self.last_http_status = None
+        self._emit_debug(f"Using NextAstro astrometry server at {self.api_url} for plate solving.")
+        source_list = self._generate_source_list()
+        if not source_list:
+            return self._fail('Source extraction for NextAstro astrometry server')
+
+        request_id = self._submit_solve_request(source_list)
+        if not request_id:
+            return self._fail('NextAstro solve submission')
+
+        wcs_header = self._poll_for_solution(request_id)
+        if not wcs_header:
+            return self._fail('NextAstro solve status')
+
+        wcs_file = Path(self.directory) / "working_artifacts" / "wcs.fits"
+        hdu = PrimaryHDU(data=getdata(filename=self.file), header=wcs_header)
+        hdu.writeto(wcs_file, overwrite=True)
+        self._emit_debug("WCS file creation successful.")
+        return wcs_file
+
+    def _emit_debug(self, message):
+        if self.message_logger is not None:
+            self.message_logger(message)
+        elif not self.suppress_fail_warning:
+            print(message)
+
+    @staticmethod
+    def _json_message(payload):
+        try:
+            return dumps(payload)
+        except (TypeError, ValueError):
+            return str(payload)
+
+    def _fail(self, error_type):
+        self.last_error_type = error_type
+        if self.suppress_fail_warning:
+            return False
+        return PlateSolution.fail(error_type, service_name=f'NextAstro ({self.api_url})')
+
+    @staticmethod
+    def _response_body_preview(response, max_chars=240):
+        body = getattr(response, 'text', None)
+        if body is None:
+            content = getattr(response, 'content', b'')
+            body = content.decode(errors='replace') if isinstance(content, bytes) else str(content)
+
+        body = " ".join(str(body).split())
+        if not body:
+            return "<empty response body>"
+        if len(body) > max_chars:
+            return body[:max_chars - 3] + "..."
+        return body
+
+    def _decode_response_json(self, response, context):
+        self.last_http_status = getattr(response, 'status_code', None)
+        try:
+            return response.json()
+        except ValueError:
+            if response.status_code != 502:
+                self._emit_debug(f"[NextAstro] {context} returned non-JSON response "
+                                 f"(HTTP {response.status_code}): {self._response_body_preview(response)}")
+            return None
+
+    def _submit_solve_request(self, source_list):
+        image_data = getdata(filename=self.file)
+        payload = {
+            "sources": source_list,
+            "image": {
+                "width": int(image_data.shape[-1]),
+                "height": int(image_data.shape[-2]),
+            },
+            "options": {
+                "timeout_sec": 120,
+                "max_sources": _NEXTASTRO_MAX_SOURCES
+            }
+        }
+
+        hints = self._extract_astrometry_hints()
+        if hints is not None:
+            payload["hints"] = hints
+
+        request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(payload)
+        headers["X-NextAstro-Software"] = _NEXTASTRO_SOFTWARE_NAME
+
+        self._emit_debug(f"NextAstro astrometry request JSON: {self._json_message(payload)}")
+        self._emit_debug(
+            "NextAstro astrometry request compression: "
+            f"{content_encoding} ({compressed_size} bytes sent; {raw_size} bytes raw)"
+        )
+        response = requests.post(f"{self.api_url}/solve", data=request_body, headers=headers, timeout=_RQ_TIMEOUT)
+        response_json = self._decode_response_json(response, 'Solve response')
+        if response_json is not None and response.status_code != 502:
+            self._emit_debug(f"NextAstro astrometry submission response JSON: {self._json_message(response_json)}")
+        if response.status_code >= 400 or response_json is None:
+            return False
+        if response_json.get('status') in {'queued', 'running'}:
+            return response_json.get('request_id')
+        return False
+
+    def _extract_astrometry_hints(self):
+        hints = {}
+
+        if self.ra is not None and self.dec is not None:
+            hints.update({"ra_deg": self.ra, "dec_deg": self.dec})
+
+        if self.pixel_scale not in (None, ""):
+            hints.update({"scale_arcsec_per_pix": float(self.pixel_scale), "scale_tolerance_frac": 0.25})
+
+        if not hints:
+            return None
+
+        return hints
+
+    def _poll_for_solution(self, request_id):
+        latest_status = None
+        for _ in range(_NEXTASTRO_STATUS_MAX_POLLS):
+            response = requests.get(f"{self.api_url}/status/{request_id}", timeout=_RQ_TIMEOUT)
+            response_json = self._decode_response_json(response, 'Status response')
+            if response_json is None:
+                return False
+            if response.status_code >= 400:
+                if response.status_code != 502:
+                    self._emit_debug(
+                        f"NextAstro astrometry status response JSON (HTTP {response.status_code}): "
+                        f"{self._json_message(response_json)}"
+                    )
+                return False
+
+            status = str(response_json.get('status', '')).lower()
+            latest_status = response_json.get('status')
+            if status == 'solved':
+                self._emit_debug(
+                    f"NextAstro astrometry status response JSON (solved): {self._json_message(response_json)}"
+                )
+                header_dict = response_json.get('solution', {}).get('wcs_header')
+                if isinstance(header_dict, dict):
+                    return Header(header_dict)
+                return False
+            if status == 'failed':
+                self._emit_debug(
+                    f"NextAstro astrometry status response JSON (failed): {self._json_message(response_json)}"
+                )
+                return False
+
+            if status not in _NEXTASTRO_IN_PROGRESS_STATUSES:
+                self._emit_debug(
+                    f"NextAstro astrometry status response JSON (unexpected): {self._json_message(response_json)}"
+                )
+                return False
+
+            time.sleep(_NEXTASTRO_STATUS_POLL_SEC)
+
+        self._emit_debug(f"[NextAstro] Polling timed out waiting for terminal status; latest status={latest_status!r}")
+        return False
+
+
+class NovaSourceListPlateSolution(_SourceListExtractor, PlateSolution):
+    """Plate-solve at nova.astrometry.net from a source list instead of the image.
+
+    Builds the same DAOStarFinder list EXOTIC sends to NextAstro, writes it as a
+    FITS binary table (X, Y, FLUX) and uploads that with the frame's dimensions;
+    nova recognises an xylist by itself, no other API change. Login, submission
+    and job polling are inherited unchanged from PlateSolution, so a slow nova
+    queue hands off to the next solver at exactly the point an image upload
+    would. Pixels are written 1-based, the FITS convention nova reads: on a
+    WASP-11 frame the 1-based list put the target 0.6 px from its seed, the
+    0-based list 1.6 px. The list is ~60x smaller than the frame and no pixels
+    leave the machine.
+
+    nova has no cancel route (net/api.py: login, upload, url_upload,
+    submissions, jobs, calibration, tags, info, annotations, myjobs,
+    jobs_by_tag), so a submission we stop polling for still runs when its turn
+    comes; with a source list that is about a second of solver time. If nova
+    ever grows one, ``_sub_status`` running out of attempts is where it belongs.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.xylist_file = None
+        self.image_shape = None
+
+    def plate_solution(self):
+        self.last_error_type = None
+        if not self._write_source_list():
+            return self._fail('Source extraction')
+        return super().plate_solution()
+
+    def _write_source_list(self):
+        source_list = self._generate_source_list()
+        if not source_list:
+            return None
+        image_data = getdata(filename=self.file)
+        self.image_shape = (int(image_data.shape[-2]), int(image_data.shape[-1]))
+
+        # EXOTIC's extractor is 0-based; nova reads xylists 1-based.
+        x = np.asarray(source_list['x'], dtype=float) + 1.0
+        y = np.asarray(source_list['y'], dtype=float) + 1.0
+        flux = np.asarray(source_list['flux'], dtype=float)
+        table = BinTableHDU.from_columns([Column(name='X', format='D', array=x),
+                                          Column(name='Y', format='D', array=y),
+                                          Column(name='FLUX', format='D', array=flux)])
+
+        xylist_file = Path(self.directory) / "working_artifacts" / _NOVA_XYLIST_FILENAME
+        xylist_file.parent.mkdir(parents=True, exist_ok=True)
+        table.writeto(xylist_file, overwrite=True)
+        self.xylist_file = xylist_file
+        return xylist_file
+
+    def _upload_file(self):
+        return self.xylist_file
+
+    def _upload_payload(self, session):
+        request_payload = super()._upload_payload(session)
+        request_payload.update({"image_width": self.image_shape[1], "image_height": self.image_shape[0]})
+        return request_payload

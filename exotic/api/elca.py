@@ -4897,6 +4897,21 @@ class lc_fitter(object):
                         depth_summary, include_probability=False, mathtext=True,
                     )
 
+        from exotic.transit_depth import fit_transit_depth_summary
+
+        # Use the same geometry- and limb-darkening-aware depth as the results.
+        observable_summary = fit_transit_depth_summary(self)
+        observable_value, observable_error = format_value_error_for_plot(
+            observable_summary['observable_depth'],
+            observable_summary['observable_depth_error'],
+        )
+        observable_label = r"Depth = %s $\pm$ %s %%" % (
+            observable_value, observable_error,
+        )
+        # Keep it beside the area depth even when prior provenance adds a line.
+        first_depth_line, separator, depth_note = lclabel1.partition('\n')
+        lclabel1 = first_depth_line + '    ' + observable_label + separator + depth_note
+
         tmid_error_for_plot = self._model_data_uncertainty_for_reporting('tmid')
         if not np.isfinite(tmid_error_for_plot):
             tmid_error_for_plot = self.errors.get('tmid', 0)

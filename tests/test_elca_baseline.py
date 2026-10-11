@@ -595,11 +595,21 @@ def test_bestfit_legend_stacks_timing_and_reports_weighted_depth_interval(
         text = '\n'.join(item.get_text() for item in axes[0].get_legend().get_texts())
         assert 'CrI' not in text and '68%' not in text
         depth_line, timing_line = text.splitlines()
+        area_label, observable_label = depth_line.split('    ', 1)
+        from exotic.transit_depth import fit_transit_depth_summary
+        observable_summary = fit_transit_depth_summary(fit)
+        observable_value, observable_error = elca.format_value_error_for_plot(
+            observable_summary['observable_depth'],
+            observable_summary['observable_depth_error'],
+        )
+        assert observable_label == r'Depth = %s $\pm$ %s %%' % (
+            observable_value, observable_error,
+        )
         assert '^{+' in timing_line and '}_{-' in timing_line
         assert 'BJD$_{TDB}$' in timing_line
         if with_posterior:
             expected_depth = summarize_posterior(radius_draws ** 2, weights)
-            assert depth_line == r'$(R_{p}/R_{s})^{2}$ = ' + format_posterior_interval(
+            assert area_label == r'$(R_{p}/R_{s})^{2}$ = ' + format_posterior_interval(
                 expected_depth, include_probability=False, mathtext=True,
             )
             assert '^{+0.00066}_{-0.00077}' in timing_line
@@ -611,6 +621,36 @@ def test_bestfit_legend_stacks_timing_and_reports_weighted_depth_interval(
         fig.canvas.draw()
         assert fit.parameters == original_parameters
         assert fit.errors == original_errors
+    finally:
+        plt.close(fig)
+
+
+@pytest.mark.parametrize('prior_assumed', [True, False])
+def test_bestfit_observable_depth_uses_transit_model_and_preserves_prior_note(
+    monkeypatch, tmp_path, prior_assumed,
+):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-.03, .03, 61)
+    fit = elca.lc_fitter(
+        time, elca.transit(time, prior), np.full_like(time, .001),
+        np.zeros_like(time), prior.copy(),
+        {'rprs': [.08, .12], 'tmid': [-.005, .005]}, mode='lm', verbose=False,
+    )
+    # A model depth distinct from rprs**2 must reach the label unchanged.
+    monkeypatch.setattr(elca, 'transit', lambda times, values: np.full_like(times, .993))
+    fit.rprs_prior_fallback_applied = prior_assumed
+    fit.rprs_prior_fallback_prior_uncertainty = .002
+    fig, axes = fit.plot_bestfit(show_flux_baseline_label=False)
+    try:
+        lines = axes[0].get_legend().get_texts()[0].get_text().splitlines()
+        assert 'Depth = 0.7' in lines[0]
+        assert lines[0].index('Depth') > lines[0].index('(R_{p}/R_{s})')
+        assert lines[0].endswith('%')
+        if prior_assumed:
+            assert '(Prior)' in lines[0]
+            assert 'Data-based estimate' in lines[1]
+        fig.canvas.draw()
     finally:
         plt.close(fig)
 

@@ -178,7 +178,8 @@ def planet_dict_transit_errors(planet_dict, limb_darkening=None, fallback=None):
 
 
 def complete_transit_parameters(parameters):
-    values = planet_dict_transit_parameters(parameters)
+    # Keep fitted limb darkening and model options alongside normalized aliases.
+    values = planet_dict_transit_parameters(parameters, fallback=parameters)
     if "per" not in values and "period" in values:
         values["per"] = values["period"]
     return values

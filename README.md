@@ -249,6 +249,23 @@ For a fit with saved joint posterior draws and its original likelihood context, 
 
 When available, a source record may supply `joint_posterior: {"ecc": [...], "omega_planet_degrees": [...], "weights": [...]}`. Paired samples retain the external RV covariance; weights are optional and default to equal weights. External weights remain fixed rather than being updated by the transit. The law of total variance separates average within-orbit transit variance from between-orbit random variance, and reports their total random sigma alongside the reference-to-mixture mean shift. This is a modular external-orbit mixture, not a joint re-fit of eccentricity and periastron.
 
+### UltraNest CPU start gate
+
+By default, each UltraNest fit waits until total system CPU usage is at or below **50%** before starting. EXOTIC measures CPU usage over one second and, while above the threshold, reports the wait and checks again after five seconds. There is no wait timeout. Existing fits continue running; photometry and least-squares fitting are unaffected. CPU measurement failures are reported as errors rather than silently bypassing the gate.
+
+Configure the gate in your init JSON:
+
+```json
+"optional_info": {
+  "ultranest_cpu_gate": true,
+  "ultranest_cpu_threshold": 50
+}
+```
+
+Set `ultranest_cpu_gate` to `false` to disable it. Command-line overrides are `--ultranest-cpu-gate`, `--no-ultranest-cpu-gate`, and `--ultranest-cpu-threshold 50`. For server jobs or direct Python fitting APIs, set `EXOTIC_ULTRANEST_CPU_GATE=0` (off) or `1` (on), and `EXOTIC_ULTRANEST_CPU_THRESHOLD=50`. Precedence is command line, explicit init-file value, environment, then defaults. Thresholds may be any finite percentage from 0 through 100; setting 100 permits startup at any measured load.
+
+The gate runs before likelihood worker pools are created and covers all EXOTIC UltraNest fitters, including subsequent fit attempts and extensions. It checks current load independently in each process, so simultaneous jobs can pass together, and load can rise above the threshold after startup. This is a start gate, not a cap on running CPU usage or a fixed concurrency limit. MPI fitting APIs coordinate the decision across ranks using rank zero's host CPU usage.
+
 ## Third-Party GUI Launchers
 
 ### TransitLab

@@ -651,6 +651,25 @@ def test_observable_depth_is_separate_from_area_depth_for_grazing_geometry():
     assert observable_error > 0.0
 
 
+def test_observable_depth_retains_fitted_limb_darkening(monkeypatch):
+    from exotic import transit_depth
+
+    parameters = dict(
+        tmid=0., rprs=.12, per=3., ars=10., inc=88., ecc=0., omega=90.,
+        u0=.5, u1=.1, u2=.1, u3=.1,
+    )
+    model_parameters = []
+
+    def model(times, values):
+        model_parameters.append(dict(values))
+        return np.full_like(times, 1. - values['rprs'] ** 2 * (1. + values['u0']))
+
+    monkeypatch.setattr(transit_depth, '_load_transit_model', lambda: model)
+    depth, _ = observable_depth_percent(parameters)
+    assert depth == pytest.approx(2.16)
+    assert model_parameters == [parameters]
+
+
 def test_aavso_output_includes_observatory_location_headers(tmp_path):
     fit = DummyFit()
     fit.sampled_keys = ['tmid']

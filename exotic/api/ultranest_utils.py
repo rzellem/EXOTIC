@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 import numpy as np
+import psutil
 
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -45,6 +46,11 @@ ULTRANEST_WORKER_ENV_KEYS = (
     "NEXTASTRO_EXOTIC_ULTRANEST_WORKERS",
 )
 ULTRANEST_WORKER_BACKEND_ENV = "EXOTIC_ULTRANEST_WORKER_BACKEND"
+ULTRANEST_CPU_GATE_ENV = "EXOTIC_ULTRANEST_CPU_GATE"
+ULTRANEST_CPU_THRESHOLD_ENV = "EXOTIC_ULTRANEST_CPU_THRESHOLD"
+DEFAULT_CPU_THRESHOLD_PERCENT = 50.0
+CPU_SAMPLE_SECONDS = 1.0
+CPU_GATE_POLL_SECONDS = 5.0
 BYTES_PER_GIB = 1024 ** 3
 MIN_AUTO_POINTS_PER_WORKER = 8
 MEDIUM_AUTO_POINTS_PER_WORKER = 16
@@ -63,6 +69,78 @@ def _is_enabled(value):
 
 def _is_disabled(value):
     return str(value).strip().lower() in _FALSEY
+
+
+def _cpu_gate_settings():
+    enabled_value = os.environ.get(ULTRANEST_CPU_GATE_ENV, "1").strip().lower()
+    if enabled_value in _FALSEY:
+        return False, DEFAULT_CPU_THRESHOLD_PERCENT
+    if enabled_value not in _TRUTHY | {"y"}:
+        raise ValueError(f"{ULTRANEST_CPU_GATE_ENV} must be an on/off boolean.")
+    try:
+        threshold = float(os.environ.get(
+            ULTRANEST_CPU_THRESHOLD_ENV, DEFAULT_CPU_THRESHOLD_PERCENT,
+        ))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{ULTRANEST_CPU_THRESHOLD_ENV} must be a CPU percentage (0-100).") from exc
+    if not math.isfinite(threshold) or not 0 <= threshold <= 100:
+        raise ValueError(f"{ULTRANEST_CPU_THRESHOLD_ENV} must be a CPU percentage (0-100).")
+    return True, threshold
+
+
+def configure_ultranest_cpu_gate(enabled=None, threshold=None):
+    """Apply explicit settings; omitted values inherit environment/defaults."""
+    if enabled is not None:
+        os.environ[ULTRANEST_CPU_GATE_ENV] = str(enabled)
+    if threshold is not None:
+        os.environ[ULTRANEST_CPU_THRESHOLD_ENV] = str(threshold)
+    return _cpu_gate_settings()
+
+
+def _wait_for_cpu_capacity(verbose=True, stream=None):
+    enabled, threshold = _cpu_gate_settings()
+    if not enabled:
+        return
+    output_stream = stream if stream is not None else sys.stdout
+    waited = False
+    while True:
+        # A blocking sample avoids psutil's meaningless first nonblocking 0%.
+        cpu_percent = psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)
+        if not math.isfinite(cpu_percent) or not 0 <= cpu_percent <= 100:
+            raise RuntimeError(f"Cannot measure system CPU usage: {cpu_percent!r}.")
+        if cpu_percent <= threshold:
+            if verbose and waited:
+                print(
+                    f"[ultranest] CPU gate ready: system CPU {cpu_percent:.1f}% "
+                    f"<= {threshold:g}%; starting fit.",
+                    file=output_stream, flush=True,
+                )
+            return
+        waited = True
+        if verbose:
+            print(
+                f"[ultranest] Waiting for CPU capacity: system CPU {cpu_percent:.1f}% "
+                f"> {threshold:g}%; checking again in {CPU_GATE_POLL_SECONDS:g}s.",
+                file=output_stream, flush=True,
+            )
+        time.sleep(CPU_GATE_POLL_SECONDS)
+
+
+def _wait_for_sampler_cpu_capacity(sampler, verbose=True, stream=None):
+    if not getattr(sampler, "use_mpi", False):
+        return _wait_for_cpu_capacity(verbose=verbose, stream=stream)
+    # MPI ranks must enter sampling together. Rank zero checks its host and
+    # broadcasts any measurement/configuration error so peers cannot hang.
+    error = None
+    if sampler.mpi_rank == 0:
+        try:
+            _wait_for_cpu_capacity(verbose=verbose, stream=stream)
+        except BaseException as exc:
+            sampler.comm.bcast(f"{type(exc).__name__}: {exc}", root=0)
+            raise
+    error = sampler.comm.bcast(error, root=0)
+    if error is not None:
+        raise RuntimeError(f"UltraNest CPU gate failed on MPI rank zero: {error}")
 
 
 def _is_auto_worker_count(value):
@@ -672,11 +750,13 @@ def run_reactive_sampler(
 
     Set EXOTIC_ULTRANEST_RICH_PROGRESS=1 for UltraNest's native status output.
     Use verbose=False to silence all progress updates.
+    CPU admission defaults to on at 50%; disable with EXOTIC_ULTRANEST_CPU_GATE=0.
     """
     kwargs = _apply_default_run_kwargs(run_kwargs)
     mode = "silent" if is_mpi_worker_process() else _progress_mode(verbose=verbose, stream=stream)
     output_stream = stream if stream is not None else sys.stdout
 
+    _wait_for_sampler_cpu_capacity(sampler, verbose=(mode != "silent"), stream=output_stream)
     with _parallel_vectorized_loglike(sampler) as (worker_count, worker_backend, draw_sizes):
         if draw_sizes is not None and mode != "silent":
             memory_label = "unknown RAM"

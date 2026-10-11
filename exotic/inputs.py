@@ -327,6 +327,8 @@ class Inputs:
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,
+            'ultranest_cpu_gate': None,
+            'ultranest_cpu_threshold': None,
             'use_lm_boundary_scout_before_ultranest': 'y',
             'inflate_uncertainties_to_unit_reduced_chi2': 'y',
             'rprs_search_bound_max': 0.5,
@@ -833,6 +835,8 @@ class Inputs:
                 'Run Fast UltraNest Before Final Run? (y/n)',
                 'run_fast_ultranest_before_final_run',
             ),
+            'ultranest_cpu_gate': ('ultranest_cpu_gate',),
+            'ultranest_cpu_threshold': ('ultranest_cpu_threshold',),
             'use_lm_boundary_scout_before_ultranest': (
                 'use_lm_boundary_scout_before_ultranest',
                 'Use LM Boundary Scout Before UltraNest? (y/n)',

@@ -1810,6 +1810,45 @@ def test_should_exit_at_first_qc_pass_solution_parses_values():
     assert should_exit_at_first_qc_pass_solution(True) is True
 
 
+@pytest.mark.parametrize('cli,settings,env,expected', [
+    ({}, {}, {}, (True, 50.0)),
+    ({}, {}, {'gate': '0', 'threshold': '85'}, (False, 50.0)),
+    ({}, {}, {'threshold': '65'}, (True, 65.0)),
+    ({}, {'ultranest_cpu_gate': True, 'ultranest_cpu_threshold': 75},
+     {'gate': '0', 'threshold': '85'}, (True, 75.0)),
+    ({'ultranest_cpu_gate': False}, {'ultranest_cpu_gate': True}, {}, (False, 50.0)),
+    ({'ultranest_cpu_gate': True, 'ultranest_cpu_threshold': 100},
+     {'ultranest_cpu_gate': False, 'ultranest_cpu_threshold': 20}, {}, (True, 100.0)),
+])
+def test_cpu_gate_configuration_precedence(monkeypatch, cli, settings, env, expected):
+    import exotic.exotic as exotic_module
+    from exotic.api.ultranest_utils import ULTRANEST_CPU_GATE_ENV, ULTRANEST_CPU_THRESHOLD_ENV
+
+    monkeypatch.delenv(ULTRANEST_CPU_GATE_ENV, raising=False)
+    monkeypatch.delenv(ULTRANEST_CPU_THRESHOLD_ENV, raising=False)
+    if 'gate' in env:
+        monkeypatch.setenv(ULTRANEST_CPU_GATE_ENV, env['gate'])
+    if 'threshold' in env:
+        monkeypatch.setenv(ULTRANEST_CPU_THRESHOLD_ENV, env['threshold'])
+    assert exotic_module.configure_ultranest_cpu_gate_from_inputs(
+        settings, types.SimpleNamespace(**cli),
+    ) == expected
+
+
+@pytest.mark.parametrize('options,enabled,threshold', [
+    ([], None, None),
+    (['--ultranest-cpu-gate'], True, None),
+    (['--no-ultranest-cpu-gate'], False, None),
+    (['--ultranest-cpu-threshold', '67.5'], None, 67.5),
+])
+def test_cpu_gate_cli_switches(monkeypatch, options, enabled, threshold):
+    import exotic.exotic as exotic_module
+    monkeypatch.setattr(sys, 'argv', ['exotic', '--prereduced', 'inits.json', *options])
+    args = exotic_module.parse_args()
+    assert args.ultranest_cpu_gate is enabled
+    assert args.ultranest_cpu_threshold == threshold
+
+
 def test_validate_ultranest_mpi_runtime_rejects_whole_program_mpi(monkeypatch):
     import exotic.exotic as exotic_module
 

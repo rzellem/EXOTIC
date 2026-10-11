@@ -165,12 +165,14 @@ except ImportError:  # package import
     from api import preflight as inits_preflight
 try:
     from .api.ultranest_utils import (
+        configure_ultranest_cpu_gate,
         get_mpi_status,
         suppress_inherited_tk_cleanup_in_worker,
         suppress_tk_cleanup_during_process_pool,
     )
 except ImportError:
     from api.ultranest_utils import (
+        configure_ultranest_cpu_gate,
         get_mpi_status,
         suppress_inherited_tk_cleanup_in_worker,
         suppress_tk_cleanup_during_process_pool,
@@ -10835,6 +10837,15 @@ def configure_ultranest_min_num_live_points(config_value):
     live_points = parse_ultranest_min_num_live_points(config_value)
     os.environ[ULTRANEST_MIN_NUM_LIVE_POINTS_ENV] = str(live_points)
     return live_points
+
+
+def configure_ultranest_cpu_gate_from_inputs(info_dict, args):
+    enabled = getattr(args, 'ultranest_cpu_gate', None)
+    threshold = getattr(args, 'ultranest_cpu_threshold', None)
+    return configure_ultranest_cpu_gate(
+        enabled=enabled if enabled is not None else info_dict.get('ultranest_cpu_gate'),
+        threshold=threshold if threshold is not None else info_dict.get('ultranest_cpu_threshold'),
+    )
 
 
 def parse_rprs_search_bound_max(config_value):
@@ -35438,6 +35449,13 @@ def parse_args():
                         default=None,
                         help="Use multiprocessing while evaluating candidate lightcurve fits. "
                              "Provide an integer number of processes to use.")
+    parser.add_argument('--ultranest-cpu-gate',
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="Wait for system CPU capacity before each UltraNest fit (default: on). "
+                             "Use --no-ultranest-cpu-gate to disable.")
+    parser.add_argument('--ultranest-cpu-threshold', type=float, default=None,
+                        help="Start UltraNest when system CPU usage is at or below this percentage "
+                             "(default: 50). Overrides optional_info and the environment.")
     return parser.parse_args()
 
 
@@ -35821,6 +35839,13 @@ def _main_impl():
                 'ultranest_min_num_live_points',
                 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT,
             )
+        )
+        cpu_gate_enabled, cpu_threshold = configure_ultranest_cpu_gate_from_inputs(
+            exotic_infoDict, args,
+        )
+        log_info(
+            f"UltraNest CPU gate: {'enabled' if cpu_gate_enabled else 'disabled'}"
+            + (f"; start at system CPU <= {cpu_threshold:g}%." if cpu_gate_enabled else ".")
         )
         rprs_search_bound_max = configure_rprs_search_bound_max(
             exotic_infoDict.get(

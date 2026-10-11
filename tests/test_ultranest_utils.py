@@ -23,6 +23,14 @@ _MPI_ENV_KEYS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _cpu_gate_without_host_load(monkeypatch):
+    # These tests exercise sampling/progress, independently of live host load.
+    monkeypatch.delenv(ultranest_utils.ULTRANEST_CPU_GATE_ENV, raising=False)
+    monkeypatch.delenv(ultranest_utils.ULTRANEST_CPU_THRESHOLD_ENV, raising=False)
+    monkeypatch.setattr(ultranest_utils.psutil, 'cpu_percent', lambda **kwargs: 0.0)
+
+
 class _FakeStream(io.StringIO):
     def __init__(self, tty):
         super().__init__()

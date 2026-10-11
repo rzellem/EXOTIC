@@ -1219,6 +1219,22 @@ def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
     assert inputs.info_dict["ultranest_min_num_live_points"] == 275
 
 
+@pytest.mark.parametrize('settings', [
+    {},
+    {'ultranest_cpu_gate': False, 'ultranest_cpu_threshold': 80},
+    {'ultranest_cpu_gate': True, 'ultranest_cpu_threshold': 50},
+])
+def test_comp_params_reads_cpu_gate_optional_info_without_overriding_environment(tmp_path, settings):
+    init_file = tmp_path / 'inits.json'
+    init_file.write_text(json.dumps({
+        'user_info': {}, 'optional_info': settings, 'planetary_parameters': {},
+    }))
+    inputs = Inputs(init_opt='y')
+    inputs.comp_params(init_file, {})
+    assert inputs.info_dict['ultranest_cpu_gate'] == settings.get('ultranest_cpu_gate')
+    assert inputs.info_dict['ultranest_cpu_threshold'] == settings.get('ultranest_cpu_threshold')
+
+
 def test_comp_params_reads_lm_boundary_scout_from_optional_info(tmp_path):
     init_data = {
         "user_info": {},

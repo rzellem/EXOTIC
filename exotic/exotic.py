@@ -22514,10 +22514,12 @@ def estimate_star_outer_radius(data, pos, max_half=CENTROID_ADAPTIVE_BOX_MAX):
         k_peak = int(np.nanargmax(prof))
         peak = prof[k_peak]
         noise = 1.4826 * float(np.nanmedian(np.abs(sub[ring] - bg)))
-        if not np.isfinite(peak) or peak <= 3 * max(noise, 1e-9):
+        # A clear star only: a faint one under a curved background (vignetting, a neighbour's halo) can have ring
+        # medians that never fall to 10% of its small peak, which must not read as 'huge star'.
+        if not np.isfinite(peak) or peak <= 10 * max(noise, 1e-9):
             return np.nan
         below = np.where(prof[k_peak:] < 0.1 * peak)[0]
-        return float(k_peak + below[0]) if below.size else float(radii[-1])
+        return float(k_peak + below[0]) if below.size else np.nan
     except Exception:
         return np.nan
 
@@ -22530,7 +22532,7 @@ def adaptive_centroid_box(data, pos, box):
     """
     outer = estimate_star_outer_radius(data, pos)
     if np.isfinite(outer) and outer > 0.6 * box:
-        return int(min(np.ceil(1.5 * outer), CENTROID_ADAPTIVE_BOX_MAX))
+        return int(max(box, min(np.ceil(1.5 * outer), CENTROID_ADAPTIVE_BOX_MAX)))
     return int(box)
 
 

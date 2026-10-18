@@ -1,3 +1,5 @@
+import json
+
 import pandas
 import pytest
 import requests
@@ -32,14 +34,18 @@ def test_legacy_epoch_standard_lookup_uses_matching_publication_and_preserves_pr
     assert nea.lookup_ephemeris_time_standard('WASP-16 b',2456355.7,3.11860349) is None
 
 
-def test_archive_fancy_export_does_not_mislabel_epoch_utc():
-    import json
+def test_loaded_archive_parameters_resolve_and_preserve_epoch_metadata(monkeypatch):
     nea=NASAExoplanetArchive('WASP-16 b')
     data={'pl_name':'WASP-16 b','hostname':'WASP-16','ra':214.68301,'dec':-20.27544,
           'pl_ratror':.12,'pl_ratrorerr1':.001,'pl_ratrorerr2':-.001,
           'pl_ratdor':8.21,'pl_tranmid':2456355.79653,'pl_tsystemref':'BJD-TDB',
           'pl_refname':'Kokori 2023'}
     nea._get_params(data)
+    monkeypatch.setattr(
+        nea, '_tap_query',
+        lambda *args, **kwargs: pytest.fail('loaded planetary parameters should resolve without another NASA query'),
+    )
+    assert nea.resolve_name() is True
     result=json.loads(nea.planet_info(fancy=True))
     assert result['Published Mid-Transit Time Standard']=='BJD-TDB'
     assert result['Published Mid-Transit Time Reference']=='Kokori 2023'
@@ -47,13 +53,14 @@ def test_archive_fancy_export_does_not_mislabel_epoch_utc():
     assert 'Published Mid-Transit Time (BJD-UTC)' not in result
 
 
-def test_planet_info_uses_nextastro_fallback_when_nasa_archive_unavailable(monkeypatch):
+def test_colab_lookup_resolves_nextastro_parameters_when_nasa_archive_unavailable(monkeypatch):
     nea = NASAExoplanetArchive('WASP-12 b')
 
     def raise_direct_failure(*args, **kwargs):
         raise requests.exceptions.RequestException('ipac unavailable')
 
     monkeypatch.setattr(nea, '_new_scrape', raise_direct_failure)
+    monkeypatch.setattr(nea, '_tap_query', raise_direct_failure)
 
     payload = {
         'params': {
@@ -99,6 +106,30 @@ def test_planet_info_uses_nextastro_fallback_when_nasa_archive_unavailable(monke
     assert pl_dict['midT'] == 2450000.5
     assert pl_dict['rprs'] == 0.12
     assert pl_dict['aRs'] == 3.0
+
+    # Standard Colab validates the name and exports parameters after planet_info().
+    assert nea.resolve_name() is True
+    exported = json.loads(nea.planet_info(fancy=True))
+    assert exported['Planet Name'] == 'WASP-12 b'
+    assert exported['Orbital Period (days)'] == 1.09
+
+
+@pytest.mark.parametrize('loaded_params', [None, {}, {'pName': 'WASP-16 b'}])
+@pytest.mark.parametrize('found', [False, True])
+def test_resolve_name_queries_nasa_without_matching_loaded_parameters(monkeypatch, loaded_params, found):
+    nea = NASAExoplanetArchive('WASP-12 b')
+    nea.pl_dict = loaded_params
+    queries = []
+
+    def tap(base_url, query):
+        queries.append(query)
+        return pandas.DataFrame({'pl_name': ['WASP-12 b'] if found else []})
+
+    monkeypatch.setattr(nea, '_tap_query', tap)
+
+    assert nea.resolve_name() is found
+    assert len(queries) == 1
+    assert queries[0]['where'] == "tran_flag = 1 and pl_name = 'WASP-12 b'"
 
 
 @pytest.mark.parametrize(

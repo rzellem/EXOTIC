@@ -354,6 +354,11 @@ class NASAExoplanetArchive:
             return response.text
 
     def resolve_name(self):
+        # Colab validates the name after planet_info(), including cache fallback.
+        # Reuse that successful lookup so an outage cannot invalidate it.
+        if self.pl_dict and self.pl_dict.get('pName') == self.planet:
+            return True
+
         uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
         uri_ipac_query = {
             # Table columns: https://exoplanetarchive.ipac.caltech.edu/docs/API_PS_columns.html

@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from types import SimpleNamespace
+import warnings
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -92,6 +93,101 @@ def test_plot_centroids_uses_supported_filename(tmp_path):
     assert [path.name for path in (tmp_path / "working_artifacts").iterdir()] == [
         "CentroidPositionsandDistances_HAT-P-32b_20-December-2017.pdf"
     ]
+
+
+def test_plot_flux_preserves_points_errors_and_colors_without_style_warnings(tmp_path, monkeypatch):
+    captured = []
+    original_errorbar = Axes.errorbar
+
+    def spy_errorbar(self, x, y, *args, **kwargs):
+        result = original_errorbar(self, x, y, *args, **kwargs)
+        captured.append((result, np.asarray(kwargs['yerr'])))
+        return result
+
+    monkeypatch.setattr(Axes, 'errorbar', spy_errorbar)
+    times = np.array([2459423.9, 2459423.91, 2459423.92])
+    target = np.array([1000.0, 990.0, 1010.0])
+    reference = np.array([800.0, 805.0, 795.0])
+    normalized = np.array([1.0, 0.99, 1.01])
+    errors = np.array([3.0, 4.0, 5.0])
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings('error', message='linestyle is redundantly defined')
+        plots_module.plot_flux(
+            times, target, errors, reference, errors / 2,
+            normalized, errors / 1000, np.array([1.1, 1.2, 1.3]),
+            'WASP-11b', tmp_path, '2021-07-27',
+        )
+
+    assert len(captured) == 3
+    for (result, yerr), values, expected_errors in zip(
+            captured, [target, reference, normalized], [errors, errors / 2, errors / 1000]):
+        line = result.lines[0]
+        np.testing.assert_array_equal(line.get_xdata(), times)
+        np.testing.assert_array_equal(line.get_ydata(), values)
+        np.testing.assert_array_equal(yerr, expected_errors)
+        assert line.get_marker() == 'o'
+        assert line.get_linestyle() == 'None'
+    assert captured[-1][0].lines[0].get_color() == 'b'
+    artifacts = tmp_path / 'working_artifacts'
+    for prefix in ['TargetRawFlux', 'CompRawFlux', 'NormalizedFluxTime']:
+        assert (artifacts / f'{prefix}_WASP-11b_2021-07-27.pdf').exists()
+    exported = np.loadtxt(
+        artifacts / 'NormalizedFlux_WASP-11b_2021-07-27.txt', delimiter=',', skiprows=1,
+    )
+    np.testing.assert_allclose(exported[:, :3], np.column_stack([times, normalized, errors / 1000]))
+
+
+@pytest.mark.parametrize('all_unavailable', [False, True])
+def test_comp_star_suitability_renders_unavailable_scores_without_invalid_transforms(
+        tmp_path, monkeypatch, all_unavailable):
+    summaries = [
+        {'label': 'Comp 1', 'aggregate_score': 0.020674, 'ensemble_score': 0.012995,
+         'pairwise_median_score': 0.020070, 'selected': True},
+        {'label': 'Comp 2', 'aggregate_score': np.inf, 'ensemble_score': 0.464623,
+         'pairwise_median_score': 0.450839},
+        {'label': 'Comp 3', 'aggregate_score': -np.inf, 'ensemble_score': np.nan},
+    ]
+    if all_unavailable:
+        for summary in summaries:
+            summary.update(aggregate_score=np.inf, ensemble_score=-np.inf, pairwise_median_score=np.nan)
+    original_summaries = [summary.copy() for summary in summaries]
+    captured = []
+    original_close = plt.close
+
+    def capture_figure(figure=None):
+        if hasattr(figure, 'axes'):
+            captured.append(figure)
+        original_close(figure)
+
+    monkeypatch.setattr(plt, 'close', capture_figure)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', RuntimeWarning)
+        plots_module.plot_comp_star_suitability(
+            summaries, 'WASP-11b', tmp_path, '2021-07-27', 'Aperture',
+        )
+
+    assert len(captured) == 1
+    axis = captured[0].axes[0]
+    assert [tick.get_text() for tick in axis.get_xticklabels()] == ['Comp 1', 'Comp 2', 'Comp 3']
+    expected_heights = [
+        summary[key] * 100 for key in ['aggregate_score', 'ensemble_score', 'pairwise_median_score']
+        for summary in summaries if np.isfinite(summary.get(key, np.nan))
+    ]
+    np.testing.assert_allclose([bar.get_height() for bar in axis.patches], expected_heights)
+    for bar in axis.patches:
+        assert np.all(np.isfinite(bar.get_transform().get_matrix()))
+    assert sum(text.get_text() == 'n/a' for text in axis.texts) == 9 - len(expected_heights)
+    assert any(text.get_text() == 'selected' for text in axis.texts)
+    for annotation in axis.texts:
+        if annotation.get_text() == 'n/a':
+            assert axis.get_xlim()[0] < annotation.xy[0] < axis.get_xlim()[1]
+    for color_index, handle in enumerate(axis.get_legend().legend_handles):
+        np.testing.assert_allclose(handle.get_facecolor(), matplotlib.colors.to_rgba(f'C{color_index}'))
+    assert summaries == original_summaries
+    artifacts = tmp_path / 'working_artifacts'
+    for extension in ['png', 'pdf']:
+        assert (artifacts / f'CompStarSuitability_WASP-11b_2021-07-27.{extension}').exists()
 
 
 def test_format_parameter_value_uses_uncertainty_precision_without_scientific_notation():

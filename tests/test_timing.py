@@ -211,6 +211,20 @@ def test_calculated_tmid_difference_fits_both_series_without_changing_production
     if central_geometry:
         params.update(b=.05,ars=10.,rprs=.1,ecc=0.,omega=90.,inc=89.)
         bounds['b'] = [0.,1.1]
+        import scipy.optimize
+        bounded_minimize = scipy.optimize.minimize
+
+        def minimize_with_boundary_roundoff(objective, **kwargs):
+            # Exercise numerical excursions at both existing unit-cube bounds,
+            # then still solve the real paired timestamp fits.
+            for coordinate in (-np.finfo(float).eps, 0., 1., 1. + np.finfo(float).eps):
+                trial = kwargs['x0'].copy()
+                trial[list(bounds).index('b')] = coordinate
+                with np.errstate(invalid='raise'):
+                    assert np.isfinite(objective(trial))
+            return bounded_minimize(objective, **kwargs)
+
+        monkeypatch.setattr(scipy.optimize, 'minimize', minimize_with_boundary_roundoff)
     data = model(date,dict(params,b=0.))
     context={'time':date, 'base_physical':params.copy(), 'data':data,
              'inverse_dataerr':np.full(len(date),1000.),'centered_airmass':np.zeros(len(date)),
@@ -224,7 +238,8 @@ def test_calculated_tmid_difference_fits_both_series_without_changing_production
                  'candidates':[{'source':'DATE-OBS/DATE-END','jd_utc':float(t)},
                                {'source':'MJD-OBS/DATE-END','jd_utc':float(t+10/86400)}],
                  'mjd_date_comparison':{'date_obs_bjd_tdb':float(t),'mjd_obs_bjd_tdb':float(t+10/86400)}} for t in date]
-    result=calculate_timestamp_tmid_difference(fit,selections)
+    with np.errstate(invalid='raise'):
+        result=calculate_timestamp_tmid_difference(fit,selections)
     assert result['status']=='calculated'
     assert result['date_obs_minus_mjd_obs_seconds']==pytest.approx(-10,abs=.001)
     assert result['date_obs']['optimizer_success'] is True

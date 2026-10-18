@@ -5222,23 +5222,29 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         run_final_fit_phase_residual_clip
         and prefit is not None
         and hasattr(prefit, 'residuals')
-        and hasattr(prefit, 'phase')
         and np.shape(prefit.residuals) == np.shape(good_times)
-        and np.shape(prefit.phase) == np.shape(good_times)
     ):
-        phase_clip_mask = phase_bin_sigma_clip(prefit.residuals, prefit.phase, sigma=3, bins=10)
         min_required_points = max(len(bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
+        residual_keep_mask, residual_summary = final_residual_rejection_keep_mask(
+            prefit, min_required_points=min_required_points,
+        )
+        phase_clip_mask = ~residual_keep_mask
         if np.any(phase_clip_mask) and np.count_nonzero(~phase_clip_mask) >= min_required_points:
             debug_phase_clip_keep_mask = np.asarray(~phase_clip_mask, dtype=bool).copy()
-            result['filter_diagnostics'].append(build_time_rejection_diagnostic(
-                "Final-fit phase residual clip",
+            residual_diagnostic = build_time_rejection_diagnostic(
+                "Final-fit LM residual clip",
                 good_times,
                 ~phase_clip_mask,
                 note=(
-                    "Dropped phase-binned residual outliers before the comparison-candidate "
+                    "Dropped whole-series LM residual outliers before the comparison-candidate "
                     + ("least-squares fit." if inference_method == 'lm' else "UltraNest fit.")
+                    + " " + residual_summary['note']
                 ),
-            ))
+            )
+            residual_diagnostic['residual_rejection'] = build_final_residual_rejection_payload(
+                prefit, residual_keep_mask, residual_summary, source_indices=source_indices,
+            )
+            result['filter_diagnostics'].append(residual_diagnostic)
             good_times = good_times[~phase_clip_mask]
             good_flux = good_flux[~phase_clip_mask]
             good_unc = good_unc[~phase_clip_mask]
@@ -26170,19 +26176,25 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     if (
         myfit is not None
         and hasattr(myfit, 'residuals')
-        and hasattr(myfit, 'phase')
         and np.shape(myfit.residuals) == np.shape(arrayTimes)
-        and np.shape(myfit.phase) == np.shape(arrayTimes)
     ):
-        phase_clip_mask = phase_bin_sigma_clip(myfit.residuals, myfit.phase, sigma=3, bins=10)
         min_required_points = max(len(mybounds) + 1, 5)
+        residual_keep_mask, residual_summary = final_residual_rejection_keep_mask(
+            myfit, min_required_points=min_required_points,
+        )
+        phase_clip_mask = ~residual_keep_mask
         if np.count_nonzero(~phase_clip_mask) >= min_required_points and np.any(phase_clip_mask):
-            filter_diagnostics.append(build_time_rejection_diagnostic(
-                "Phase-binned residual clip",
+            residual_diagnostic = build_time_rejection_diagnostic(
+                "Initial LM residual clip",
                 arrayTimes,
                 ~phase_clip_mask,
-                note="Dropped phase-binned residual outliers after the initial LM fit before refitting.",
-            ))
+                note=("Dropped whole-series residual outliers after the initial LM fit before refitting. "
+                      + residual_summary['note']),
+            )
+            residual_diagnostic['residual_rejection'] = build_final_residual_rejection_payload(
+                myfit, residual_keep_mask, residual_summary,
+            )
+            filter_diagnostics.append(residual_diagnostic)
             arrayFinalFlux = arrayFinalFlux[~phase_clip_mask]
             arrayNormUnc = arrayNormUnc[~phase_clip_mask]
             arrayTimes = arrayTimes[~phase_clip_mask]
@@ -26391,26 +26403,11 @@ def diagnose_lightcurve_fit_inputs(
     else:
         airmass_sorted = airmass[si]
 
-    dt = np.mean(np.diff(times_sorted))
-    if np.isfinite(dt) and dt > 0:
-        ndt = int(25. / 24. / 60. / dt) * 2 + 1
-    else:
-        ndt = 5
-    if ndt > len(times_sorted):
-        ndt = int(len(times_sorted) / 4) * 2 + 1
-    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt), times=times_sorted)
-    valid_mask = ~filtered_data
+    # Ordinary photometric outliers are assessed against the initial transit
+    # fit. A smoothed raw series can mistake transit shape or irregular cadence
+    # for an outlier before a physical model has been fitted.
+    valid_mask = np.ones(times_sorted.shape, dtype=bool)
     diagnostics['sigma_clip_point_count'] = int(np.count_nonzero(valid_mask))
-    if diagnostics['sigma_clip_point_count'] <= 1:
-        diagnostics.update({
-            'failed_stage': 'sigma_clip',
-            'failure_reason': (
-                "sigma clipping left "
-                f"{diagnostics['sigma_clip_point_count']} usable point(s); not enough data remained "
-                "for a lightcurve fit."
-            ),
-        })
-        return diagnostics
 
     sigma_kept_indices = np.flatnonzero(valid_mask)
     if sigma_kept_indices.size:
@@ -26616,18 +26613,16 @@ def prepare_lightcurve_fit_input_series(
         comp_flux_error_sorted,
     )
 
-    dt = np.mean(np.diff(times_sorted))
-    ndt = int(25. / 24. / 60. / dt) * 2 + 1
-    if ndt > len(times_sorted):
-        ndt = int(len(times_sorted)/4) * 2 + 1
-    filtered_data = sigma_clip(flux_ratio_sorted, sigma=3, dt=max(5, ndt), times=times_sorted)
-    valid_mask = ~filtered_data
+    # Keep finite photometry for the initial least-squares transit fit; only
+    # the gross raw-ratio check below runs before that model exists. Retain the
+    # legacy debug-mask field so saved photometry arrays remain compatible.
+    valid_mask = np.ones(times_sorted.shape, dtype=bool)
     initial_sigma_keep_mask = np.asarray(valid_mask, dtype=bool).copy()
     filter_diagnostics.append(build_time_rejection_diagnostic(
-        "Initial sigma clip",
+        "Pre-fit ordinary clipping deferred",
         times_sorted,
         valid_mask,
-        note="Dropped 3-sigma target/reference-ratio outliers before the first lightcurve fit.",
+        note="Ordinary outlier rejection uses the initial least-squares transit residuals, not a smoothed raw-flux trend.",
     ))
 
     prefit_raw_ratio_keep_mask = np.asarray(initial_sigma_keep_mask, dtype=bool).copy()
@@ -35930,9 +35925,9 @@ def _main_impl():
         else:
             log_info("Final residual rejection disabled per optional_info setting.")
         if run_final_fit_phase_residual_clip:
-            log_info("Final-fit phase residual clipping enabled.")
+            log_info("Initial least-squares residual clipping enabled (whole-series scatter).")
         else:
-            log_info("Final-fit phase residual clipping disabled per optional_info setting.")
+            log_info("Initial least-squares residual clipping disabled per optional_info setting.")
         if use_legacy_psf_flux_mode:
             log_info(
                 "Legacy PSF flux mode enabled: PSF photometry flux rows will use the 4.3.1-style "
@@ -39741,16 +39736,18 @@ def _main_impl():
                 adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
             else:
                 si = np.argsort(best_fit_lc.time)
-                dt = np.mean(np.diff(np.sort(best_fit_lc.time)))
-                ndt = int(30. / 24. / 60. / dt) * 2 + 1  # ~30 minutes
-                time_clip_mask = sigma_clip(best_fit_lc.data[si], sigma=3, dt=ndt, times=best_fit_lc.time[si])
+                time_clip_mask = np.zeros(len(best_fit_lc.time), dtype=bool)
                 phase_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
                 if (
                     run_final_fit_phase_residual_clip
                     and hasattr(best_fit_lc, 'residuals')
-                    and hasattr(best_fit_lc, 'phase')
                 ):
-                    phase_clip_mask = phase_bin_sigma_clip(best_fit_lc.residuals[si], best_fit_lc.phase[si], sigma=3, bins=10)
+                    residual_keep_mask, _ = final_residual_rejection_keep_mask(
+                        best_fit_lc,
+                        min_required_points=max(len(getattr(best_fit_lc, 'bounds', {})) + 1,
+                                                LIGHTCURVE_MIN_VALID_POINTS),
+                    )
+                    phase_clip_mask = ~residual_keep_mask[si]
                 adaptive_clip_mask = np.zeros_like(time_clip_mask, dtype=bool)
                 if use_adaptive_apertures and adaptive_summary is not None:
                     sorted_apertures = np.asarray(adaptive_summary['aperture_series'], dtype=float)[si]
@@ -39761,16 +39758,10 @@ def _main_impl():
             gi = ~(time_clip_mask | phase_clip_mask | adaptive_clip_mask)  # good indexs
             prefinal_filter_diagnostics = [
                 build_time_rejection_diagnostic(
-                    "Final-fit time sigma clip",
-                    np.asarray(best_fit_lc.time, dtype=float)[si],
-                    ~time_clip_mask,
-                    note="Dropped time-series outliers before the final fit.",
-                ),
-                build_time_rejection_diagnostic(
-                    "Final-fit phase residual clip",
+                    "Final-fit LM residual clip",
                     np.asarray(best_fit_lc.time, dtype=float)[si],
                     ~phase_clip_mask,
-                    note="Dropped phase-binned residual outliers before the final fit.",
+                    note="Dropped whole-series fitted-model residual outliers before the final fit.",
                 ),
                 build_time_rejection_diagnostic(
                     "Final-fit adaptive-aperture clip",
@@ -39781,7 +39772,7 @@ def _main_impl():
             ]
             phase_clip_removed = np.count_nonzero(phase_clip_mask & ~time_clip_mask)
             if phase_clip_removed:
-                log_info(f"Removed {phase_clip_removed} phase-binned residual outlier(s) before final fit.")
+                log_info(f"Removed {phase_clip_removed} fitted-model residual outlier(s) before final fit.")
             adaptive_clip_removed = np.count_nonzero(adaptive_clip_mask)
             if adaptive_clip_removed:
                 log_info(f"Removed {adaptive_clip_removed} adaptive-aperture radius outlier(s) before final fit.")

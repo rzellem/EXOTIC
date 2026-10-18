@@ -472,7 +472,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.title(f"{targ_name} Raw Flux Values {date}")
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Flux [ADU]")
-    plt.errorbar(times, targ, yerr=targ_unc, linestyle='None', fmt='-o')
+    plt.errorbar(times, targ, yerr=targ_unc, linestyle='None', fmt='o')
     plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename("TargetRawFlux", targ_name, date=date, extension="pdf"))
     plt.close()
 
@@ -480,7 +480,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.title(f"Comparison Star Raw Flux Values {date}")
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Flux [ADU]")
-    plt.errorbar(times, ref, yerr=ref_unc, linestyle='None', fmt='-o')
+    plt.errorbar(times, ref, yerr=ref_unc, linestyle='None', fmt='o')
     plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename("CompRawFlux", targ_name, date=date, extension="pdf"))
     plt.close()
 
@@ -489,7 +489,7 @@ def plot_flux(times, targ, targ_unc, ref, ref_unc, norm_flux, norm_unc, airmass,
     plt.title(f"{targ_name} Normalized Flux vs. Time {date}")
     plt.xlabel("Time [BJD_TDB]")
     plt.ylabel("Normalized Flux")
-    plt.errorbar(times, norm_flux, yerr=norm_unc, linestyle='None', fmt='-bo')
+    plt.errorbar(times, norm_flux, yerr=norm_unc, linestyle='None', fmt='bo')
     plt.savefig(_working_artifacts_dir(save) / _dated_plot_filename("NormalizedFluxTime", targ_name, date=date, extension="pdf"))
     plt.close()
 
@@ -716,9 +716,19 @@ def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_lab
 
     fig, ax = plt.subplots(figsize=(max(7, 1.5 * len(labels)), 5))
     width = 0.25
-    ax.bar(positions - width, aggregate, width=width, label='Suitability')
-    ax.bar(positions, ensemble, width=width, label='Intercomparison')
-    ax.bar(positions + width, pairwise, width=width, label='Pairwise median')
+    legend_handles = []
+    for color_index, (values, offset, label) in enumerate((
+            (aggregate, -width, 'Suitability'),
+            (ensemble, 0.0, 'Intercomparison'),
+            (pairwise, width, 'Pairwise median'))):
+        bar_positions = positions + offset
+        finite = np.isfinite(values)
+        # Unavailable scores use infinity internally; they have no drawable bar height.
+        ax.bar(bar_positions[finite], values[finite], width=width, label=label, color=f'C{color_index}')
+        legend_handles.append(plt.Rectangle((0, 0), 1, 1, facecolor=f'C{color_index}', label=label))
+        for position in bar_positions[~finite]:
+            ax.annotate('n/a', (position, 0.0), xytext=(0, 3), textcoords='offset points',
+                        ha='center', va='bottom', rotation=90, fontsize=8)
 
     for position, summary in zip(positions, comp_summaries):
         if summary.get('selected'):
@@ -727,9 +737,10 @@ def plot_comp_star_suitability(comp_summaries, targ_name, save, date, method_lab
 
     ax.set_xticks(positions)
     ax.set_xticklabels(labels)
+    ax.set_xlim(-0.5, len(labels) - 0.5)
     ax.set_ylabel("Residual Scatter [%]")
     ax.set_title(f"{targ_name} Comparison-Star Suitability Summary\n{method_label}")
-    ax.legend()
+    ax.legend(handles=legend_handles)
     ax.grid(axis='y', alpha=0.25)
     fig.tight_layout()
     fig.savefig(temp_dir / _dated_plot_filename("CompStarSuitability", targ_name, date=date, extension="png"), bbox_inches="tight")

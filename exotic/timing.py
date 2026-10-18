@@ -362,7 +362,10 @@ def calculate_timestamp_tmid_difference(fit, selections):
             upper = min(1+params['rprs'], params['ars']*f)
             # Transit shape is approximately linear in b**2 near a central
             # transit. This keeps the diagnostic optimizer conditioned at b=0.
-            params['b'] = float(np.sqrt(point[keys.index('b')])*upper)
+            # Project numerical boundary excursions onto the optimizer's
+            # existing unit interval before taking its square root.
+            impact_fraction_squared = np.clip(point[keys.index('b')], 0., 1.)
+            params['b'] = float(np.sqrt(impact_fraction_squared)*upper)
             params['inc'] = float(np.degrees(np.arccos(params['b']/(params['ars']*f))))
         return params
 

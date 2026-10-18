@@ -540,20 +540,24 @@ def test_save_selected_photometry_debug_series_writes_stage_masks(tmp_path):
     assert rows[:, 9].astype(int).tolist() == [1, 0, 0]
 
 
-def test_finalize_comparison_candidate_phase_clips_before_nested_fit(monkeypatch):
+def test_finalize_comparison_candidate_clips_whole_series_lm_residuals_before_nested_fit(monkeypatch):
     captured = {}
 
     def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, jd_times=None, mode=None, **kwargs):
         assert mode == "lm"
+        residuals = np.linspace(-0.01, 0.01, len(times))
+        residuals[3] = 0.2
+        residuals[24:30] = [0.0001, -0.0002, 0.0, 0.0002, 0.0003, 0.0074]
         return types.SimpleNamespace(
-            residuals=np.linspace(-0.01, 0.01, len(times)),
+            residuals=residuals,
+            time=np.asarray(times),
+            data=np.asarray(flux),
+            detrended=np.asarray(flux),
             phase=np.linspace(-0.5, 0.5, len(times)),
         )
 
-    def fake_phase_clip(residuals, phase, sigma=3, bins=10):
-        mask = np.zeros(len(residuals), dtype=bool)
-        mask[3] = True
-        return mask
+    def unexpected_phase_clip(*args, **kwargs):
+        pytest.fail("Ordinary LM residual rejection must not estimate scatter in sparse phase bins")
 
     def fake_final_fit(
         times,
@@ -584,19 +588,19 @@ def test_finalize_comparison_candidate_phase_clips_before_nested_fit(monkeypatch
         return fit, np.asarray(flux, dtype=float), np.asarray(unc, dtype=float)
 
     monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
-    monkeypatch.setattr("exotic.exotic.phase_bin_sigma_clip", fake_phase_clip)
+    monkeypatch.setattr("exotic.exotic.phase_bin_sigma_clip", unexpected_phase_clip)
     monkeypatch.setattr("exotic.exotic.fit_final_lightcurve_with_oot_baseline_detrending", fake_final_fit)
     monkeypatch.setattr(
         "exotic.exotic.sigma_clip",
         lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
     )
 
-    times = np.linspace(0.0, 0.09, 10)
+    times = np.linspace(0.0, 0.09, 60)
     result = finalize_comparison_candidate_full_reduction(
         times,
-        np.full(10, 100.0, dtype=float),
-        np.full(10, 100.0, dtype=float),
-        np.linspace(1.0, 1.2, 10),
+        np.full(60, 100.0, dtype=float),
+        np.full(60, 100.0, dtype=float),
+        np.linspace(1.0, 1.2, 60),
         [0.1, 0.1, 0.1, 0.1],
         {
             "midT": 0.045,
@@ -615,19 +619,26 @@ def test_finalize_comparison_candidate_phase_clips_before_nested_fit(monkeypatch
 
     assert result["applied"] is True
     assert captured["times"].tolist() == pytest.approx(np.delete(times, 3).tolist())
-    assert result["source_indices"].tolist() == [0, 1, 2, 4, 5, 6, 7, 8, 9]
+    assert result["source_indices"].tolist() == np.delete(np.arange(60), 3).tolist()
+    assert 29 in result['source_indices']  # A quiet local bin must not veto a modest model residual.
     assert any(
-        diagnostic["stage"] == "Final-fit phase residual clip"
+        diagnostic["stage"] == "Final-fit LM residual clip"
         and diagnostic["dropped_point_count"] == 1
         for diagnostic in result["fit"].frame_filter_diagnostics
     )
+    residual_diagnostic = next(
+        diagnostic for diagnostic in result['fit'].frame_filter_diagnostics
+        if diagnostic['stage'] == 'Final-fit LM residual clip'
+    )
+    assert residual_diagnostic['residual_rejection']['rejected_time'] == pytest.approx([times[3]])
+    assert residual_diagnostic['residual_rejection']['rejected_source_indices'] == [3]
     assert result["fit"].selected_photometry_debug[
         "phase_clip_keep_mask_on_sigma_filtered"
-    ].tolist() == [True, True, True, False, True, True, True, True, True, True]
+    ].tolist() == [index != 3 for index in range(60)]
 
 
 def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypatch):
-    captured = {"phase_clip_called": False}
+    captured = {"residual_clip_called": False}
 
     def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, jd_times=None, mode=None, **kwargs):
         return types.SimpleNamespace(
@@ -635,11 +646,9 @@ def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypat
             phase=np.linspace(-0.5, 0.5, len(times)),
         )
 
-    def fake_phase_clip(residuals, phase, sigma=3, bins=10):
-        captured["phase_clip_called"] = True
-        mask = np.zeros(len(residuals), dtype=bool)
-        mask[3] = True
-        return mask
+    def unexpected_residual_clip(*args, **kwargs):
+        captured['residual_clip_called'] = True
+        pytest.fail('The existing disabled clipping controls must be honored')
 
     def fake_final_fit(times, flux, unc, airmass, prior, bounds, jd_times=None, **kwargs):
         captured["times"] = np.asarray(times, dtype=float).copy()
@@ -660,7 +669,7 @@ def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypat
         return fit, np.asarray(flux, dtype=float), np.asarray(unc, dtype=float)
 
     monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
-    monkeypatch.setattr("exotic.exotic.phase_bin_sigma_clip", fake_phase_clip)
+    monkeypatch.setattr("exotic.exotic.final_residual_rejection_keep_mask", unexpected_residual_clip)
     monkeypatch.setattr("exotic.exotic.fit_final_lightcurve_with_oot_baseline_detrending", fake_final_fit)
     monkeypatch.setattr(
         "exotic.exotic.sigma_clip",
@@ -688,14 +697,15 @@ def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypat
         },
         jd_times=2460000.0 + times,
         run_final_fit_phase_residual_clip=False,
+        run_final_residual_rejection=False,
     )
 
     assert result["applied"] is True
-    assert captured["phase_clip_called"] is False
+    assert captured["residual_clip_called"] is False
     assert captured["times"].tolist() == pytest.approx(times.tolist())
     assert result["source_indices"].tolist() == list(range(10))
     assert not any(
-        diagnostic["stage"] == "Final-fit phase residual clip"
+        diagnostic["stage"] == "Final-fit LM residual clip"
         and diagnostic["dropped_point_count"] > 0
         for diagnostic in result["fit"].frame_filter_diagnostics
     )
@@ -4756,7 +4766,7 @@ def test_fit_lightcurve_rejects_undersampled_series(monkeypatch):
     assert called["count"] == 0
 
 
-def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
+def test_fit_lightcurve_refits_after_whole_series_lm_residual_clip(monkeypatch):
     captured_calls = []
 
     def fake_lc_fitter(
@@ -4780,25 +4790,20 @@ def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
             "mode": mode,
         })
         if call_index == 0:
+            residuals = np.linspace(-0.01, 0.01, len(times))
+            residuals[-1] = 0.2
             return types.SimpleNamespace(
-                residuals=np.zeros(len(times)),
+                residuals=residuals,
                 phase=np.linspace(-0.05, 0.05, len(times)),
             )
         return types.SimpleNamespace()
-
-    def fake_phase_bin_sigma_clip(values, phase, sigma=3, bins=10, min_points=5, max_iters=3):
-        mask = np.zeros(len(values), dtype=bool)
-        mask[-1] = True
-        return mask
 
     monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
     monkeypatch.setattr(
         "exotic.exotic.sigma_clip",
         lambda data, sigma=3, dt=21, po=2, times=None: np.zeros(len(data), dtype=bool),
     )
-    monkeypatch.setattr("exotic.exotic.phase_bin_sigma_clip", fake_phase_bin_sigma_clip)
-
-    times = np.linspace(0.0, 0.08, 8)
+    times = np.linspace(0.0, 0.08, 30)
     tflux = np.full(times.shape[0], 2.0)
     cflux = np.full(times.shape[0], 2.0)
     airmass = np.linspace(1.0, 1.5, times.shape[0])
@@ -4822,10 +4827,10 @@ def test_fit_lightcurve_refits_after_phase_binned_clip(monkeypatch):
     assert len(captured_calls) == 2
     assert captured_calls[0]["mode"] == "lm"
     assert captured_calls[1]["mode"] == "lm"
-    assert len(captured_calls[0]["times"]) == 8
-    assert len(captured_calls[1]["times"]) == 7
-    assert len(fit_tflux) == 7
-    assert len(fit_cflux) == 7
+    assert len(captured_calls[0]["times"]) == 30
+    assert len(captured_calls[1]["times"]) == 29
+    assert len(fit_tflux) == 29
+    assert len(fit_cflux) == 29
 
 
 def test_fit_lightcurve_runs_nested_fit_when_requested(monkeypatch):
@@ -4957,14 +4962,14 @@ def test_fit_lightcurve_attaches_frame_filter_diagnostics(monkeypatch):
     diagnostics = myfit.frame_filter_diagnostics
     assert [diagnostic["stage"] for diagnostic in diagnostics] == [
         "Target/reference ratio filter",
-        "Initial sigma clip",
+        "Pre-fit ordinary clipping deferred",
         "Pre-fit raw-ratio outlier clip",
         "Finite/positive photometry filter",
     ]
     assert diagnostics[0]["dropped_point_count"] == 1
     assert diagnostics[0]["first_dropped_time"] == pytest.approx(1.0)
-    assert diagnostics[1]["dropped_point_count"] == 1
-    assert diagnostics[1]["first_dropped_time"] == pytest.approx(11.0)
+    assert diagnostics[1]["dropped_point_count"] == 0
+    assert np.isnan(diagnostics[1]["first_dropped_time"])
     assert diagnostics[2]["dropped_point_count"] == 0
     assert diagnostics[3]["dropped_point_count"] == 0
 
@@ -7808,8 +7813,8 @@ def test_prepare_lightcurve_fit_input_series_normalizes_ratio_around_unity():
 
 def test_prepare_lightcurve_fit_input_series_rejects_fewer_than_five_usable_points(monkeypatch):
     monkeypatch.setattr(
-        "exotic.exotic.sigma_clip",
-        lambda data, sigma=3, dt=21, po=2, times=None: np.array(
+        "exotic.exotic.prefit_raw_ratio_outlier_mask",
+        lambda data, **kwargs: np.array(
             [False, False, False, False, True, True],
             dtype=bool,
         ),
@@ -7828,6 +7833,31 @@ def test_prepare_lightcurve_fit_input_series_rejects_fewer_than_five_usable_poin
         "need at least 5 for a lightcurve fit."
     )
     assert np.isnan(prepared["approximate_baseline_level"])
+
+
+def test_prepare_lightcurve_preserves_sparse_transit_photometry_for_model_fit(monkeypatch):
+    def unexpected_smoothing(*args, **kwargs):
+        pytest.fail("Sparse transit photometry must reach the model without smoothing rejection")
+
+    monkeypatch.setattr("exotic.exotic.sigma_clip", unexpected_smoothing)
+    times = np.concatenate([np.linspace(0.0, 0.03, 18), [0.045, 0.065],
+                            np.linspace(0.08, 0.12, 18)])
+    raw_ratio = np.ones(times.shape)
+    raw_ratio[(times > 0.025) & (times < 0.09)] = 0.98
+    raw_ratio[19] += 0.002
+    prepared = prepare_lightcurve_fit_input_series(
+        times, 1000.0 * raw_ratio, np.full(times.shape, 1000.0),
+        np.linspace(1.0, 1.4, times.size), expected_transit_depth=0.02,
+    )
+    diagnosed = diagnose_lightcurve_fit_inputs(
+        times, 1000.0 * raw_ratio, np.full(times.shape, 1000.0),
+        np.linspace(1.0, 1.4, times.size), expected_transit_depth=0.02,
+    )
+
+    assert prepared['applied'] is True
+    assert prepared['time'] == pytest.approx(times)
+    assert prepared['source_indices'].tolist() == list(range(times.size))
+    assert diagnosed['usable_point_count'] == times.size
 
 
 def test_prepare_lightcurve_fit_input_series_uses_per_star_flux_errors(monkeypatch):

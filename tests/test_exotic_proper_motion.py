@@ -4368,7 +4368,7 @@ def test_fit_final_lightcurve_carries_retry_bounds_into_oot_baseline_refit(monke
     assert fit.oot_baseline_detrending_applied is True
 
 
-def test_fit_final_lightcurve_prefit_refinement_trims_baseline_and_recenters_tmid(monkeypatch):
+def test_fit_final_lightcurve_does_not_repeat_nested_fit_to_trim_or_recenter(monkeypatch):
     import exotic.exotic as exotic_module
 
     captured = {"calls": []}
@@ -4420,16 +4420,15 @@ def test_fit_final_lightcurve_prefit_refinement_trims_baseline_and_recenters_tmi
         baseline_duration_multiplier=0.5,
     )
 
-    assert len(captured["calls"]) == 2
+    assert len(captured["calls"]) == 1
     assert captured["calls"][0]["times"] == pytest.approx(times)
-    assert captured["calls"][1]["times"] == pytest.approx(np.array([-2.0, -1.0, 0.0, 1.0, 2.0]))
-    assert captured["calls"][1]["bounds"]["tmid"] == pytest.approx([-1.0, 1.0])
-    assert trimmed_flux == pytest.approx(np.ones(5))
-    assert trimmed_unc == pytest.approx(np.full(5, 0.01))
-    assert fit.prefit_refinement_applied is True
-    assert fit.prefit_refinement_trimmed_pre_points == 1
-    assert fit.prefit_refinement_trimmed_post_points == 1
-    assert fit.prefit_refinement_tmid_bounds == pytest.approx([-1.0, 1.0])
+    assert captured["calls"][0]["bounds"]["tmid"] == pytest.approx([-2.0, 2.0])
+    assert trimmed_flux == pytest.approx(flux)
+    assert trimmed_unc == pytest.approx(fluxerr)
+    assert fit.prefit_refinement_applied is False
+    assert fit.prefit_refinement_trimmed_pre_points == 0
+    assert fit.prefit_refinement_trimmed_post_points == 0
+    assert fit.prefit_refinement_tmid_bounds == pytest.approx([-2.0, 2.0])
 
 
 def test_fit_final_lightcurve_prefit_refinement_skips_one_sided_transit_solution(monkeypatch):
@@ -4494,10 +4493,10 @@ def test_fit_final_lightcurve_prefit_refinement_skips_one_sided_transit_solution
     assert trimmed_flux == pytest.approx(flux)
     assert trimmed_unc == pytest.approx(fluxerr)
     assert fit.prefit_refinement_applied is False
-    assert "one side of the modeled transit" in fit.prefit_refinement_note
+    assert "second nested transit-window refinement removed" in fit.prefit_refinement_note
 
 
-def test_fit_final_lightcurve_prefit_refinement_does_not_expand_tmid_past_original_bounds(monkeypatch):
+def test_fit_final_lightcurve_preserves_tmid_window_when_fitted_center_moves(monkeypatch):
     import exotic.exotic as exotic_module
 
     captured = {"calls": []}
@@ -4553,9 +4552,9 @@ def test_fit_final_lightcurve_prefit_refinement_does_not_expand_tmid_past_origin
         baseline_duration_multiplier=0.5,
     )
 
-    assert len(captured["calls"]) == 2
-    assert captured["calls"][1]["bounds"]["tmid"] == pytest.approx([0.15, 0.5])
-    assert fit.prefit_refinement_tmid_bounds == pytest.approx([0.15, 0.5])
+    assert len(captured["calls"]) == 1
+    assert captured["calls"][0]["bounds"]["tmid"] == pytest.approx([-0.5, 0.5])
+    assert fit.prefit_refinement_tmid_bounds == pytest.approx([-0.5, 0.5])
 
 
 def test_fit_lightcurve_keeps_large_raw_target_reference_ratios(monkeypatch):
@@ -5685,7 +5684,7 @@ def test_fit_final_lightcurve_with_oot_baseline_detrending_preserves_expected_tm
         },
     )
 
-    assert run_count["value"] == 2
+    assert run_count["value"] == 1
     assert all(prior is not None and prior.get("applied") for prior in run_count["duration_priors"])
     assert fit.initial_tmid_search_tmid == pytest.approx(2460000.5)
     assert fit.transit_qc_expected_tmid == pytest.approx(2460000.5)

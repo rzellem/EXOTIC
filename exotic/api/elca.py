@@ -792,7 +792,9 @@ class lc_fitter(object):
         self.dataerr = dataerr
         self.airmass = airmass
         self.airmass_reference = get_airmass_reference(airmass)
-        self.prior = prior
+        # Optimizers update their working parameters on every evaluation. Keep
+        # those trial values out of the caller's published starting priors.
+        self.prior = copy.deepcopy(prior)
         self.bounds = bounds
         self.max_ncalls = 2e5
         self.verbose = verbose
@@ -4025,6 +4027,12 @@ class lc_fitter(object):
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
         initial_parameters = np.asarray([self.prior[k] for k in freekeys], dtype=float)
+        self.lm_initial_parameters = dict(zip(freekeys, initial_parameters.tolist()))
+        self.lm_prior_uncertainties = {
+            key: self.prior.get(f'{key}_unc')
+            for key in ('rprs', 'ars', 'inc', 'tmid')
+            if self.prior.get(f'{key}_unc') is not None
+        }
         parameter_scales = np.asarray(boundarray[:, 1] - boundarray[:, 0], dtype=float)
         invalid_scales = ~np.isfinite(parameter_scales) | (parameter_scales <= 0)
         parameter_scales[invalid_scales] = np.maximum(
@@ -4034,6 +4042,28 @@ class lc_fitter(object):
         scaled_lower_bounds = (boundarray[:, 0] - initial_parameters) / parameter_scales
         scaled_upper_bounds = (boundarray[:, 1] - initial_parameters) / parameter_scales
         self._validate_flux_baseline_keys()
+
+        duration_prior = self.duration_prior or {}
+        try:
+            expected_duration = float(duration_prior.get('expected_duration', np.nan))
+            sigma_log_duration = float(duration_prior.get('sigma_log_duration', np.nan))
+        except (TypeError, ValueError):
+            expected_duration = sigma_log_duration = np.nan
+        self.lm_duration_prior_applied = bool(
+            duration_prior.get('applied')
+            and np.isfinite(expected_duration) and expected_duration > 0
+            and np.isfinite(sigma_log_duration) and sigma_log_duration > 0
+        )
+
+        def with_duration_prior(residuals):
+            if not self.lm_duration_prior_applied:
+                return residuals
+            duration = transit_duration(self.prior)
+            if np.isfinite(duration) and duration > 0:
+                prior_residual = np.log(duration / expected_duration) / sigma_log_duration
+            else:
+                prior_residual = np.sqrt(-2.0 * BAD_LOG_LIKELIHOOD)
+            return np.append(residuals, prior_residual)
 
         # trim data around predicted transit/eclipse time
         if np.ndim(self.airmass) == 2:
@@ -4052,7 +4082,7 @@ class lc_fitter(object):
             # LM minimizes chi-square, rather than the fourth power of each
             # residual.  The latter over-emphasizes isolated points and can pull
             # a transit timing solution away from its ingress/egress anchors.
-            return (self.data - model) / self.dataerr
+            return with_duration_prior((self.data - model) / self.dataerr)
 
         def lc2min_airmass(pars):
             for i in range(len(pars)):
@@ -4074,7 +4104,7 @@ class lc_fitter(object):
                     self.dataerr,
                     mask=self._get_baseline_fit_mask(),
                 )
-            return (self.data - model) / self.dataerr
+            return with_duration_prior((self.data - model) / self.dataerr)
 
         def scaled_residual_function(residual_function):
             def evaluate(scaled_parameters):
@@ -4131,6 +4161,11 @@ class lc_fitter(object):
                 )
 
         optimized_parameters = initial_parameters + np.asarray(res.x, dtype=float) * parameter_scales
+        self.lm_active_bounds = {
+            key: ('lower' if active < 0 else 'upper')
+            for key, active in zip(freekeys, res.active_mask)
+            if active
+        }
 
         self.parameters = copy.deepcopy(self.prior)
         self.errors = {}

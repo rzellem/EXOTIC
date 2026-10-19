@@ -249,7 +249,8 @@ def test_nested_fit_runs_boundary_scout_before_first_ultranest(monkeypatch):
     calls = []
 
     def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, mode=None, **kwargs):
-        calls.append({"mode": mode, "bounds": {key: list(value) for key, value in bounds.items()}})
+        calls.append({"mode": mode, "bounds": {key: list(value) for key, value in bounds.items()},
+                      "duration_prior": kwargs.get("duration_prior"), "prior": dict(prior)})
         if mode == "lm":
             return types.SimpleNamespace(
                 parameters={**dict(prior), "rprs": 0.109, "ars": 11.0, "tmid": 0.0},
@@ -274,14 +275,19 @@ def test_nested_fit_runs_boundary_scout_before_first_ultranest(monkeypatch):
         np.ones(20),
         np.full(20, 0.01),
         np.ones(20),
-        {"rprs": 0.10, "ars": 11.0, "tmid": 0.0},
+        {"rprs": 0.10, "ars": 11.0, "tmid": 0.0, "inc": 89.0, "tmid_unc": 0.001},
         {"rprs": [0.09, 0.11], "ars": [10.0, 12.0], "tmid": [-0.01, 0.01]},
         use_lm_boundary_scout=True,
         use_prior_rprs_when_posterior_pinned=False,
+        duration_prior={"applied": True, "expected_duration": 0.1, "sigma_log_duration": 0.05},
     )
 
     assert calls[0]["mode"] == "lm"
     assert calls[-1]["mode"] == "ns"
+    assert all(call["duration_prior"] == calls[-1]["duration_prior"] for call in calls)
+    assert calls[0]["prior"]["rprs"] == pytest.approx(0.10)
+    assert calls[0]["prior"]["inc"] == pytest.approx(89.0)
+    assert calls[0]["prior"]["tmid_unc"] == pytest.approx(0.001)
     assert calls[-1]["bounds"]["rprs"][0] <= 0.09
     assert calls[-1]["bounds"]["rprs"][1] >= 0.11
     assert fit.lm_boundary_scout_applied is True

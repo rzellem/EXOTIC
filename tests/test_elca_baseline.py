@@ -165,6 +165,55 @@ def test_lc_fitter_recovers_explicit_a0_baseline(monkeypatch, tmp_path):
     assert np.median(fit.detrended[oot_mask]) == pytest.approx(1.0, abs=5e-4)
 
 
+def test_lc_fitter_lm_preserves_published_starting_priors_and_reports_bounds(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    prior.update(rprs_unc=0.001, ars_unc=0.2, inc_unc=0.1, tmid_unc=0.0002)
+    original_prior = prior.copy()
+    time = np.linspace(-0.04, 0.04, 101)
+    fit = elca.lc_fitter(
+        time, np.ones_like(time), np.full_like(time, 0.001), np.zeros_like(time),
+        prior, {"rprs": [0.08, 0.12]}, mode="lm", verbose=False,
+        fixed_flux_baseline=True,
+    )
+    assert prior == original_prior
+    assert fit.lm_initial_parameters == {"rprs": 0.1}
+    assert fit.lm_prior_uncertainties == {
+        "rprs": 0.001, "ars": 0.2, "inc": 0.1, "tmid": 0.0002,
+    }
+    assert fit.parameters["rprs"] == pytest.approx(0.08, abs=1e-6)
+    assert fit.lm_active_bounds == {"rprs": "lower"}
+
+
+def test_lc_fitter_lm_uses_same_duration_prior_residual_as_nested_likelihood(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    expected_duration = elca.transit_duration(prior)
+    prior["ars"] = 22.0
+    time = np.linspace(-0.04, 0.04, 101)
+    dataerr = np.full_like(time, 0.001)
+    captured = {}
+    original_least_squares = elca.least_squares
+
+    def capture_residuals(fun, *args, **kwargs):
+        captured["initial"] = fun(kwargs["x0"])
+        return original_least_squares(fun, *args, **kwargs)
+
+    monkeypatch.setattr(elca, "least_squares", capture_residuals)
+    fit = elca.lc_fitter(
+        time, elca.transit(time, prior), dataerr, np.zeros_like(time), prior,
+        {"ars": [8.0, 30.0]}, mode="lm", verbose=False,
+        duration_prior={"applied": True, "expected_duration": expected_duration, "sigma_log_duration": 0.05},
+    )
+    assert captured["initial"].size == time.size + 1
+    assert captured["initial"][-1] == pytest.approx(
+        np.log(elca.transit_duration(prior) / expected_duration) / 0.05,
+    )
+    assert fit.lm_duration_prior_applied is True
+    assert fit.parameters["ars"] == pytest.approx(12.0, abs=1e-5)
+    assert prior["ars"] == 22.0
+
+
 def test_lc_fitter_lm_minimizes_normalized_residuals_and_reports_covariance(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     prior = make_prior()

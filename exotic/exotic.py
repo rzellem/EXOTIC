@@ -705,6 +705,8 @@ def annotate_lm_boundary_scout(fit, payload):
     fit.lm_boundary_scout_final_bounds = clone_lightcurve_bounds(payload.get('bounds') or {})
     fit.lm_boundary_scout_parameters = dict(payload.get('parameters') or {})
     fit.lm_boundary_scout_errors = dict(payload.get('errors') or {})
+    fit.lm_boundary_scout_initial_parameters = dict(payload.get('initial_parameters') or {})
+    fit.lm_boundary_scout_active_bounds = dict(payload.get('active_bounds') or {})
     fit.lm_boundary_scout_note = payload.get('note')
 
 
@@ -3648,13 +3650,17 @@ def build_comparison_candidate_adaptive_summary(comparison_calibration, psf_data
 def build_comparison_candidate_transit_prior(p_dict, ld):
     return {
         'rprs': p_dict['rprs'],
+        'rprs_unc': p_dict.get('rprsUnc'),
         'ars': p_dict['aRs'],
+        'ars_unc': p_dict.get('aRsUnc'),
         'per': p_dict['pPer'],
         'inc': p_dict['inc'],
+        'inc_unc': p_dict.get('incUnc'),
         'u0': ld[0], 'u1': ld[1], 'u2': ld[2], 'u3': ld[3],
         'ecc': p_dict['ecc'],
         'omega': p_dict['omega'],
         'tmid': p_dict['midT'],
+        'tmid_unc': p_dict.get('midTUnc'),
         'a2': 0,
     }
 
@@ -4922,6 +4928,8 @@ def fit_quick_look_lightcurve_least_squares(
             use_impactparameter_rather_than_inclination_to_fit,
             'fixed_parameter_errors': quick_look_fixed_parameter_errors,
         }
+        if duration_prior is not None and callable_accepts_keyword(lc_fitter, 'duration_prior'):
+            fit_kwargs['duration_prior'] = duration_prior
         add_exposure_times_to_lc_fitter_kwargs(fit_kwargs, exposure_times_array)
         return lc_fitter(
             times,
@@ -5159,6 +5167,7 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         sigma_multiplier=35.0,
     )
     prior['tmid'] = tmid_search_summary['tmid']
+    prior['tmid_unc'] = tmid_search_summary['uncertainty']
     lower, upper = tmid_search_summary['bounds']
 
     eebls_search_summary = None
@@ -5208,6 +5217,8 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         'use_impactparameter_rather_than_inclination_to_fit':
         use_impactparameter_rather_than_inclination_to_fit,
     }
+    if callable_accepts_keyword(lc_fitter, 'duration_prior'):
+        prefit_kwargs['duration_prior'] = build_single_transit_duration_prior(p_dict)
     add_exposure_times_to_lc_fitter_kwargs(prefit_kwargs, good_exposure_times)
     prefit = lc_fitter(
         good_times,
@@ -5961,6 +5972,7 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             use_impactparameter_rather_than_inclination_to_fit,
             fixed_parameter_errors=fixed_errors,
             fixed_flux_baseline=True,
+            duration_prior=duration_prior if duration_prior is not None else build_single_transit_duration_prior(p_dict),
             source_indices=source_indices,
         )
         for preflight_iteration, cycle_payload in enumerate(
@@ -8026,6 +8038,7 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
     baseline_fit_mask=None,
     fixed_parameter_errors=None,
     fixed_flux_baseline=False,
+    duration_prior=None,
     enabled=None,
     max_iterations=ULTRANEST_LM_BOUNDARY_SCOUT_MAX_ITERATIONS,
     log_ultranest_launch=True,
@@ -8047,6 +8060,8 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
         'bounds': clone_lightcurve_bounds(working_bounds),
         'parameters': {},
         'errors': {},
+        'initial_parameters': dict(working_prior),
+        'active_bounds': {},
         'note': 'Disabled; UltraNest started from the configured search bounds.',
     }
     if not enabled or not working_bounds:
@@ -8060,6 +8075,16 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
     log_info(
         "LM boundary scout starting before UltraNest; search bounds will only expand, "
         "and posterior retries remain enabled as a safety net."
+    )
+    log_info(
+        "LM starting point: "
+        + ', '.join(
+            f"{key}={working_prior[key]}"
+            + (f" (input uncertainty={working_prior[key + '_unc']})"
+               if working_prior.get(key + '_unc') is not None else '')
+            for key in ('rprs', 'ars', 'inc', 'tmid') if key in working_prior
+        )
+        + f"; duration prior={'enabled' if duration_prior and duration_prior.get('applied') else 'disabled'}."
     )
     for iteration in range(1, max_iterations + 1):
         fit_kwargs = {
@@ -8075,6 +8100,8 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
             fit_kwargs['fixed_parameter_errors'] = dict(fixed_parameter_errors)
         if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
             fit_kwargs['fixed_flux_baseline'] = True
+        if duration_prior is not None and callable_accepts_keyword(lc_fitter, 'duration_prior'):
+            fit_kwargs['duration_prior'] = duration_prior
 
         try:
             last_fit = lc_fitter(
@@ -8101,6 +8128,13 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
         errors = dict(getattr(last_fit, 'errors', {}) or {})
         payload['parameters'] = parameters
         payload['errors'] = errors
+        payload['active_bounds'] = dict(getattr(last_fit, 'lm_active_bounds', {}) or {})
+        if payload['active_bounds']:
+            log_info(
+                "LM boundary contacts before UltraNest: "
+                + ', '.join(f"{key}={edge}" for key, edge in payload['active_bounds'].items())
+                + ". These are least-squares diagnostics; posterior parameters remain free."
+            )
 
         for key in working_bounds:
             try:
@@ -8203,6 +8237,7 @@ def run_pre_ultranest_lm_residual_rejection(
     use_impactparameter_rather_than_inclination_to_fit=True,
     fixed_parameter_errors=None,
     fixed_flux_baseline=False,
+    duration_prior=None,
     source_indices=None,
     max_cycles=FINAL_RESIDUAL_REJECTION_MAX_REFITS,
 ):
@@ -8261,6 +8296,7 @@ def run_pre_ultranest_lm_residual_rejection(
             use_impactparameter_rather_than_inclination_to_fit,
             fixed_parameter_errors=fixed_parameter_errors,
             fixed_flux_baseline=fixed_flux_baseline,
+            duration_prior=duration_prior,
             enabled=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
             log_ultranest_launch=False,
         )
@@ -8275,6 +8311,8 @@ def run_pre_ultranest_lm_residual_rejection(
             fit_kwargs['fixed_parameter_errors'] = dict(fixed_parameter_errors)
         if fixed_flux_baseline and callable_accepts_keyword(lc_fitter, 'fixed_flux_baseline'):
             fit_kwargs['fixed_flux_baseline'] = True
+        if duration_prior is not None and callable_accepts_keyword(lc_fitter, 'duration_prior'):
+            fit_kwargs['duration_prior'] = duration_prior
         try:
             lm_fit = lc_fitter(
                 active_times,
@@ -8709,6 +8747,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             baseline_fit_mask=baseline_fit_mask,
             fixed_parameter_errors=base_fixed_parameter_errors,
             fixed_flux_baseline=scout_fixed_flux_baseline,
+            duration_prior=duration_prior,
             enabled=use_lm_boundary_scout,
         )
     )
@@ -14062,64 +14101,25 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
     )
     annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
 
-    effective_bounds = get_posterior_refit_final_bounds(fit, bounds)
-    prefit_plan = build_final_fit_prefit_refinement_plan(
-        times,
-        flux_values,
-        flux_errors,
-        airmass,
-        prior,
-        effective_bounds,
-        fit,
-        jd_times=jd_times,
-        exposure_times_seconds=exposure_times_array,
-        baseline_duration_multiplier=baseline_duration_multiplier,
-    )
-    working_times = prefit_plan['times']
-    working_flux = prefit_plan['flux']
-    working_unc = prefit_plan['unc']
-    working_airmass = prefit_plan['airmass']
-    working_jd_times = prefit_plan['jd_times']
-    working_exposure_times = prefit_plan.get('exposure_times_seconds')
-    working_prior = prefit_plan['prior']
-    working_bounds = prefit_plan['bounds']
-
-    if prefit_plan.get('applied'):
-        log_info("Applying final-fit prefit refinement before the optional baseline detrending pass.")
-        log_info(prefit_plan['note'])
-        apply_vertical_flux_normalization_bound(
-            working_prior,
-            working_bounds,
-            working_flux,
-            disable_vertical_flux_normalization,
-        )
-        fit = run_nested_lightcurve_fit_with_rprs_posterior_retry(
-            working_times,
-            working_flux,
-            working_unc,
-            working_airmass,
-            working_prior,
-            working_bounds,
-            jd_times=working_jd_times,
-            exposure_times_seconds=working_exposure_times,
-            use_impactparameter_rather_than_inclination_to_fit=use_impactparameter_rather_than_inclination_to_fit,
-            duration_prior=duration_prior,
-            keep_ultranest_sampler=keep_ultranest_for_sparse_extension,
-            pre_ultranest_coverage_assessment=pre_ultranest_coverage_assessment,
-            search_restriction_prior=search_restriction_prior,
-            use_lm_boundary_scout=ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED,
-        )
-        fit = apply_plot_time_range(fit, working_times if plot_time_range is None else plot_time_range)
-        annotate_airmass_fit(fit, working_airmass, skip_airmass_fit, note=airmass_skip_note)
-        annotate_transit_qc_fit_context(
-            fit,
-            planet_dict=expected_planet_dict,
-            tmid_search_summary=expected_tmid_search_summary,
-            eebls_search_summary=eebls_search_summary,
-        )
-        annotate_pre_ultranest_transit_coverage(fit, pre_ultranest_coverage_assessment)
-
-    working_bounds = get_posterior_refit_final_bounds(fit, working_bounds)
+    # The configured ephemeris/EEBLS window and deterministic scout already
+    # establish the search. Do not spend another posterior fit narrowing that
+    # window around a result obtained from the same observations.
+    working_times = np.asarray(times, dtype=float)
+    working_flux = np.asarray(flux_values, dtype=float)
+    working_unc = np.asarray(flux_errors, dtype=float)
+    working_airmass = np.asarray(airmass, dtype=float)
+    working_jd_times = jd_times
+    working_exposure_times = exposure_times_array
+    working_prior = dict(prior)
+    working_bounds = get_posterior_refit_final_bounds(fit, bounds)
+    prefit_plan = {
+        'applied': False,
+        'note': 'Routine second nested transit-window refinement removed; retained the input series and search window.',
+        'original_point_count': int(working_times.size),
+        'refined_point_count': int(working_times.size),
+        'original_tmid_bounds': clone_lightcurve_bounds(bounds).get('tmid'),
+        'refined_tmid_bounds': clone_lightcurve_bounds(working_bounds).get('tmid'),
+    }
 
     annotate_final_fit_prefit_refinement(
         fit,

@@ -1,12 +1,24 @@
 import gzip
 import json
+import subprocess
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import numpy as np
-from astropy.io.fits import getheader, writeto
+from astropy.io.fits import getheader, writeto, setval
 import pytest
 
 from exotic.api.plate_solution import NextAstroPlateSolution, PlateSolution
+from exotic.api.plate_solution import _NEXTASTRO_CLIENT_API_KEY
+from exotic.api.plate_solution import _NEXTASTRO_COLAB_CLIENT_API_KEY
+
+
+@pytest.fixture(autouse=True)
+def desktop_runtime(monkeypatch):
+    monkeypatch.delenv("COLAB_RELEASE_TAG", raising=False)
+    monkeypatch.delenv("GOOGLE_COLAB", raising=False)
+    monkeypatch.delitem(sys.modules, "google.colab", raising=False)
 
 
 class DummyResponse:
@@ -53,6 +65,98 @@ def test_generate_source_list(tmp_path):
     assert source_list["origin"] == "exotic"
     assert len(source_list["x"]) > 0
     assert len(source_list["x"]) == len(source_list["y"]) == len(source_list["flux"])
+
+
+@pytest.mark.parametrize("key,value,explicit,expected", [
+    ("TELID", "eco1", None, "eco1"),
+    ("OBSNAME", "Southern Observatory", None, "Southern Observatory"),
+    ("SITEID", "eco", "eco2", "eco2"),
+    (None, None, None, None),
+    (None, None, "Observatório Sul", "Observatório Sul"),
+])
+def test_submission_reports_site_and_exotic_origin(tmp_path, monkeypatch, key, value, explicit, expected):
+    fits_path = _create_test_fits(tmp_path)
+    if key:
+        setval(fits_path, key, value=value)
+    captured = []
+    def post(url, data, headers, timeout):
+        captured.append((_decode_request_body(data, headers), headers))
+        return DummyResponse({"status": "queued", "request_id": "usage-test"})
+    monkeypatch.setattr("exotic.api.plate_solution.requests.post", post)
+    solver = NextAstroPlateSolution(file=fits_path, directory=tmp_path, site=explicit)
+    assert solver._submit_solve_request({"x": [1], "y": [1], "origin": "exotic"}) == "usage-test"
+    payload, headers = captured[0]
+    assert payload["provenance"] == {"site": expected, "origin": "exotic"}
+    assert headers["X-NextAstro-Software"].startswith("EXOTIC/")
+    assert headers["X-NextAstro-Client"] == "exotic"
+    assert headers["X-NextAstro-API-Key"] == _NEXTASTRO_CLIENT_API_KEY
+
+
+def test_embedding_app_uses_its_own_identity_without_changing_exotic_defaults(tmp_path, monkeypatch):
+    fits_path = _create_test_fits(tmp_path)
+    captured = []
+    def post(url, data, headers, timeout):
+        captured.append((_decode_request_body(data, headers), headers))
+        return DummyResponse({"status": "queued", "request_id": "embedding-test"})
+    monkeypatch.setattr("exotic.api.plate_solution.requests.post", post)
+    source_list = {"x": [1], "y": [1], "origin": "exotic"}
+    embedded = NextAstroPlateSolution(file=fits_path, client_name="transitlab",
+        client_api_key="nextastro-transitlab-astrometry-v1", software_name="TransitLab/2.10.3", origin="transitlab")
+    assert embedded._submit_solve_request(source_list) == "embedding-test"
+    payload, headers = captured[0]
+    assert headers["X-NextAstro-Client"] == "transitlab"
+    assert headers["X-NextAstro-API-Key"] == "nextastro-transitlab-astrometry-v1"
+    assert headers["X-NextAstro-Software"] == "TransitLab/2.10.3"
+    assert payload["provenance"]["origin"] == "transitlab"
+    assert NextAstroPlateSolution(file=fits_path)._submit_solve_request(source_list) == "embedding-test"
+    assert captured[1][1]["X-NextAstro-Client"] == "exotic"
+    assert captured[1][1]["X-NextAstro-API-Key"] == _NEXTASTRO_CLIENT_API_KEY
+
+
+@pytest.mark.parametrize("signal", ["COLAB_RELEASE_TAG", "GOOGLE_COLAB", "google.colab"])
+def test_colab_runtime_automatically_sends_distinct_app_identity(tmp_path, monkeypatch, signal):
+    if signal == "google.colab":
+        monkeypatch.setitem(sys.modules, signal, ModuleType(signal))
+    else:
+        monkeypatch.setenv(signal, "colab-test")
+    fits_path = _create_test_fits(tmp_path)
+    setval(fits_path, "TELID", value="eco1")
+    captured = []
+    def post(url, data, headers, timeout):
+        captured.append((_decode_request_body(data, headers), headers))
+        return DummyResponse({"status": "queued", "request_id": "colab-test"})
+    monkeypatch.setattr("exotic.api.plate_solution.requests.post", post)
+    solver = NextAstroPlateSolution(file=fits_path)
+    assert solver._submit_solve_request({"x": [1], "y": [1], "origin": "exotic"}) == "colab-test"
+    payload, headers = captured[0]
+    assert headers["X-NextAstro-Client"] == "exotic-colab"
+    assert headers["X-NextAstro-API-Key"] == _NEXTASTRO_COLAB_CLIENT_API_KEY
+    assert headers["X-NextAstro-API-Key"] != _NEXTASTRO_CLIENT_API_KEY
+    assert headers["X-NextAstro-Software"].startswith("EXOTIC-Colab/")
+    assert payload["provenance"] == {"site": "eco1", "origin": "exotic-colab"}
+
+
+def test_explicit_app_identity_is_preserved_in_colab(monkeypatch):
+    monkeypatch.setenv("COLAB_RELEASE_TAG", "colab-test")
+    solver = NextAstroPlateSolution(client_name="transitlab", client_api_key="transitlab-key",
+                                   software_name="TransitLab/test", origin="transitlab")
+    assert (solver.client_name, solver.client_api_key, solver.software_name, solver.origin) == (
+        "transitlab", "transitlab-key", "TransitLab/test", "transitlab")
+    desktop = NextAstroPlateSolution(client_name="exotic")
+    assert desktop.client_api_key == _NEXTASTRO_CLIENT_API_KEY
+    assert desktop.origin == "exotic"
+
+
+def test_notebook_subprocess_inherits_colab_identity(monkeypatch):
+    monkeypatch.setenv("COLAB_RELEASE_TAG", "colab-test")
+    script = (
+        "import json; from exotic.api.plate_solution import NextAstroPlateSolution; "
+        "solver = NextAstroPlateSolution(); "
+        "print(json.dumps([solver.client_name, solver.client_api_key, solver.origin]))")
+    output = subprocess.check_output([sys.executable, "-c", script],
+                                     cwd=Path(__file__).resolve().parents[1], text=True)
+    assert json.loads(output.strip().splitlines()[-1]) == [
+        "exotic-colab", _NEXTASTRO_COLAB_CLIENT_API_KEY, "exotic-colab"]
 
 
 def test_plate_solution_writes_wcs_file(tmp_path, monkeypatch):

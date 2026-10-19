@@ -48,8 +48,10 @@ from tenacity import retry, retry_if_exception_type, retry_if_result, \
 
 try:
     from .http_compression import build_compressed_json_request
+    from .ultranest_utils import _is_colab_runtime
 except ImportError:
     from http_compression import build_compressed_json_request
+    from ultranest_utils import _is_colab_runtime
 
 try:
     from ..version import __version__
@@ -70,6 +72,11 @@ _NEXTASTRO_STATUS_MAX_POLLS = 60
 _NEXTASTRO_STATUS_POLL_SEC = 2
 _NEXTASTRO_IN_PROGRESS_STATUSES = {'queued', 'running'}
 _NEXTASTRO_SOFTWARE_NAME = f"EXOTIC/{__version__}"
+# Public application identity for NextAstro usage attribution.
+_NEXTASTRO_CLIENT_NAME = "exotic"
+_NEXTASTRO_CLIENT_API_KEY = "nextastro-exotic-astrometry-v1"
+_NEXTASTRO_COLAB_CLIENT_NAME = "exotic-colab"
+_NEXTASTRO_COLAB_CLIENT_API_KEY = "nextastro-exotic-colab-astrometry-v1"
 
 
 def is_false(value):
@@ -301,7 +308,8 @@ class _SourceListExtractor:
 class NextAstroPlateSolution(_SourceListExtractor):
 
     def __init__(self, file=None, directory=None, api_url='https://astrometry.nextastro.org/', ra=None, dec=None,
-                 pixel_scale=None, suppress_fail_warning=False, message_logger=None):
+                 pixel_scale=None, suppress_fail_warning=False, message_logger=None, site=None, *,
+                 client_name=None, client_api_key=None, software_name=None, origin=None):
         self.api_url = api_url.rstrip('/')
         self.file = file
         self.directory = directory
@@ -310,6 +318,15 @@ class NextAstroPlateSolution(_SourceListExtractor):
         self.pixel_scale = pixel_scale
         self.suppress_fail_warning = suppress_fail_warning
         self.message_logger = message_logger
+        self.site = site
+        self.client_name = client_name if client_name is not None else (
+            _NEXTASTRO_COLAB_CLIENT_NAME if _is_colab_runtime() else _NEXTASTRO_CLIENT_NAME)
+        colab_client = self.client_name == _NEXTASTRO_COLAB_CLIENT_NAME
+        self.client_api_key = client_api_key if client_api_key is not None else (
+            _NEXTASTRO_COLAB_CLIENT_API_KEY if colab_client else _NEXTASTRO_CLIENT_API_KEY)
+        self.software_name = software_name or (
+            f"EXOTIC-Colab/{__version__}" if colab_client else _NEXTASTRO_SOFTWARE_NAME)
+        self.origin = origin if origin is not None else ("exotic-colab" if colab_client else "exotic")
         self.last_error_type = None
         self.last_http_status = None
 
@@ -380,7 +397,16 @@ class NextAstroPlateSolution(_SourceListExtractor):
 
     def _submit_solve_request(self, source_list):
         image_data = getdata(filename=self.file)
+        image_header = getheader(filename=self.file)
+        site = self.site
+        if not site:
+            for key in ("OBSID", "TELID", "SITEID", "OBSNAME", "OBSERVAT"):
+                value = image_header.get(key)
+                if value is not None and str(value).strip():
+                    site = str(value).strip()
+                    break
         payload = {
+            "provenance": {"site": str(site).strip() if site else None, "origin": self.origin},
             "sources": source_list,
             "image": {
                 "width": int(image_data.shape[-1]),
@@ -397,7 +423,9 @@ class NextAstroPlateSolution(_SourceListExtractor):
             payload["hints"] = hints
 
         request_body, headers, content_encoding, raw_size, compressed_size = build_compressed_json_request(payload)
-        headers["X-NextAstro-Software"] = _NEXTASTRO_SOFTWARE_NAME
+        headers["X-NextAstro-Software"] = self.software_name
+        headers["X-NextAstro-Client"] = self.client_name
+        headers["X-NextAstro-API-Key"] = self.client_api_key
 
         self._emit_debug(f"NextAstro astrometry request JSON: {self._json_message(payload)}")
         self._emit_debug(

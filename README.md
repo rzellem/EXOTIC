@@ -287,6 +287,20 @@ The gate runs before likelihood worker pools are created and covers all EXOTIC U
 
 - Automatic Plate Solution from http://nova.astrometry.net
 
+  NextAstro plate-solve requests identify the EXOTIC version and `exotic` request
+  origin. They also send the image's observatory/site label when available, using
+  FITS `OBSID`, `TELID`, `SITEID`, `OBSNAME`, then `OBSERVAT` in that order.
+  Programmatic callers can set `NextAstroPlateSolution(..., site="eco1")` explicitly.
+  Images without this metadata can still be solved; the astrometry server's
+  `/usage` report groups unnamed callers by software and source IP.
+  EXOTIC embeds its own shared app key and sends `X-NextAstro-Client: exotic`.
+  Google Colab runtimes automatically use a separate `exotic-colab` key, report
+  `EXOTIC-Colab/<version>`, and set the origin to `exotic-colab`. Update EXOTIC in
+  the notebook environment to enable this; no notebook key setup is needed.
+  The server requires a matching app key for submissions. Applications embedding
+  `NextAstroPlateSolution` can pass their own `client_name`, `client_api_key`,
+  `software_name`, and `origin` arguments. TransitLab uses its separate app key.
+
 - Resolve targets with [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu/) + retrieve light curve priors
 
 - Hot Pixel Masking

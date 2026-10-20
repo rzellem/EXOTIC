@@ -76,6 +76,7 @@ import traceback
 from concurrent.futures import ProcessPoolExecutor as _ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from time import sleep, perf_counter
 from types import SimpleNamespace
+from urllib.parse import urlsplit, urlunsplit
 # Image alignment import
 import astroalign as aa
 aa.PIXEL_TOL = 1
@@ -500,7 +501,11 @@ TIME_REJECTION_GROUP_GAP_CADENCE_MULTIPLIER = 2.5
 NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS = 5
 NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS = 10
 NEXTASTRO_VARIABILITY_RETRYABLE_HTTP_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
-NEXTASTRO_PHOTOMETRY_API_URL = 'https://photometry.nextastro.org'
+NEXTASTRO_PHOTOMETRY_API_URLS = (
+    'https://photometry.daltonnextastro.org',
+    'https://photometry.nextastro.org',
+)
+NEXTASTRO_PHOTOMETRY_API_URL = NEXTASTRO_PHOTOMETRY_API_URLS[0]
 NEXTASTRO_VSX_QUERY_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/vsx_query'
 NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/single_object'
 NEXTASTRO_PHOTOMETRY_OBJECTS_QUERY_URL = f'{NEXTASTRO_PHOTOMETRY_API_URL}/objects_query'
@@ -16562,7 +16567,11 @@ def should_use_multiprocess_transform_precompute(inputfiles, requested_processes
 
 
 def get_wcs(file, directory="", use_nextastro_astrometry=False, ra=None, dec=None, pixel_scale=None):
-    astrometry_service = 'NextAstro astrometry server (https://astrometry.nextastro.org/)' if use_nextastro_astrometry else 'nova.astrometry.net (source list)'
+    astrometry_service = (
+        'NextAstro astrometry servers (https://astrometry.daltonnextastro.org/ first; '
+        'https://astrometry.nextastro.org/ fallback)'
+        if use_nextastro_astrometry else 'nova.astrometry.net (source list)'
+    )
     log_info("\nGetting the plate solution for your imaging file to translate pixel coordinates on the sky. "
              f"\nUsing astrometry service: {astrometry_service}."
              "\nPlease wait....")
@@ -17944,13 +17953,40 @@ def build_comp_ra_dec(ra_wcs, dec_wcs, comp_stars):
     return comp_ra_dec
 
 
+def _call_nextastro_photometry_service(url, operation):
+    """Try Dalton before the original server, switching only after a failure."""
+    url = str(url).strip()
+    parts = urlsplit(url)
+    urls = (url,)
+    if parts.netloc.lower() in {urlsplit(base).netloc for base in NEXTASTRO_PHOTOMETRY_API_URLS}:
+        suffix = urlunsplit(("", "", parts.path, parts.query, parts.fragment))
+        urls = tuple(base + suffix for base in NEXTASTRO_PHOTOMETRY_API_URLS)
+
+    for index, selected in enumerate(urls):
+        try:
+            return operation(selected)
+        except Exception as exc:
+            if index + 1 == len(urls):
+                raise
+            log_info(
+                f"NextAstro photometry service {selected} failed ({exc}); trying {urls[index + 1]}",
+                warn=True,
+            )
+
+
 @retry(
     stop=stop_after_attempt(NEXTASTRO_VARIABILITY_MAX_RETRY_ATTEMPTS),
     wait=wait_fixed(NEXTASTRO_VARIABILITY_RETRY_WAIT_SECONDS),
     retry=retry_if_exception(should_retry_nextastro_variability_error),
 )
 def nextastro_variability_test(comp_ra_dec):
-    api_url = 'https://photometry.nextastro.org/variability_test'
+    return _call_nextastro_photometry_service(
+        NEXTASTRO_PHOTOMETRY_API_URL + '/variability_test',
+        lambda selected: _nextastro_variability_test(comp_ra_dec, selected),
+    )
+
+
+def _nextastro_variability_test(comp_ra_dec, api_url):
 
     payload = [{'ra': float(ra), 'dec': float(dec)} for ra, dec in comp_ra_dec]
     log_info(f"NextAstro variability request JSON: {json.dumps(payload)}")
@@ -18309,7 +18345,14 @@ def nextastro_photometry_catalog_match(catalog_response, ra, dec, obs_filter,
     retry=retry_if_exception(should_retry_nextastro_variability_error),
 )
 def nextastro_photometry_cone_query(ra, dec, radius_arcsec, columns=None):
-    api_url = f'{NEXTASTRO_PHOTOMETRY_API_URL}/cone_query'
+    return _call_nextastro_photometry_service(
+        NEXTASTRO_PHOTOMETRY_API_URL,
+        lambda selected: _nextastro_photometry_cone_query(selected, ra, dec, radius_arcsec, columns),
+    )
+
+
+def _nextastro_photometry_cone_query(base_url, ra, dec, radius_arcsec, columns=None):
+    api_url = f'{base_url}/cone_query'
     payload = {
         'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
         'ra': float(ra),
@@ -18361,6 +18404,15 @@ def _validate_nextastro_object_match(result, context):
 )
 def nextastro_photometry_single_object_query(
         ra, dec, radius_arcsec, columns=None, required_columns=None):
+    return _call_nextastro_photometry_service(
+        NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL,
+        lambda selected: _nextastro_photometry_single_object_query(
+            selected, ra, dec, radius_arcsec, columns, required_columns),
+    )
+
+
+def _nextastro_photometry_single_object_query(
+        url, ra, dec, radius_arcsec, columns=None, required_columns=None):
     payload = {
         'columns': list(columns or NEXTASTRO_PHOTOMETRY_COLUMNS),
         'ra': float(ra),
@@ -18371,7 +18423,7 @@ def nextastro_photometry_single_object_query(
         payload['required_columns'] = list(required_columns)
     log_info(f"NextAstro single-object photometry request JSON: {json.dumps(payload)}")
     result = requests.post(
-        NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL,
+        url,
         json=payload,
         timeout=30,
     )
@@ -18400,6 +18452,16 @@ def nextastro_photometry_single_object_query(
 )
 def nextastro_photometry_objects_query(
         coordinates, radius_arcsec, columns=None, required_columns=None):
+    coordinates = list(coordinates)
+    return _call_nextastro_photometry_service(
+        NEXTASTRO_PHOTOMETRY_OBJECTS_QUERY_URL,
+        lambda selected: _nextastro_photometry_objects_query(
+            selected, coordinates, radius_arcsec, columns, required_columns),
+    )
+
+
+def _nextastro_photometry_objects_query(
+        url, coordinates, radius_arcsec, columns=None, required_columns=None):
     objects = [
         {'key': str(index), 'ra': float(ra), 'dec': float(dec)}
         for index, (ra, dec) in enumerate(coordinates)
@@ -18422,7 +18484,7 @@ def nextastro_photometry_objects_query(
         f"{json.dumps({'objects': objects, 'radius_arcsec': payload['radius_arcsec']})}"
     )
     result = requests.post(
-        NEXTASTRO_PHOTOMETRY_OBJECTS_QUERY_URL,
+        url,
         json=payload,
         timeout=30,
     )
@@ -22124,21 +22186,24 @@ def update_coordinates_with_proper_motion(info_dict, time_obs):
     missing_values = []
 
     for key in ['dist', 'pm_ra', 'pm_dec']:
-        raw_value = info_dict.get(key, 0.0)
+        raw_value = info_dict.get(key)
 
         try:
             parsed_value = float(raw_value)
         except (TypeError, ValueError):
-            parsed_value = 0.0
+            parsed_value = np.nan
 
         numeric_values[key] = parsed_value
-        if parsed_value == 0.0:
-            missing_values.append(parameter_names[key])
+        # A zero motion component is valid. A distance must be positive, and
+        # non-finite metadata would propagate NaNs through ERFA and the WCS.
+        if not np.isfinite(parsed_value) or (key == 'dist' and parsed_value <= 0.0):
+            missing_values.append(f"{parameter_names[key]}={raw_value!r}")
 
     if missing_values:
         missing_values = ", ".join(missing_values)
-        log_info("Warning: Cannot account for proper motion due to missing values in: "
-                 f"\n{missing_values}. If you find your target or comparisons are not detected well, please "
+        log_info("Warning: Cannot account for proper motion due to missing or invalid values in: "
+                 f"\n{missing_values}. Using the supplied RA/Dec without proper-motion correction. "
+                 "If you find your target or comparisons are not detected well, please "
                  f"re-run and fill in values in the initialization file to account for proper motion", warn=True)
 
         return info_dict['ra'], info_dict['dec']
@@ -35422,7 +35487,7 @@ def parse_args():
                              "Do not combine with the -ov, --override argument.")
     parser.add_argument('--use-nextastro-astrometry',
                         action='store_true',
-                        help="Use NextAstro's astrometry service (https://astrometry.nextastro.org/) instead of nova.astrometry.net for plate solving.")
+                        help="Use NextAstro's astrometry service (Dalton first, then astrometry.nextastro.org) instead of nova.astrometry.net for plate solving.")
     parser.add_argument('--use-nextastro-variability-server',
                         action='store_true',
                         help="Use NextAstro's variability server for a batch comparison-star variability check. "

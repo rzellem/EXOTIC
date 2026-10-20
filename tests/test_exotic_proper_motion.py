@@ -3,10 +3,11 @@ import importlib.util
 import json
 import sys
 import types
+import warnings
 from pathlib import Path
 import numpy as np
 import pytest
-from astropy.wcs import WCS
+from astropy.wcs import WCS, Sip
 
 
 def _module_available(name: str) -> bool:
@@ -444,6 +445,89 @@ def test_update_coordinates_accepts_numeric_strings():
 
     assert isinstance(updated_ra, float)
     assert isinstance(updated_dec, float)
+    assert updated_ra == pytest.approx(10.0000713886, rel=0, abs=1e-8)
+    assert updated_dec == pytest.approx(19.9999664583, rel=0, abs=1e-8)
+
+
+@pytest.mark.parametrize("key", ["dist", "pm_ra", "pm_dec"])
+@pytest.mark.parametrize("value", [None, "", "nan-value", np.nan, "nan", np.inf, -np.inf])
+def test_update_coordinates_reports_unusable_metadata_without_erfa_warnings(monkeypatch, key, value):
+    info = {"ra": 10.0, "dec": 20.0, "dist": 100.0, "pm_ra": 10.5, "pm_dec": -5.25}
+    info[key] = value
+    messages = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, **kwargs: messages.append(message))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        coordinates = update_coordinates_with_proper_motion(info, 2459945.5)
+
+    assert coordinates == (info["ra"], info["dec"])
+    expected_parameter = {
+        "dist": "Distance (pc)",
+        "pm_ra": "Proper Motion RA (mas/yr)",
+        "pm_dec": "Proper Motion DEC (mas/yr)",
+    }[key]
+    assert any(expected_parameter in message for message in messages)
+    assert any("without proper-motion correction" in message for message in messages)
+
+
+@pytest.mark.parametrize("key", ["dist", "pm_ra", "pm_dec"])
+def test_update_coordinates_does_not_treat_absent_metadata_as_zero_motion(monkeypatch, key):
+    info = {"ra": 10.0, "dec": 20.0, "dist": 100.0, "pm_ra": 10.5, "pm_dec": -5.25}
+    del info[key]
+    messages = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, **kwargs: messages.append(message))
+
+    assert update_coordinates_with_proper_motion(info, 2459945.5) == (10.0, 20.0)
+    assert any("without proper-motion correction" in message for message in messages)
+
+
+@pytest.mark.parametrize("distance", [0.0, -100.0])
+def test_update_coordinates_reports_nonpositive_distance(monkeypatch, distance):
+    info = {"ra": 10.0, "dec": 20.0, "dist": distance, "pm_ra": 10.5, "pm_dec": -5.25}
+    messages = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, **kwargs: messages.append(message))
+
+    assert update_coordinates_with_proper_motion(info, 2459945.5) == (10.0, 20.0)
+    assert any("Distance (pc)" in message for message in messages)
+
+
+@pytest.mark.parametrize("pm_ra, pm_dec", [(0.0, -5.25), (10.5, 0.0), (0.0, 0.0)])
+def test_update_coordinates_accepts_zero_proper_motion_components(monkeypatch, pm_ra, pm_dec):
+    info = {"ra": 10.0, "dec": 20.0, "dist": 100.0, "pm_ra": pm_ra, "pm_dec": pm_dec}
+    messages = []
+    monkeypatch.setattr("exotic.exotic.log_info", lambda message, **kwargs: messages.append(message))
+
+    updated_ra, updated_dec = update_coordinates_with_proper_motion(info, 2459945.5)
+
+    # First-order angular motion over approximately 23 years, in degrees.
+    expected_ra = 10.0 + pm_ra * 23.0 / (3_600_000.0 * np.cos(np.deg2rad(20.0)))
+    expected_dec = 20.0 + pm_dec * 23.0 / 3_600_000.0
+    assert updated_ra == pytest.approx(expected_ra, rel=0, abs=1e-8)
+    assert updated_dec == pytest.approx(expected_dec, rel=0, abs=1e-8)
+    assert messages == []
+
+
+def test_missing_distance_keeps_target_finite_through_distorted_wcs_projection():
+    from exotic.exotic import project_ra_dec_to_wcs_pixel
+
+    wcs = WCS(naxis=2)
+    wcs.wcs.crpix = [50.0, 50.0]
+    wcs.wcs.crval = [10.0, 20.0]
+    wcs.wcs.cdelt = [-0.001, 0.001]
+    wcs.wcs.ctype = ["RA---TAN-SIP", "DEC--TAN-SIP"]
+    a = np.zeros((3, 3))
+    b = np.zeros((3, 3))
+    a[2, 0] = b[0, 2] = 1e-5
+    wcs.sip = Sip(a, b, None, None, wcs.wcs.crpix)
+    info = {"ra": 10.0, "dec": 20.0, "dist": np.nan, "pm_ra": 10.5, "pm_dec": -5.25}
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        ra, dec = update_coordinates_with_proper_motion(info, 2459945.5)
+        pixel = project_ra_dec_to_wcs_pixel(ra, dec, wcs.to_header(relax=True))
+
+    assert pixel == pytest.approx((49.0, 49.0))
 
 
 @pytest.mark.parametrize("errors", [None, [0.01], [np.nan] * 9,

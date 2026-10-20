@@ -54,6 +54,58 @@ def _create_test_fits(tmp_path: Path) -> Path:
     return fits_path
 
 
+@pytest.mark.parametrize('fail_primary', [False, True])
+@pytest.mark.parametrize('api_url', [
+    'https://astrometry.daltonnextastro.org/',
+    'https://astrometry.nextastro.org/',
+])
+def test_dalton_first_solve_keeps_status_on_selected_host_without_reloading_submission(
+        tmp_path, monkeypatch, fail_primary, api_url):
+    bases = ('https://astrometry.daltonnextastro.org', 'https://astrometry.nextastro.org')
+    module = sys.modules[NextAstroPlateSolution.__module__]
+    path = _create_test_fits(tmp_path)
+    (tmp_path / 'working_artifacts').mkdir()
+    solver = NextAstroPlateSolution(file=path, directory=tmp_path, api_url=api_url, suppress_fail_warning=True)
+    monkeypatch.setattr(solver, '_generate_source_list', lambda: {'x': [1], 'y': [2], 'flux': [10]})
+    posts, gets, data_reads = [], [], []
+    original_getdata = module.getdata
+    def getdata(*args, **kwargs):
+        data_reads.append(True)
+        return original_getdata(*args, **kwargs)
+    def post(url, **kwargs):
+        posts.append(url)
+        if fail_primary and url.startswith(bases[0]):
+            raise module.requests.ConnectionError('Dalton offline')
+        return DummyResponse({'status': 'queued', 'request_id': 'a' * 32})
+    def get(url, **kwargs):
+        gets.append(url)
+        return DummyResponse({'status': 'solved', 'solution': {'wcs_header': {'CTYPE1': 'RA---TAN'}}})
+    monkeypatch.setattr(module, 'getdata', getdata)
+    monkeypatch.setattr(module.requests, 'post', post)
+    monkeypatch.setattr(module.requests, 'get', get)
+    assert solver.plate_solution().exists()
+    assert posts == [base + '/solve' for base in bases[:2 if fail_primary else 1]]
+    assert gets == [bases[int(fail_primary)] + '/status/' + 'a' * 32]
+    # One processing read builds the request; one writes the WCS image.
+    assert len(data_reads) == 2
+
+
+def test_custom_astrometry_endpoint_does_not_switch_to_standard_servers(monkeypatch):
+    solver = NextAstroPlateSolution(api_url='https://custom.example/astrometry', suppress_fail_warning=True)
+    module = sys.modules[NextAstroPlateSolution.__module__]
+    attempts = []
+    monkeypatch.setattr(solver, '_generate_source_list', lambda: {'x': [1], 'y': [2], 'flux': [10]})
+
+    def submit(source_list):
+        attempts.append(solver.api_url)
+        raise module.requests.ConnectionError('Custom server offline')
+
+    monkeypatch.setattr(solver, '_submit_solve_request', submit)
+
+    assert solver.plate_solution() is False
+    assert attempts == ['https://custom.example/astrometry']
+
+
 def test_generate_source_list(tmp_path):
     fits_path = _create_test_fits(tmp_path)
     solver = NextAstroPlateSolution(file=fits_path, directory=tmp_path)

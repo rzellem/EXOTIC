@@ -180,10 +180,19 @@ class NASAExoplanetArchive:
             try:
                 self.planet, candidate = self._new_scrape(filename="eaConf.json")
             except (RetryError, requests.exceptions.RequestException, ConnectionError):
+                print(
+                    f"NASA Exoplanet Archive lookup failed for {self.planet}. "
+                    "Falling back to the NextAstro NEA cache server.",
+                    flush=True,
+                )
                 if not self._load_params_from_nextastro_cache():
                     raise
                 candidate = False
-                print(f"Successfully found {self.planet} in NextAstro cached NASA Exoplanet Archive parameters!")
+                print(
+                    f"Successfully loaded cached NASA Exoplanet Archive parameters for {self.planet} "
+                    "from the NextAstro NEA cache server!",
+                    flush=True,
+                )
                 return self.planet, candidate, self.pl_dict
 
             if not candidate:

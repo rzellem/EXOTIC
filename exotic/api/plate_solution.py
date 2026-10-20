@@ -39,6 +39,7 @@ from astropy.io.fits import BinTableHDU, Column, Header, PrimaryHDU, getdata, ge
 from astropy.stats import sigma_clipped_stats
 from json import dumps
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 import numpy as np
 from photutils.detection import DAOStarFinder
 import requests
@@ -77,6 +78,10 @@ _NEXTASTRO_CLIENT_NAME = "exotic"
 _NEXTASTRO_CLIENT_API_KEY = "nextastro-exotic-astrometry-v1"
 _NEXTASTRO_COLAB_CLIENT_NAME = "exotic-colab"
 _NEXTASTRO_COLAB_CLIENT_API_KEY = "nextastro-exotic-colab-astrometry-v1"
+_NEXTASTRO_API_URLS = (
+    "https://astrometry.daltonnextastro.org",
+    "https://astrometry.nextastro.org",
+)
 
 
 def is_false(value):
@@ -307,10 +312,12 @@ class _SourceListExtractor:
 
 class NextAstroPlateSolution(_SourceListExtractor):
 
-    def __init__(self, file=None, directory=None, api_url='https://astrometry.nextastro.org/', ra=None, dec=None,
+    def __init__(self, file=None, directory=None, api_url='https://astrometry.daltonnextastro.org/', ra=None, dec=None,
                  pixel_scale=None, suppress_fail_warning=False, message_logger=None, site=None, *,
                  client_name=None, client_api_key=None, software_name=None, origin=None):
         self.api_url = api_url.rstrip('/')
+        self._configured_api_url = self.api_url
+        self._submission_request = None
         self.file = file
         self.directory = directory
         self.ra = ra
@@ -334,17 +341,35 @@ class NextAstroPlateSolution(_SourceListExtractor):
         self.last_error_type = None
         self.last_http_status = None
         self._emit_debug(f"Using NextAstro astrometry server at {self.api_url} for plate solving.")
+        self._submission_request = None
         source_list = self._generate_source_list()
         if not source_list:
             return self._fail('Source extraction for NextAstro astrometry server')
 
-        request_id = self._submit_solve_request(source_list)
-        if not request_id:
-            return self._fail('NextAstro solve submission')
-
-        wcs_header = self._poll_for_solution(request_id)
+        configured_url = self._configured_api_url.strip()
+        parts = urlsplit(configured_url)
+        candidates = (configured_url,)
+        if parts.netloc.lower() in {urlsplit(base).netloc for base in _NEXTASTRO_API_URLS}:
+            suffix = urlunsplit(("", "", parts.path, parts.query, parts.fragment))
+            candidates = tuple(base + suffix for base in _NEXTASTRO_API_URLS)
+        wcs_header = None
+        for index, base in enumerate(candidates):
+            self.api_url = base
+            try:
+                request_id = self._submit_solve_request(source_list)
+                if not request_id:
+                    failure = 'NextAstro solve submission'
+                else:
+                    wcs_header = self._poll_for_solution(request_id)
+                    failure = 'NextAstro solve status'
+                if wcs_header:
+                    break
+            except requests.RequestException as exc:
+                failure = f'NextAstro service request: {exc}'
+            if index + 1 < len(candidates):
+                self._emit_debug(f'NextAstro astrometry {base} failed ({failure}); trying {candidates[index + 1]}.')
         if not wcs_header:
-            return self._fail('NextAstro solve status')
+            return self._fail(failure)
 
         wcs_file = Path(self.directory) / "working_artifacts" / "wcs.fits"
         hdu = PrimaryHDU(data=getdata(filename=self.file), header=wcs_header)
@@ -396,6 +421,8 @@ class NextAstroPlateSolution(_SourceListExtractor):
             return None
 
     def _submit_solve_request(self, source_list):
+        if self._submission_request is not None:
+            return self._post_solve_request()
         image_data = getdata(filename=self.file)
         image_header = getheader(filename=self.file)
         site = self.site
@@ -432,6 +459,11 @@ class NextAstroPlateSolution(_SourceListExtractor):
             "NextAstro astrometry request compression: "
             f"{content_encoding} ({compressed_size} bytes sent; {raw_size} bytes raw)"
         )
+        self._submission_request = (request_body, headers)
+        return self._post_solve_request()
+
+    def _post_solve_request(self):
+        request_body, headers = self._submission_request
         response = requests.post(f"{self.api_url}/solve", data=request_body, headers=headers, timeout=_RQ_TIMEOUT)
         response_json = self._decode_response_json(response, 'Solve response')
         if response_json is not None and response.status_code != 502:

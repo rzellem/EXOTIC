@@ -116,6 +116,83 @@ def _decode_request_body(body, headers):
     raise AssertionError(f"Unexpected content encoding: {encoding}")
 
 
+@pytest.mark.parametrize('fail_primary', [False, True])
+@pytest.mark.parametrize('query_name, args, response, route', [
+    ('nextastro_variability_test', ([(10.0, 20.0)],),
+     [{'is_in_vsx': 0}], '/variability_test'),
+    ('nextastro_photometry_cone_query', (10.0, 20.0, 2.0),
+     {'columns': [], 'count': 0, 'rows': []}, '/cone_query'),
+    ('nextastro_photometry_single_object_query', (10.0, 20.0, 2.0),
+     {'columns': [], 'match': None, 'separation_arcsec': None}, '/single_object'),
+    ('nextastro_photometry_objects_query', ([(10.0, 20.0)], 2.0),
+     {'columns': [], 'count': 0, 'results': [
+         {'key': '0', 'ra': 10.0, 'dec': 20.0, 'match': None, 'separation_arcsec': None},
+     ]}, '/objects_query'),
+])
+def test_photometry_queries_use_dalton_first_and_accept_empty_matches(
+        monkeypatch, fail_primary, query_name, args, response, route):
+    attempts = []
+    messages = []
+
+    def post(url, **kwargs):
+        attempts.append(url)
+        if fail_primary and url.startswith('https://photometry.daltonnextastro.org'):
+            return DummyResponse(None, status_code=503)
+        return DummyResponse(response)
+
+    monkeypatch.setattr(exotic_module.requests, 'post', post)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, **kwargs: messages.append(message))
+
+    result = getattr(exotic_module, query_name).__wrapped__(*args)
+
+    assert result == ([False] if query_name == 'nextastro_variability_test' else response)
+    expected_urls = ['https://photometry.daltonnextastro.org' + route]
+    if fail_primary:
+        expected_urls.append('https://photometry.nextastro.org' + route)
+        assert any('HTTP 503' in message and 'trying' in message for message in messages)
+    assert attempts == expected_urls
+
+
+def test_legacy_photometry_endpoint_preserves_route_and_query_on_failure(monkeypatch):
+    attempts = []
+    response = {'columns': [], 'match': None, 'separation_arcsec': None}
+    monkeypatch.setattr(
+        exotic_module, 'NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL',
+        'https://photometry.nextastro.org/catalog/single_object?release=3',
+    )
+
+    def post(url, **kwargs):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise exotic_module.requests.ConnectionError('Dalton offline')
+        return DummyResponse(response)
+
+    monkeypatch.setattr(exotic_module.requests, 'post', post)
+
+    assert exotic_module.nextastro_photometry_single_object_query.__wrapped__(10.0, 20.0, 2.0) == response
+    assert attempts == [
+        'https://photometry.daltonnextastro.org/catalog/single_object?release=3',
+        'https://photometry.nextastro.org/catalog/single_object?release=3',
+    ]
+
+
+def test_custom_photometry_endpoint_reports_failure_without_switching_servers(monkeypatch):
+    attempts = []
+    monkeypatch.setattr(
+        exotic_module, 'NEXTASTRO_PHOTOMETRY_SINGLE_OBJECT_URL', 'https://custom.example/single_object',
+    )
+
+    def post(url, **kwargs):
+        attempts.append(url)
+        raise exotic_module.requests.ConnectionError('Custom server offline')
+
+    monkeypatch.setattr(exotic_module.requests, 'post', post)
+
+    with pytest.raises(exotic_module.requests.ConnectionError, match='Custom server offline'):
+        exotic_module.nextastro_photometry_single_object_query.__wrapped__(10.0, 20.0, 2.0)
+    assert attempts == ['https://custom.example/single_object']
+
+
 def test_nextastro_variability_logs_json_request_and_response(monkeypatch):
     captured = {}
     logged = []
@@ -176,7 +253,7 @@ def test_nextastro_variability_retries_zstd_415_once_with_gzip(monkeypatch):
     assert any('rejected zstd-compressed request (HTTP 415)' in message for message in logged)
 
 
-def test_nextastro_variability_caps_retry_attempts_at_five(monkeypatch):
+def test_nextastro_variability_caps_retry_cycles_at_five_for_both_servers(monkeypatch):
     attempts = []
 
     def fake_build_compressed_json_request(payload, content_encoding=None):
@@ -199,7 +276,7 @@ def test_nextastro_variability_caps_retry_attempts_at_five(monkeypatch):
     with pytest.raises(RetryError) as excinfo:
         exotic_module.nextastro_variability_test([(10.1, -11.2)])
 
-    assert len(attempts) == 5
+    assert len(attempts) == 10
     assert excinfo.value.last_attempt.attempt_number == 5
 
 
@@ -911,7 +988,7 @@ def test_nextastro_photometry_for_coordinate_uses_single_object_endpoint(monkeyp
 
     match = exotic_module.nextastro_photometry_for_coordinate(10.0, -20.0, 'V')
 
-    assert captured['url'] == 'https://photometry.nextastro.org/single_object'
+    assert captured['url'] == 'https://photometry.daltonnextastro.org/single_object'
     assert captured['json']['ra'] == pytest.approx(10.0)
     assert captured['json']['dec'] == pytest.approx(-20.0)
     assert captured['json']['radius_arcsec'] == pytest.approx(2.0)
@@ -968,7 +1045,7 @@ def test_nextastro_photometry_for_coordinates_uses_objects_query_endpoint(monkey
         'V',
     )
 
-    assert captured['url'] == 'https://photometry.nextastro.org/objects_query'
+    assert captured['url'] == 'https://photometry.daltonnextastro.org/objects_query'
     assert captured['json']['objects'] == [
         {'key': '0', 'ra': 10.0, 'dec': -20.0},
         {'key': '1', 'ra': 11.0, 'dec': -21.0},

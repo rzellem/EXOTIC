@@ -53,7 +53,7 @@ def test_loaded_archive_parameters_resolve_and_preserve_epoch_metadata(monkeypat
     assert 'Published Mid-Transit Time (BJD-UTC)' not in result
 
 
-def test_colab_lookup_resolves_nextastro_parameters_when_nasa_archive_unavailable(monkeypatch):
+def test_colab_lookup_resolves_nextastro_parameters_when_nasa_archive_unavailable(monkeypatch, capsys):
     nea = NASAExoplanetArchive('WASP-12 b')
 
     def raise_direct_failure(*args, **kwargs):
@@ -85,6 +85,9 @@ def test_colab_lookup_resolves_nextastro_parameters_when_nasa_archive_unavailabl
     called = {}
 
     def fake_get(url, params, timeout):
+        output = capsys.readouterr().out
+        assert "Falling back to the NextAstro NEA cache server." in output
+        assert "Successfully loaded" not in output
         called['url'] = url
         called['params'] = params
         called['timeout'] = timeout
@@ -94,6 +97,10 @@ def test_colab_lookup_resolves_nextastro_parameters_when_nasa_archive_unavailabl
 
     planet_name, candidate, pl_dict = nea.planet_info()
 
+    assert (
+        "Successfully loaded cached NASA Exoplanet Archive parameters for WASP-12 b "
+        "from the NextAstro NEA cache server!"
+    ) in capsys.readouterr().out
     assert planet_name == 'WASP-12 b'
     assert candidate is False
     assert called['url'] == 'https://archive.nextastro.org/api/exoplanet_params'

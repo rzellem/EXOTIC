@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 from types import SimpleNamespace
+import logging
 import warnings
 
 import numpy as np
@@ -211,6 +212,62 @@ def test_save_figure_formats_keeps_native_square_png_and_adds_square_high_res_pn
     assert plt.imread(high_res_path).shape[:2] == (1920, 1920)
     assert png_path.with_suffix(".pdf").exists()
     assert png_path.with_suffix(".eps").exists()
+
+
+def test_save_figure_formats_suppresses_real_eps_transparency_warning(tmp_path, caplog):
+    figure, axis = plt.subplots()
+    axis.fill_between([0, 1], [0, 0], [1, 1], alpha=0.3)
+    logger_name = "matplotlib.backends.backend_ps"
+    try:
+        with caplog.at_level(logging.WARNING, logger=logger_name):
+            paths = save_figure_formats(figure, tmp_path / "transparent.png")
+            assert all(path.is_file() and path.stat().st_size > 0 for path in paths.values())
+            assert not any(
+                "The PostScript backend does not support transparency;" in message
+                for message in caplog.messages
+            )
+            # A subsequent export outside the helper must still warn.
+            figure.savefig(tmp_path / "outside.eps")
+            assert any(
+                "The PostScript backend does not support transparency;" in message
+                for message in caplog.messages
+            )
+    finally:
+        plt.close(figure)
+
+
+@pytest.mark.parametrize("fail_eps", [False, True])
+def test_save_figure_formats_scopes_logging_filter(tmp_path, caplog, fail_eps):
+    logger = logging.getLogger("matplotlib.backends.backend_ps")
+    warning = (
+        "The PostScript backend does not support transparency; "
+        "partially transparent artists will be rendered opaque."
+    )
+    original_filters = list(logger.filters)
+    saved = []
+
+    class LoggingFigure:
+        def savefig(self, path):
+            saved.append(path.suffix)
+            logger.warning(warning)
+            logger.warning("Unrelated backend warning")
+            logger.error(warning)
+            if fail_eps and path.suffix == ".eps":
+                raise OSError("Simulated EPS export failure")
+
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        save_figure_formats(LoggingFigure(), tmp_path / "plot.png")
+        assert logger.filters == original_filters
+        logger.warning(warning)
+
+    records = [record for record in caplog.records if record.name == logger.name]
+    assert saved == [".png", ".pdf", ".eps", ".png"]
+    assert sum(record.levelno == logging.WARNING and record.getMessage() == warning
+               for record in records) == 4
+    assert sum(record.getMessage() == "Unrelated backend warning"
+               for record in records) == 4
+    assert sum(record.levelno == logging.ERROR and record.getMessage() == warning
+               for record in records) == 4
 
 
 def test_plot_obs_stats_applies_relative_flux_mask(tmp_path, monkeypatch):

@@ -11,7 +11,7 @@ from threading import RLock
 import numpy as np
 from astropy.time import Time
 from astropy.utils import iers
-from astropy.utils.data import download_file
+from astropy.utils.data import download_file, import_file_to_cache, is_url_in_cache
 
 
 # Same IAU2000A product: IERS and USNO are the publishers; the last source is
@@ -25,6 +25,26 @@ _REFRESH_RESULTS = {}
 _REPORTED_STALE = set()
 _PREPARED_TABLES = {}
 _STATE_LOCK = RLock()
+
+
+def load_barycentric_converter():
+    """Bootstrap barycorrpy from local reference data, without a startup download.
+
+    barycorrpy 0.4.4 downloads IERS-B at import even in Astropy's offline mode.
+    For an empty cache, supply the official IERS-B snapshot already installed
+    with astropy-iers-data. Keep any existing cached table. Calculation-time
+    IERS-A refreshes remain the responsibility of earth_orientation_context.
+    """
+    if not is_url_in_cache(iers.IERS_B_URL):
+        # Astropy hashes only the canonical URL into a safe cache directory name,
+        # as required by barycorrpy's lookup; no file contents are hashed.
+        import_file_to_cache(iers.IERS_B_URL, iers.IERS_B_FILE, replace=False)
+        logging.getLogger('exotic.exotic').info(
+            'Initializing barycorrpy with bundled IERS-B reference data: %s', iers.IERS_B_FILE)
+    # barycorrpy sets auto_max_age=15 on import; preserve the user's setting.
+    with iers.conf.set_temp('auto_max_age', iers.conf.auto_max_age):
+        from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
+    return JDUTC_to_BJDTDB
 
 
 class _PreparedIERS(iers.IERS_Auto):

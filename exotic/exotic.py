@@ -89,12 +89,15 @@ from astropy.time import Time
 from astropy.timeseries import BoxLeastSquares
 from astropy.visualization import astropy_mpl_style
 from astropy.wcs import WCS, FITSFixedWarning
-# UTC to BJD converter import
-from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 try:
-    from .earth_orientation import earth_orientation_context, reset_earth_orientation_refresh
+    from .earth_orientation import (earth_orientation_context, load_barycentric_converter,
+                                    reset_earth_orientation_refresh)
 except ImportError:
-    from earth_orientation import earth_orientation_context, reset_earth_orientation_refresh
+    from earth_orientation import (earth_orientation_context, load_barycentric_converter,
+                                   reset_earth_orientation_refresh)
+# Initialize the real converter using installed reference data before its import
+# can trigger a network request on a new machine or clean CI runner.
+JDUTC_to_BJDTDB = load_barycentric_converter()
 try:
     from .timing import (select_exposure_timestamp, public_timestamp_selection,
                          normalise_ephemeris, copy_ephemeris_metadata, is_ephemeris_metadata_key, time_standard)

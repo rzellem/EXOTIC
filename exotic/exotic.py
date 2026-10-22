@@ -92,6 +92,10 @@ from astropy.wcs import WCS, FITSFixedWarning
 # UTC to BJD converter import
 from barycorrpy.utc_tdb import JDUTC_to_BJDTDB
 try:
+    from .earth_orientation import earth_orientation_context, reset_earth_orientation_refresh
+except ImportError:
+    from earth_orientation import earth_orientation_context, reset_earth_orientation_refresh
+try:
     from .timing import (select_exposure_timestamp, public_timestamp_selection,
                          normalise_ephemeris, copy_ephemeris_metadata, is_ephemeris_metadata_key, time_standard)
 except ImportError:
@@ -9734,6 +9738,7 @@ def configure_runtime_logging(output_dir=None, start_new_run=False):
     log.propagate = False
 
     if start_new_run:
+        reset_earth_orientation_refresh()
         _close_runtime_file_handler()
         _RUNTIME_LOG_BASENAME = _new_runtime_log_basename()
         _RUNTIME_LOG_PATH = None
@@ -15443,7 +15448,8 @@ def air_mass(hdr, ra, dec, lat, long, elevation, time):
 
         location = EarthLocation.from_geodetic(lat=lat * u.deg, lon=long * u.deg, height=elevation)
         time = Time(time, format='jd', scale='utc', location=location)
-        point_altaz = pointing.transform_to(AltAz(obstime=time, location=location))
+        with earth_orientation_context(time, logger=log):
+            point_altaz = pointing.transform_to(AltAz(obstime=time, location=location))
         am = float(point_altaz.secz)
     return am
 
@@ -24514,26 +24520,27 @@ def convert_jd_to_bjd(non_bjd, p_dict, info_dict):
             target_name=p_dict.get('pName'),
         )
 
-    try:
-        goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
-                                    longi=info_dict['long'], alt=info_dict['elev'])[0]
-    except Exception as exc:
-        if not _BJD_FALLBACK_WARNING_LOGGED:
-            _BJD_FALLBACK_WARNING_LOGGED = True
-            try:
-                log.warning(
-                    "barycorrpy JDUTC_to_BJDTDB conversion failed; falling back to astropy light-travel-time "
-                    "conversion for this run.",
-                    exc_info=True,
-                )
-            except Exception:
-                traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stdout)
-        targetloc = SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg), frame='icrs')
-        obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
-        timesToConvert = Time(non_bjd, format='jd', scale='utc', location=obsloc)
-        ltt_bary = timesToConvert.light_travel_time(targetloc)
-        time_barycentre = timesToConvert.tdb  + ltt_bary
-        goodTimes = time_barycentre.value
+    with earth_orientation_context(non_bjd, logger=log):
+        try:
+            goodTimes = JDUTC_to_BJDTDB(non_bjd, ra=p_dict['ra'], dec=p_dict['dec'], lat=info_dict['lat'],
+                                        longi=info_dict['long'], alt=info_dict['elev'])[0]
+        except Exception as exc:
+            if not _BJD_FALLBACK_WARNING_LOGGED:
+                _BJD_FALLBACK_WARNING_LOGGED = True
+                try:
+                    log.warning(
+                        "barycorrpy JDUTC_to_BJDTDB conversion failed; falling back to astropy light-travel-time "
+                        "conversion for this run.",
+                        exc_info=True,
+                    )
+                except Exception:
+                    traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stdout)
+            targetloc = SkyCoord(p_dict['ra'], p_dict['dec'], unit=(u.deg, u.deg), frame='icrs')
+            obsloc = EarthLocation(lat=info_dict['lat'], lon=info_dict['long'], height=info_dict['elev'])
+            timesToConvert = Time(non_bjd, format='jd', scale='utc', location=obsloc)
+            ltt_bary = timesToConvert.light_travel_time(targetloc)
+            time_barycentre = timesToConvert.tdb  + ltt_bary
+            goodTimes = time_barycentre.value
 
     return goodTimes
 

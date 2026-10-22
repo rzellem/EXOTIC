@@ -12,6 +12,10 @@ import numpy as np
 from astropy.time import Time
 from astropy.coordinates import SkyCoord, EarthLocation
 from astropy import units as u
+try:
+    from .earth_orientation import earth_orientation_context
+except ImportError:
+    from earth_orientation import earth_orientation_context
 
 
 # The numeric epoch and its metadata must use the same alias selection.
@@ -83,14 +87,15 @@ def reference_to_bjd_tdb(value, standard, ra=None, dec=None):
     target = SkyCoord(ra, dec, unit=units)
     location = EarthLocation.from_geocentric(0, 0, 0, unit=u.m)
     site = Time(value, format='jd', scale=scale.lower(), location=location)
-    if frame == 'HJD':
-        # Fixed-point inversion. Each update contracts by the Earth's v/c
-        # (~1e-4); five iterations resolve a <510-s correction below float JD
-        # precision, without requiring an unknown original observatory.
-        for _ in range(5):
-            light = site.light_travel_time(target, kind='heliocentric').to_value(u.day)
-            site = Time(value-light, format='jd', scale=scale.lower(), location=location)
-    return float((site.tdb + site.light_travel_time(target)).jd)
+    with earth_orientation_context(site):
+        if frame == 'HJD':
+            # Fixed-point inversion. Each update contracts by the Earth's v/c
+            # (~1e-4); five iterations resolve a <510-s correction below float JD
+            # precision, without requiring an unknown original observatory.
+            for _ in range(5):
+                light = site.light_travel_time(target, kind='heliocentric').to_value(u.day)
+                site = Time(value-light, format='jd', scale=scale.lower(), location=location)
+        return float((site.tdb + site.light_travel_time(target)).jd)
 
 
 def normalise_ephemeris(parameters, archive_parameters=None, lookup=None):

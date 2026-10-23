@@ -1,6 +1,7 @@
 from astropy.visualization import astropy_mpl_style, ZScaleInterval, ImageNormalize
 from astropy.visualization.stretch import LinearStretch, SquaredStretch, SqrtStretch, LogStretch
 import inspect
+import logging
 from io import BytesIO
 import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
@@ -62,6 +63,16 @@ FINAL_PLOT_PNG_SIZE = (1920, 1080)
 FINAL_PLOT_SQUARE_PNG_SIZE = (1920, 1920)
 FINAL_PLOT_PNG_DPI = 100
 FINAL_PLOT_VECTOR_FORMATS = ("pdf", "eps")
+
+
+class _IgnorePSTransparency(logging.Filter):
+    def filter(self, record):
+        return not (
+            record.levelno == logging.WARNING
+            and record.getMessage().startswith(
+                "The PostScript backend does not support transparency;"
+            )
+        )
 
 
 def _dated_plot_filename(prefix, *parts, date, extension):
@@ -269,6 +280,12 @@ def save_figure_formats(figure, png_path, *, original_bbox_inches=None, high_res
     except Exception:
         pass
     for extension in FINAL_PLOT_VECTOR_FORMATS:
+        ps_logger = logging.getLogger("matplotlib.backends.backend_ps")
+        transparency_filter = _IgnorePSTransparency()
+        if extension == "eps":
+            # EPS renders partial transparency as opaque. Keep the known
+            # warning quiet only during this export; PDF/PNG retain alpha.
+            ps_logger.addFilter(transparency_filter)
         try:
             _savefig_with_supported_kwargs(
                 figure,
@@ -277,6 +294,9 @@ def save_figure_formats(figure, png_path, *, original_bbox_inches=None, high_res
             )
         except Exception:
             pass
+        finally:
+            if extension == "eps":
+                ps_logger.removeFilter(transparency_filter)
     try:
         _save_high_res_png(figure, output_paths["high_res_png"])
     except Exception:

@@ -436,6 +436,7 @@ NOISE_APERTURE_HEADER_KEYS = ('TELAPER', 'APERTURE')
 NOISE_APERTURE_MM_HEADER_KEYS = ('APR-DIA', 'APTDIA', 'APERTMM')
 COMPARISON_PREFLIGHT_FIELD_SCORE_RELATIVE_BAND = 0.25
 COMPARISON_PREFLIGHT_FIELD_SCORE_ABSOLUTE_BAND = 2.5e-4
+COMPARISON_CANDIDATE_INITIAL_SHORTLIST_SIZE = 3
 PARTIAL_COVERAGE_RPRS_POSTERIOR_MAX_RETRIES = 1
 PARTIAL_COVERAGE_ARS_POSTERIOR_MAX_RETRIES = 0
 PARTIAL_COVERAGE_IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES = 0
@@ -34882,6 +34883,16 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
     attempts = []
     stopped_after_first_qc_pass = False
     stopped_after_promising_partial = False
+    stopped_after_acceptable_shortlist = False
+    use_candidate_shortlist = exit_at_first_qc_pass_solution and inference_method != 'lm'
+    if use_candidate_shortlist:
+        log_info(
+            "Comparison-star candidate search will fully reduce the first "
+            f"{min(COMPARISON_CANDIDATE_INITIAL_SHORTLIST_SIZE, len(ranked_preflight_plans))} "
+            "preflight-ranked candidates, then select among acceptable fits using the existing "
+            "final-fit metrics. If none is acceptable, the search continues in preflight order. "
+            "Existing first-PASS and promising-partial early exits remain enabled."
+        )
     for rank, plan in enumerate(ranked_preflight_plans):
         comp_summary = plan['summary']
         comp_index = comp_summary['comp_index']
@@ -35154,6 +35165,33 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 f"MARGINAL fit ({attempt['label']}); proceeding to selected full-resolution confirmation."
             )
             break
+        if use_candidate_shortlist and len(attempts) >= COMPARISON_CANDIDATE_INITIAL_SHORTLIST_SIZE:
+            # Use the same definition of an acceptable completed fit as final selection below.
+            # A MARGINAL result remains eligible; no extra quality threshold is imposed here.
+            acceptable_attempts = [
+                candidate for candidate in attempts
+                if candidate.get('fit') is not None
+                and candidate.get('full_reduction_applied', False)
+                and not candidate.get('rejected_by_transit_qc', False)
+            ]
+            if acceptable_attempts and len(attempts) < len(ranked_preflight_plans):
+                stopped_after_acceptable_shortlist = True
+                log_info(
+                    "Stopping comparison-star candidate search after "
+                    f"{len(attempts)}/{len(ranked_preflight_plans)} preflight-ranked candidates: "
+                    f"{len(acceptable_attempts)} completed fit(s) passed the existing eligibility "
+                    "checks (PASS or MARGINAL). Selecting with the existing final-fit metrics."
+                )
+                break
+            if (
+                not acceptable_attempts
+                and len(attempts) == COMPARISON_CANDIDATE_INITIAL_SHORTLIST_SIZE
+                and len(attempts) < len(ranked_preflight_plans)
+            ):
+                log_info(
+                    "No acceptable completed fit in the initial comparison-star shortlist; "
+                    "continuing with the remaining preflight-ranked candidates."
+                )
 
     selected_result = None
     completed_attempts = [
@@ -35448,6 +35486,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         'selection_metric': selection_metric,
         'stopped_after_first_qc_pass': stopped_after_first_qc_pass,
         'stopped_after_promising_partial': stopped_after_promising_partial,
+        'stopped_after_acceptable_shortlist': stopped_after_acceptable_shortlist,
     }
 
 

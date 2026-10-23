@@ -14,13 +14,14 @@ from astropy.utils import iers
 from astropy.utils.data import download_file, import_file_to_cache, is_url_in_cache
 
 
-# Same IAU2000A product: IERS and USNO are the publishers; the last source is
-# Astropy's maintained package-data snapshot, hosted independently on GitHub.
+# The same IAU2000A product is available from USNO, Astropy's independently
+# hosted snapshot, and NextAstro. Try those before the original IERS server.
 IERS_ADDITIONAL_SOURCES = (
-    'https://datacenter.iers.org/products/eop/rapid/standard/finals2000A.all',
     'https://raw.githubusercontent.com/astropy/astropy-iers-data/main/'
     'astropy_iers_data/data/finals2000A.all',
 )
+IERS_NEXTASTRO_URL = 'https://downloads.nextastro.org/iers/finals2000A.all'
+IERS_STANDARD_URL = 'https://datacenter.iers.org/products/eop/rapid/standard/finals2000A.all'
 _REFRESH_RESULTS = {}
 _REPORTED_STALE = set()
 _PREPARED_TABLES = {}
@@ -35,7 +36,9 @@ def load_barycentric_converter():
     with astropy-iers-data. Keep any existing cached table. Calculation-time
     IERS-A refreshes remain the responsibility of earth_orientation_context.
     """
-    if not is_url_in_cache(iers.IERS_B_URL):
+    # A new runtime has no cache directory; the import below creates it.
+    # Astropy 8 can treat this expected absence quietly without hiding errors.
+    if not is_url_in_cache(iers.IERS_B_URL, on_missing='ignore'):
         # Astropy hashes only the canonical URL into a safe cache directory name,
         # as required by barycorrpy's lookup; no file contents are hashed.
         import_file_to_cache(iers.IERS_B_URL, iers.IERS_B_FILE, replace=False)
@@ -80,9 +83,12 @@ def _needs_refresh(table, latest_mjd, now_mjd, max_age):
 
 
 def _sources():
-    return tuple(dict.fromkeys((iers.conf.iers_auto_url,
-                               iers.conf.iers_auto_url_mirror,
-                               *IERS_ADDITIONAL_SOURCES)))
+    # Keep the configured primary last, even when it duplicates a mirror.
+    publishers = (IERS_STANDARD_URL, iers.conf.iers_auto_url)
+    mirrors = (iers.conf.iers_auto_url_mirror, *IERS_ADDITIONAL_SOURCES,
+               IERS_NEXTASTRO_URL)
+    preferred = tuple(url for url in mirrors if url not in publishers)
+    return tuple(dict.fromkeys(preferred + publishers))
 
 
 def _newest_table(table, latest_mjd, now_mjd, max_age, logger):

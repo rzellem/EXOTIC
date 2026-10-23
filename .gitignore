@@ -136,3 +136,4 @@ pl_names.json
 .pytest_tmp_compressed_masters/test_bias_and_darks_build_expo0/dark_10s.fits
 /.pytest_tmp_compressed_masters
 /.pytest_tmp_posterior
+/.pytest_tmp_iers_mirror

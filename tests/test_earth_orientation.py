@@ -30,6 +30,26 @@ def epochs(table):
     return Time(table.meta['predictive_mjd'] + np.array([8., 19.]), format='mjd', scale='utc')
 
 
+def test_mirrors_then_nextastro_then_original_publisher():
+    with iers.conf.set_temp('iers_auto_url', 'https://publisher.example/iers'), \
+            iers.conf.set_temp('iers_auto_url_mirror', 'https://mirror.example/iers'):
+        assert orientation._sources() == (
+            'https://mirror.example/iers',
+            *orientation.IERS_ADDITIONAL_SOURCES,
+            'https://downloads.nextastro.org/iers/finals2000A.all',
+            orientation.IERS_STANDARD_URL,
+            'https://publisher.example/iers',
+        )
+
+
+def test_duplicate_primary_is_still_tried_last():
+    with iers.conf.set_temp('iers_auto_url', orientation.IERS_NEXTASTRO_URL), \
+            iers.conf.set_temp('iers_auto_url_mirror', orientation.IERS_NEXTASTRO_URL):
+        sources = orientation._sources()
+    assert sources[-1] == orientation.IERS_NEXTASTRO_URL
+    assert len(sources) == len(set(sources))
+
+
 def test_all_sources_failing_still_converts_and_does_not_retry_per_frame(stale_table, monkeypatch, caplog):
     attempts = []
 
@@ -62,7 +82,7 @@ def test_all_sources_failing_still_converts_and_does_not_retry_per_frame(stale_t
     assert iers.earth_orientation_table.get() is original
 
 
-def test_unavailable_and_malformed_sources_do_not_prevent_using_independent_mirror(
+def test_unavailable_and_malformed_sources_do_not_prevent_using_nextastro(
         stale_table, monkeypatch, caplog):
     monkeypatch.setattr(orientation, 'IERS_ADDITIONAL_SOURCES', ('https://independent.example/iers',))
     fresh = stale_table.copy()
@@ -77,7 +97,7 @@ def test_unavailable_and_malformed_sources_do_not_prevent_using_independent_mirr
         return url
 
     def read(cls, file):
-        if file == iers.conf.iers_auto_url_mirror:
+        if file == 'https://independent.example/iers':
             raise ValueError('HTML instead of IERS data')
         return fresh
 
@@ -88,7 +108,7 @@ def test_unavailable_and_malformed_sources_do_not_prevent_using_independent_mirr
         expected = fresh.ut1_utc(epochs(stale_table), return_status=True)[0].to_value(u.s)
         np.testing.assert_array_equal(actual, expected)
         assert selected is fresh
-        assert selected.meta['data_url'] == 'https://independent.example/iers'
+        assert selected.meta['data_url'] == orientation.IERS_NEXTASTRO_URL
     assert len(attempts) == 3
     assert 'HTML instead of IERS data' in caplog.text
     assert '3.62 days' in caplog.text
@@ -109,7 +129,7 @@ def test_readable_stale_mirrors_are_used_without_replacing_newer_data_with_older
     older.meta['predictive_mjd'] -= 2
 
     def read(cls, file):
-        return newer if file == iers.conf.iers_auto_url else older.copy()
+        return newer if file == iers.conf.iers_auto_url_mirror else older.copy()
 
     monkeypatch.setattr(orientation, 'download_file', download)
     monkeypatch.setattr(iers.IERS_Auto, 'read', classmethod(read))
@@ -125,6 +145,34 @@ def test_readable_stale_mirrors_are_used_without_replacing_newer_data_with_older
     assert len(attempts) == count
     assert '18.62 days' in caplog.text
     assert 'Continuing with available IERS predictions' in caplog.text
+
+
+@pytest.mark.parametrize('nextastro_stale', [False, True])
+def test_original_publisher_is_used_when_mirrors_fail_or_are_stale(
+        stale_table, monkeypatch, nextastro_stale):
+    attempts = []
+    fresh = stale_table.copy()
+    fresh.meta['predictive_mjd'] += 17
+
+    def download(url, **kwargs):
+        attempts.append(url)
+        if url == orientation.IERS_NEXTASTRO_URL and nextastro_stale:
+            return url
+        if url != iers.conf.iers_auto_url:
+            raise OSError('mirror unavailable')
+        return url
+
+    def read(cls, file):
+        return stale_table.copy() if file == orientation.IERS_NEXTASTRO_URL else fresh
+
+    monkeypatch.setattr(orientation, 'download_file', download)
+    monkeypatch.setattr(iers.IERS_Auto, 'read', classmethod(read))
+    with orientation.earth_orientation_context(epochs(stale_table)) as selected:
+        assert selected is fresh
+        assert selected.meta['data_url'] == iers.conf.iers_auto_url
+        assert np.all(np.isfinite(epochs(stale_table).delta_ut1_utc))
+    assert attempts == list(orientation._sources())
+    assert attempts.index(orientation.IERS_NEXTASTRO_URL) < len(attempts) - 1
 
 
 @pytest.mark.parametrize('case', ['offline', 'historical', 'fresh'])

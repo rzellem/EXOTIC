@@ -14,6 +14,7 @@ def test_import_uses_local_iers_b_without_network(tmp_path, cached, auto_downloa
         """
         import logging
         import sys
+        import warnings
         from unittest.mock import patch
 
         from astropy.config.paths import set_temp_cache
@@ -28,17 +29,25 @@ def test_import_uses_local_iers_b_without_network(tmp_path, cached, auto_downloa
             if cached:
                 cached_file = data.import_file_to_cache(iers.IERS_B_URL, iers.IERS_B_FILE)
 
+            # A brand-new runtime has no download cache directory yet. Treat
+            # that startup warning as a failure rather than overlooking it.
+            warnings.simplefilter('error', data.CacheMissingWarning)
+
             def no_download(*args, **kwargs):
                 raise OSError('IERS publisher unavailable')
 
             with iers.conf.set_temp('auto_download', auto_download), \
                     iers.conf.set_temp('auto_max_age', 30), \
                     patch.object(data, '_download_file_from_source', no_download):
+                # Exercise the bootstrap before other runtime dependencies can
+                # create the cache as an import side effect.
+                from exotic.earth_orientation import load_barycentric_converter
+                converter = load_barycentric_converter()
                 import ldtk
                 import exotic.exotic as reduction
                 import barycorrpy.PINT_erfautils as pint
 
-                assert callable(reduction.JDUTC_to_BJDTDB)
+                assert reduction.JDUTC_to_BJDTDB is converter
                 assert len(pint.iers_b) > 0
                 assert iers.conf.auto_download is auto_download
                 assert iers.conf.auto_max_age == 30

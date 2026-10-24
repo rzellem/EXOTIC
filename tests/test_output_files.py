@@ -1625,6 +1625,28 @@ def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path
     }
 
 
+def test_final_params_reports_remaining_timing_bound_influence_without_replacing_timing(tmp_path):
+    fit = DummyFit()
+    original_tmid = fit.parameters['tmid']
+    fit.tmid_bound_diagnostics = {
+        'available': True, 'bound_influenced': True, 'fills_window': True,
+        'bounds': [original_tmid - .1, original_tmid + .1], 'refit_count': 2,
+        'refit_history': [{'median_shift_seconds': 1.2, 'stdev_change_seconds': 100.}],
+        'note': 'The reported timing interval remains sensitive to the search bounds.',
+    }
+    (tmp_path / 'working_artifacts').mkdir()
+    OutputFiles(fit, {'pName': 'Timing b'}, {'save': str(tmp_path), 'date': '2020-01-01'}, [.083]).final_planetary_params(
+        phot_opt=False, vsp_params=[],
+    )
+    payload = json.loads(next((tmp_path / 'working_artifacts').glob('FinalParams_*.json')).read_text())
+    params = payload['FINAL PLANETARY PARAMETERS']
+    assert params['Tmid search-bound diagnostic'] == fit.tmid_bound_diagnostics['note']
+    assert params['Tmid search-bound refit count'] == 2
+    assert params['Tmid final search bounds (BJD_TDB)'] == fit.tmid_bound_diagnostics['bounds']
+    assert payload['POSTERIOR UNCERTAINTY REPORTING']['tmid_bound_diagnostics'] == fit.tmid_bound_diagnostics
+    assert fit.parameters['tmid'] == original_tmid
+
+
 def test_detrended_fixed_baseline_does_not_report_inherited_errors_as_fitted(tmp_path):
     fit = DummyFit()
     fit.errors["a1"] = 0.00023

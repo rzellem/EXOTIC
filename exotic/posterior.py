@@ -79,6 +79,59 @@ def summarize_posterior(values, weights=None):
     }
 
 
+def timing_bound_diagnostics(values, bounds, weights=None):
+    """Measure timing posterior density at both search edges, without a mode test.
+
+    As in ELCA's existing range diagnostic, use 10--80 histogram bins and flag
+    edge density at least 20% of peak density. Here both edges are examined
+    independently so a flat marginal cannot hide behind an interior mode.
+    These thresholds trigger search expansion only; they never reject a fit.
+    """
+    result = {
+        'available': False, 'bound_influenced': False, 'edge': None,
+        'fills_window': False, 'bounds': list(bounds),
+        'reason': 'Timing posterior samples are unavailable.',
+    }
+    lower, upper = [float(value) for value in bounds]
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        result['reason'] = 'Timing search bounds are unavailable.'
+        return result
+    values = np.asarray(values, dtype=float).reshape(-1)
+    weights = np.ones(values.size) if weights is None else np.asarray(weights, dtype=float).reshape(-1)
+    if values.shape != weights.shape:
+        result['reason'] = 'Timing posterior weights do not match the samples.'
+        return result
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0)
+    values, weights = values[valid], weights[valid]
+    if not values.size:
+        return result
+    weights = weights / weights.sum()
+    effective_count = float(1.0 / np.sum(weights ** 2))
+    bins = int(np.clip(np.sqrt(effective_count), 10, 80))
+    # Work in BJD offsets so small timing intervals retain floating precision.
+    counts, _ = np.histogram(values - lower, bins=bins, range=(0.0, upper - lower), weights=weights)
+    peak = float(np.max(counts))
+    if peak <= 0:
+        return result
+    lower_fraction, upper_fraction = float(counts[0] / peak), float(counts[-1] / peak)
+    lower_contact, upper_contact = lower_fraction >= 0.20, upper_fraction >= 0.20
+    edge = 'both' if lower_contact and upper_contact else 'lower' if lower_contact else 'upper' if upper_contact else None
+    result.update({
+        'available': True, 'bound_influenced': edge is not None, 'edge': edge,
+        'fills_window': lower_contact and upper_contact,
+        'lower_edge_peak_fraction': lower_fraction, 'upper_edge_peak_fraction': upper_fraction,
+        'edge_peak_fraction_threshold': 0.20, 'histogram_bins': bins,
+        'effective_sample_count': effective_count,
+        'posterior': summarize_posterior(values, weights),
+        'reason': (
+            'Timing posterior has appreciable density at both search bounds.' if edge == 'both'
+            else f'Timing posterior has appreciable density at the {edge} search bound.' if edge
+            else 'Timing posterior density falls away before both search bounds.'
+        ),
+    })
+    return result
+
+
 def format_posterior_interval(summary, unit='', include_limit=None, include_probability=True,
                               mathtext=False):
     """Format a median and interval, with optional stacked plot uncertainties."""

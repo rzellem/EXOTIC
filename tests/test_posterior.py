@@ -4,6 +4,44 @@ import pytest
 from exotic.posterior import summarize_posterior, format_posterior_interval
 
 
+@pytest.mark.parametrize('offset', [0.0, 2455469.650885388])
+def test_timing_bounds_detect_a_uniform_posterior_without_an_edge_mode(offset):
+    from exotic.posterior import timing_bound_diagnostics
+
+    values = offset + np.linspace(-0.001, 0.001, 4001)
+    result = timing_bound_diagnostics(values, [offset - 0.001, offset + 0.001])
+    assert result['available'] and result['bound_influenced']
+    assert result['edge'] == 'both' and result['fills_window']
+    assert result['posterior']['stdev'] == pytest.approx(0.002 / np.sqrt(12), rel=0.001)
+
+
+@pytest.mark.parametrize('edge', ['lower', 'upper', None])
+def test_timing_bounds_distinguish_truncated_and_interior_gaussians(edge):
+    from exotic.posterior import timing_bound_diagnostics
+    from scipy.stats import truncnorm
+
+    center = {'lower': -0.009, 'upper': 0.009, None: 0.0}[edge]
+    sigma = 0.002
+    values = truncnorm.ppf(
+        (np.arange(4000) + .5) / 4000,
+        (-0.01 - center) / sigma, (0.01 - center) / sigma, loc=center, scale=sigma,
+    )
+    result = timing_bound_diagnostics(values, [-0.01, 0.01])
+    assert result['edge'] == edge
+    assert result['bound_influenced'] == (edge is not None)
+
+
+def test_timing_bound_diagnostics_ignore_zero_weight_prior_tails():
+    from exotic.posterior import timing_bound_diagnostics
+    from scipy.stats import norm
+
+    core = norm.ppf((np.arange(4000) + .5) / 4000) * .001
+    values = np.r_[core, np.linspace(-.01, .01, 4000)]
+    result = timing_bound_diagnostics(values, [-.01, .01], np.r_[np.ones(core.size), np.zeros(4000)])
+    assert result['available'] and not result['bound_influenced']
+    assert result['effective_sample_count'] == pytest.approx(4000)
+
+
 def test_unequal_weights_do_not_turn_prior_tail_into_uncertainty():
     values = np.r_[np.linspace(0, 100, 1000), np.linspace(0.2, 0.4, 1000)]
     weights = np.r_[np.full(1000, 1e-12), np.ones(1000)]

@@ -37,6 +37,7 @@ def posterior_reporting_metadata(fit, orbital_budget=None):
         'posterior_summary_status': getattr(fit, 'posterior_summary_status', 'unavailable'),
         'posterior_distribution_estimates': estimates,
         'timing_estimator_differences_seconds': timing_comparison,
+        'tmid_bound_diagnostics': getattr(fit, 'tmid_bound_diagnostics', {}) or {},
         'model_values': dict(getattr(fit, 'parameters', {}) or {}),
         'model_errors': dict(getattr(fit, 'errors', {}) or {}),
         'local_fit_uncertainty_approximations': getattr(fit, 'ultranest_error_fallbacks', {}) or {},
@@ -3061,6 +3062,12 @@ class OutputFiles:
                 "Best-fit likelihood point; uncertainties are posterior spread."
             )
         prefit_refinement_note = getattr(self.fit, 'prefit_refinement_note', None)
+        timing_bounds = getattr(self.fit, 'tmid_bound_diagnostics', None)
+        if timing_bounds:
+            params_num["Tmid search-bound diagnostic"] = timing_bounds['note']
+            params_num["Tmid search-bound refit count"] = timing_bounds['refit_count']
+            if timing_bounds.get('bounds') is not None:
+                params_num["Tmid final search bounds (BJD_TDB)"] = list(timing_bounds['bounds'])
         if prefit_refinement_note:
             params_num["Prefit refinement note"] = str(prefit_refinement_note)
         lm_boundary_scout_note = getattr(self.fit, 'lm_boundary_scout_note', None)

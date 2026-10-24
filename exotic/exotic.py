@@ -104,6 +104,10 @@ try:
 except ImportError:
     from timing import (select_exposure_timestamp, public_timestamp_selection,
                         normalise_ephemeris, copy_ephemeris_metadata, is_ephemeris_metadata_key, time_standard)
+try:
+    from .posterior import timing_bound_diagnostics
+except ImportError:
+    from posterior import timing_bound_diagnostics
 # julian conversion imports
 import dateutil.parser as dup
 import imreg_dft as ird
@@ -3604,26 +3608,101 @@ def estimate_transit_duration_samples_from_fit(fit, sample_count=1000, grid_size
     if not np.isfinite(dt) or dt <= 0:
         return baseline_model, np.array([], dtype=float)
 
-    duration_samples = []
     sample_count = max(1, int(sample_count))
-    for _ in range(sample_count):
-        sampled_parameters = dict(parameters)
-        for key, error_value in errors.items():
-            parameter_value = parameters.get(key)
-            if parameter_value is None:
-                continue
-            try:
-                numeric_error = float(error_value)
-                numeric_value = float(parameter_value)
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(numeric_error) or numeric_error <= 0 or not np.isfinite(numeric_value):
-                continue
-            sampled_parameters[key] = np.random.normal(numeric_value, numeric_error)
+    sampled_keys = list(getattr(fit, 'sampled_keys', []))
+    results = getattr(fit, 'results', None)
+    posterior_points = None
+    posterior_weights = None
+    sampling_source = 'independent Gaussian approximation'
+    if isinstance(results, dict) and sampled_keys:
+        weighted = results.get('weighted_samples', {})
+        points = np.asarray(weighted.get('points', []), dtype=float)
+        weights = np.asarray(weighted.get('weights', []), dtype=float)
+        if (
+            points.ndim == 2 and points.shape[0] > 0
+            and points.shape[1] >= len(sampled_keys)
+            and weights.shape == (points.shape[0],)
+            and np.all(np.isfinite(weights)) and np.all(weights >= 0)
+            and np.isfinite(weights.sum()) and weights.sum() > 0
+        ):
+            posterior_points = points
+            posterior_weights = weights / weights.sum()
+            sampling_source = 'weighted joint posterior'
+        else:
+            # UltraNest's `samples` already have equal posterior weight. Never
+            # give unweighted nested-sampling dead points equal probability.
+            points = np.asarray(results.get('samples', []), dtype=float)
+            if (
+                points.ndim == 2 and points.shape[0] > 0
+                and points.shape[1] >= len(sampled_keys)
+            ):
+                posterior_points = points
+                sampling_source = 'equal-weight joint posterior'
 
-        sampled_model = transit(transit_times, sampled_parameters)
-        in_transit_mask = np.asarray(sampled_model, dtype=float) < 1
+    posterior_indices = None
+    if posterior_points is not None:
+        posterior_indices = np.random.choice(
+            posterior_points.shape[0], size=sample_count, p=posterior_weights,
+        )
+
+    duration_samples = []
+    invalid_sample_count = 0
+    physical_getter = getattr(fit, '_physical_values_from_sample_point', None)
+    for sample_index in range(sample_count):
+        sampled_parameters = dict(baseline_parameters)
+        if posterior_indices is not None:
+            point = posterior_points[posterior_indices[sample_index], :len(sampled_keys)]
+            if callable(physical_getter):
+                sampled_parameters.update(physical_getter(point))
+            else:
+                sampled_parameters.update(zip(sampled_keys, point))
+        else:
+            for key, error_value in errors.items():
+                parameter_value = parameters.get(key)
+                if parameter_value is None:
+                    continue
+                try:
+                    numeric_error = float(error_value)
+                    numeric_value = float(parameter_value)
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(numeric_error) or numeric_error <= 0 or not np.isfinite(numeric_value):
+                    continue
+                sampled_parameters[key] = np.random.normal(numeric_value, numeric_error)
+
+        # These are the transit model's mathematical domains, not fit-quality
+        # cuts. Gaussian error draws can cross them even for a valid best fit.
+        # Such a trial has no duration; it must not become a zero-duration draw.
+        if (
+            not all(np.isfinite(float(sampled_parameters[key])) for key in required_transit_parameters)
+            or sampled_parameters['rprs'] < 0
+            or sampled_parameters['per'] <= 0
+            or sampled_parameters['ars'] <= 0
+            or not 0 <= sampled_parameters['ecc'] < 1
+        ):
+            invalid_sample_count += 1
+            continue
+
+        if callable(fit_transit_model):
+            sampled_model = fit_transit_model(transit_times, sampled_parameters)
+        else:
+            sampled_model = transit(transit_times, sampled_parameters)
+        sampled_model = np.asarray(sampled_model, dtype=float)
+        if sampled_model.shape != transit_times.shape or not np.all(np.isfinite(sampled_model)):
+            invalid_sample_count += 1
+            continue
+        in_transit_mask = sampled_model < 1
         duration_samples.append(float(np.count_nonzero(in_transit_mask)) * dt)
+
+    fit.duration_sampling_source = sampling_source
+    fit.duration_sampling_invalid_count = invalid_sample_count
+    if invalid_sample_count:
+        log_info(
+            f"Transit-duration uncertainty diagnostic: {invalid_sample_count}/{sample_count} "
+            f"{sampling_source} trial(s) had invalid geometry or non-finite model values; "
+            "excluded from the duration estimate.",
+            warn=True,
+        )
 
     return baseline_model, np.asarray(duration_samples, dtype=float)
 
@@ -7527,7 +7606,7 @@ def get_posterior_refit_final_bounds(fit, fallback_bounds):
     fit_bounds = getattr(fit, 'posterior_refit_final_bounds', None)
     if not isinstance(fit_bounds, dict):
         fit_bounds = {}
-        for key in ('rprs', 'ars', 'inc'):
+        for key in ('rprs', 'ars', 'inc', 'tmid'):
             refit_bounds = getattr(fit, f'{key}_posterior_refit_bounds', None)
             if refit_bounds is not None:
                 fit_bounds[key] = refit_bounds
@@ -7860,7 +7939,10 @@ def lm_boundary_scout_expanded_bounds(
     if not expand_lower and not expand_upper:
         return [lower_bound, upper_bound], False
 
-    maximum_growth = max(float(maximum_expansion_widths), 0.0) * width
+    maximum_growth = (
+        np.inf if maximum_expansion_widths is None
+        else max(float(maximum_expansion_widths), 0.0) * width
+    )
     proposed_lower = min(lower_bound, value - desired_margin) if expand_lower else lower_bound
     proposed_upper = max(upper_bound, value + desired_margin) if expand_upper else upper_bound
     proposed_lower = max(proposed_lower, lower_bound - maximum_growth)
@@ -8037,6 +8119,23 @@ def lm_boundary_scout_geometry_safe_bounds(configured_prior, fit, bounds, expand
     return sanitize_retry_search_bounds(safe_bounds), adjustments
 
 
+def tmid_search_envelope(prior, bounds):
+    """Retain the existing quarter-period search cap and any supplied interval."""
+    center, period = prior.get('tmid', np.nan), prior.get('per', np.nan)
+    if not np.isfinite(center) or not np.isfinite(period) or period <= 0:
+        return None
+    lower, upper = bounds.get('tmid', [center, center])
+    return [min(float(lower), center - 0.25 * period), max(float(upper), center + 0.25 * period)]
+
+
+def fit_tmid_bound_diagnostics(fit, bounds):
+    interval = bounds.get('tmid')
+    if interval is None:
+        return {'available': False, 'bound_influenced': False, 'reason': 'Tmid is not sampled.'}
+    samples, weights = _fit_posterior_sample_matrix(fit, ['tmid'])
+    return timing_bound_diagnostics(samples.reshape(-1), interval, weights)
+
+
 def prepare_ultranest_bounds_with_lm_boundary_scout(
     times,
     flux_values,
@@ -8063,6 +8162,7 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
     working_prior = dict(prior) if isinstance(prior, dict) else {}
     configured_prior = dict(working_prior)
     working_bounds = clone_lightcurve_bounds(bounds)
+    timing_envelope = tmid_search_envelope(working_prior, working_bounds)
     payload = {
         'enabled': bool(enabled),
         'applied': False,
@@ -8166,6 +8266,8 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
             physical_maximum = None
             if key in scout_envelope:
                 physical_minimum, physical_maximum = scout_envelope[key]
+            if key == 'tmid' and timing_envelope is not None:
+                physical_minimum, physical_maximum = timing_envelope
 
             previous_bounds = list(working_bounds[key])
             expanded_bounds, adjusted = lm_boundary_scout_expanded_bounds(
@@ -8174,6 +8276,13 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
                 previous_bounds,
                 minimum_bound=physical_minimum,
                 maximum_bound=physical_maximum,
+                # A precise ephemeris can start with a seconds-wide interval.
+                # Accommodate the LM timing covariance directly instead of
+                # spending all four scout iterations growing that tiny width.
+                maximum_expansion_widths=(
+                    None if key == 'tmid'
+                    else ULTRANEST_LM_BOUNDARY_SCOUT_MAX_EXPANSION_WIDTHS_PER_ITERATION
+                ),
             )
             if not adjusted:
                 continue
@@ -8505,6 +8614,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     use_prior_rprs_when_posterior_pinned=None,
     use_lm_boundary_scout=None,
 ):
+    timing_envelope = tmid_search_envelope(prior, bounds)
     if use_lm_boundary_scout is None:
         # Keep the low-level API backward compatible. CLI reduction paths pass
         # the configured process-wide choice explicitly at their call sites.
@@ -9304,6 +9414,76 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fit = fallback_fit
             final_diagnostics_getter = getattr(fit, "get_parameter_posterior_recenter_diagnostics", None)
 
+    if fit is None:
+        return None
+    # Check the final posterior after geometry retries/fixed-geometry fits too.
+    # Density at either edge matters even when the posterior mode is interior.
+    timing_history = []
+    timing_diagnostics = fit_tmid_bound_diagnostics(fit, current_bounds)
+    timing_stop_reason = None
+    while timing_diagnostics.get('available') and timing_diagnostics.get('bound_influenced'):
+        if timing_envelope is None:
+            timing_stop_reason = 'A finite orbital period is unavailable for the timing search envelope.'
+            break
+        previous_lower, previous_upper = current_bounds['tmid']
+        width = previous_upper - previous_lower
+        edge = timing_diagnostics['edge']
+        new_lower = max(timing_envelope[0], previous_lower - width) if edge in ('lower', 'both') else previous_lower
+        new_upper = min(timing_envelope[1], previous_upper + width) if edge in ('upper', 'both') else previous_upper
+        if new_lower >= previous_lower and new_upper <= previous_upper:
+            timing_stop_reason = 'The timing search reached the existing quarter-period envelope.'
+            break
+
+        previous_fit = fit
+        previous_diagnostics = timing_diagnostics
+        current_bounds['tmid'] = [new_lower, new_upper]
+        fitted_parameters = getattr(fit, 'parameters', {}) or {}
+        current_prior.update({key: fitted_parameters[key] for key in current_bounds if key in fitted_parameters})
+        current_prior = clamp_retry_priors_to_bounds(current_prior, current_bounds)
+        fixed_errors = dict(getattr(fit, 'fixed_parameter_errors', {}) or {})
+        for key in ('rprs', 'ars'):
+            if getattr(fit, f'{key}_prior_fallback_applied', False) and key in getattr(fit, 'errors', {}):
+                fixed_errors[key] = fit.errors[key]
+        log_info(
+            f"{timing_diagnostics['reason']} Expanding Tmid bounds from "
+            f"[{previous_lower:.8f}, {previous_upper:.8f}] to [{new_lower:.8f}, {new_upper:.8f}] "
+            "and refitting the photometry."
+        )
+        fit = build_fit(
+            current_prior,
+            current_bounds,
+            fixed_parameter_errors_override=fixed_errors,
+            allow_rprs_expansion=rprs_range_expansion_active,
+            allow_ars_expansion=ars_range_expansion_active,
+            ultranest_warmstart_source=previous_fit,
+        )
+        for name, value in getattr(previous_fit, '__dict__', {}).items():
+            if name.startswith(('rprs_prior_fallback_', 'ars_prior_fallback_')):
+                setattr(fit, name, value)
+        timing_diagnostics = fit_tmid_bound_diagnostics(fit, current_bounds)
+        previous_summary = previous_diagnostics.get('posterior') or {}
+        new_summary = timing_diagnostics.get('posterior') or {}
+        timing_history.append({
+            'attempt': len(timing_history) + 1, 'edge': edge,
+            'original_bounds': [previous_lower, previous_upper], 'new_bounds': [new_lower, new_upper],
+            'previous_diagnostics': previous_diagnostics,
+            'median_shift_seconds': 86400 * (new_summary.get('median', np.nan) - previous_summary.get('median', np.nan)),
+            'stdev_change_seconds': 86400 * (new_summary.get('stdev', np.nan) - previous_summary.get('stdev', np.nan)),
+        })
+
+    timing_note = timing_diagnostics['reason']
+    if timing_diagnostics.get('bound_influenced'):
+        timing_note += ' The reported timing interval remains sensitive to the search bounds.'
+    if timing_stop_reason:
+        timing_note += ' ' + timing_stop_reason
+    fit.tmid_bound_diagnostics = {
+        **timing_diagnostics, 'search_envelope': timing_envelope,
+        'refit_count': len(timing_history), 'refit_history': timing_history, 'note': timing_note,
+    }
+    annotate_parameter_posterior_refit(fit, 'tmid', bool(timing_history), note=timing_note, history=timing_history)
+    if timing_diagnostics.get('available'):
+        log_info(timing_note, warn=timing_diagnostics.get('bound_influenced', False))
+    final_diagnostics_getter = getattr(fit, 'get_parameter_posterior_recenter_diagnostics', None)
     annotate_posterior_refit_final_bounds(fit, current_bounds)
     annotate_lm_boundary_scout(fit, lm_boundary_scout)
     for config in retry_configs:
@@ -12052,6 +12232,8 @@ def estimate_ephemeris_tmid_and_bounds(
         'observations_bracket_expected_transit': False,
         'duration_capped': False,
         'observed_window_capped': False,
+        'minimum_half_width': np.nan,
+        'duration_cadence_widened': False,
         'note': 'Using ephemeris-derived Tmid bounds.',
     }
 
@@ -12086,9 +12268,9 @@ def estimate_ephemeris_tmid_and_bounds(
     tmid = float(prior_tmid + cycle_index * period)
     propagated_uncertainty = np.sqrt(midt_unc ** 2 + (cycle_index * per_unc) ** 2)
 
-    propagated_half_width = np.abs(sigma_multiplier * midt_unc + cycle_index * sigma_multiplier * per_unc)
+    propagated_half_width = sigma_multiplier * propagated_uncertainty
     max_half_width = 0.25 * period
-    if not np.isfinite(propagated_half_width) or propagated_half_width <= 0:
+    if not np.isfinite(propagated_half_width) or propagated_half_width < 0:
         half_width = max_half_width
         propagated_half_width = np.nan
     else:
@@ -12098,9 +12280,14 @@ def estimate_ephemeris_tmid_and_bounds(
     if valid_times.size > 1:
         cadence = np.nanmedian(np.diff(np.sort(valid_times)))
 
-    lower = float(tmid - half_width)
-    upper = float(tmid + half_width)
+    # Prediction precision is not the timing precision of this light curve.
+    # Use the same duration/cadence scale as EEBLS even when it cannot initialize.
+    minimum_half_width = 5.0 * cadence if np.isfinite(cadence) and cadence > 0 else 0.0
     if np.isfinite(expected_duration) and expected_duration > 0:
+        minimum_half_width = max(
+            minimum_half_width,
+            EEBLS_TMID_HALF_WIDTH_DURATION_MULTIPLIER * float(expected_duration),
+        )
         coverage_margin = 0.5 * float(expected_duration)
         if np.isfinite(cadence) and cadence > 0:
             coverage_margin = max(coverage_margin, 3.0 * cadence)
@@ -12120,27 +12307,13 @@ def estimate_ephemeris_tmid_and_bounds(
         if bracketed and np.isfinite(duration_cap) and duration_cap > 0 and duration_cap < half_width:
             half_width = float(duration_cap)
             summary['duration_capped'] = True
-            lower = float(tmid - half_width)
-            upper = float(tmid + half_width)
-
-        if bracketed:
-            observed_lower = float(np.nanmin(valid_times) + 0.5 * float(expected_duration))
-            observed_upper = float(np.nanmax(valid_times) - 0.5 * float(expected_duration))
-            if (
-                np.isfinite(observed_lower)
-                and np.isfinite(observed_upper)
-                and observed_upper > observed_lower
-            ):
-                tightened_lower = max(lower, observed_lower)
-                tightened_upper = min(upper, observed_upper)
-                if tightened_upper > tightened_lower and (
-                    tightened_lower > lower + 1e-12 or tightened_upper < upper - 1e-12
-                ):
-                    lower = float(tightened_lower)
-                    upper = float(tightened_upper)
-                    summary['observed_window_capped'] = True
-
-    half_width = max(float(tmid - lower), float(upper - tmid))
+    if half_width == 0 and minimum_half_width == 0:
+        half_width = max_half_width
+    original_half_width = half_width
+    half_width = float(min(max(half_width, minimum_half_width), max_half_width))
+    lower, upper = float(tmid - half_width), float(tmid + half_width)
+    summary['minimum_half_width'] = min(minimum_half_width, max_half_width)
+    summary['duration_cadence_widened'] = bool(half_width > original_half_width)
     summary.update({
         'tmid': tmid,
         'uncertainty': propagated_uncertainty,
@@ -12148,13 +12321,12 @@ def estimate_ephemeris_tmid_and_bounds(
         'cycle_index': cycle_index,
         'propagated_half_width': propagated_half_width,
         'half_width': half_width,
-        'applied': summary['duration_capped'] or summary['observed_window_capped'],
+        'applied': summary['duration_capped'] or summary['duration_cadence_widened'],
     })
-    if summary['observed_window_capped']:
+    if summary['duration_cadence_widened']:
         summary['note'] = (
-            "Ephemeris-derived Tmid bounds were intersected with the observed time span needed to contain the "
-            f"full expected transit; using bounds=[{lower:.6f}, {upper:.6f}] instead of the wider propagated "
-            f"half-width {float(propagated_half_width):.6f} day(s)."
+            "Tmid search widened to the transit-duration/cadence scale because ephemeris precision "
+            f"does not determine measurement precision; using bounds=[{lower:.6f}, {upper:.6f}]."
         )
     elif summary['duration_capped']:
         summary['note'] = (
@@ -12298,7 +12470,7 @@ def estimate_tmid_and_bounds_with_eebls(times, flux_values, flux_errors, prior, 
 
     duration_for_bounds = duration
     if np.isfinite(expected_duration) and expected_duration > 0:
-        duration_for_bounds = max(duration_for_bounds, 0.75 * expected_duration)
+        duration_for_bounds = max(duration_for_bounds, expected_duration)
     half_width = min(
         0.25 * period,
         max(EEBLS_TMID_HALF_WIDTH_DURATION_MULTIPLIER * duration_for_bounds, 5.0 * cadence),
@@ -13783,9 +13955,9 @@ def build_nested_tmid_refinement_from_initial_fit(times, flux_values, flux_error
     if valid_times.size > 1:
         cadence = np.nanmedian(np.diff(np.sort(valid_times)))
 
-    half_width = FINAL_FIT_TMID_HALF_DURATION_MULTIPLIER * duration
+    half_width = EEBLS_TMID_HALF_WIDTH_DURATION_MULTIPLIER * duration
     if np.isfinite(cadence) and cadence > 0:
-        half_width = max(half_width, 3.0 * cadence)
+        half_width = max(half_width, 5.0 * cadence)
     if not np.isfinite(half_width) or half_width <= 0:
         base_plan['note'] = "Skipped; the nested-sampling Tmid refinement half-width was not physical."
         return base_plan
@@ -13795,8 +13967,14 @@ def build_nested_tmid_refinement_from_initial_fit(times, flux_values, flux_error
     if original_tmid_bounds is not None and len(original_tmid_bounds) == 2:
         original_lower = float(original_tmid_bounds[0])
         original_upper = float(original_tmid_bounds[1])
-        refined_lower = max(original_lower, refined_lower)
-        refined_upper = min(original_upper, refined_upper)
+        # An LM solution from these same observations may widen the search,
+        # but must not turn the initial fit into a narrower timing prior.
+        refined_lower = min(original_lower, refined_lower)
+        refined_upper = max(original_upper, refined_upper)
+    timing_envelope = tmid_search_envelope(prior, bounds)
+    if timing_envelope is not None:
+        refined_lower = max(timing_envelope[0], refined_lower)
+        refined_upper = min(timing_envelope[1], refined_upper)
 
     if not np.isfinite(refined_lower) or not np.isfinite(refined_upper) or refined_upper <= refined_lower:
         base_plan['note'] = "Skipped; the refined nested-sampling Tmid bounds collapsed to an invalid range."
@@ -13826,7 +14004,7 @@ def build_nested_tmid_refinement_from_initial_fit(times, flux_values, flux_error
     base_plan.update({
         'applied': True,
         'note': (
-            "Using the initial LM fit to recenter nested-sampling Tmid bounds to "
+            "Using the initial LM fit to expand nested-sampling Tmid bounds to "
             f"[{refined_lower:.6f}, {refined_upper:.6f}] around Tmid={tmid:.6f}."
         ),
         'prior': refined_prior,
@@ -26181,7 +26359,7 @@ def fit_lightcurve(times, tFlux, cFlux, airmass, ld, pDict, jd_times=None,
     ):
         log_mid_transit_range_warning_once(arrayTimes, prior['tmid'])
 
-    if tmid_search_summary.get('duration_capped'):
+    if tmid_search_summary.get('applied'):
         log_info(tmid_search_summary['note'])
     eebls_search_summary = None
     if use_eebls_to_initialize_tmid_and_bounds or compute_eebls_diagnostics:
@@ -40490,7 +40668,7 @@ def _main_impl():
             log_info(f"  end:{np.max(goodTimes)}", error=True)
             log_info(f"prior:{prior['tmid']}", error=True)
 
-        if ephemeris_tmid_search_summary.get('duration_capped'):
+        if ephemeris_tmid_search_summary.get('applied'):
             log_info(ephemeris_tmid_search_summary['note'])
         eebls_tmid_search_summary = None
         if use_eebls_tmid_initializer:

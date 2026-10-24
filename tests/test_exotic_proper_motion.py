@@ -2153,12 +2153,47 @@ def test_estimate_ephemeris_tmid_and_bounds_caps_bracketed_runs_to_duration_scal
     )
 
     assert summary["duration_capped"] is True
-    assert summary["observed_window_capped"] is True
+    assert summary["observed_window_capped"] is False
     assert summary["observations_bracket_expected_transit"] is True
     assert summary["tmid"] == pytest.approx(2461151.899025, abs=1e-6)
     assert summary["half_width"] > 0
-    assert summary["bounds"][0] == pytest.approx(times.min() + 0.5 * expected_duration)
-    assert summary["bounds"][1] == pytest.approx(times.max() - 0.5 * expected_duration)
+    assert summary["half_width"] == pytest.approx(2.0 * expected_duration)
+    # Bracketing the prediction does not require every candidate transit to
+    # fit completely inside the observed window; shifted partial events remain.
+    assert summary["bounds"][0] < times.min() + 0.5 * expected_duration
+    assert summary["bounds"][1] > times.max() - 0.5 * expected_duration
+
+
+@pytest.mark.parametrize('epoch', [-96, 96])
+@pytest.mark.parametrize('duration', [np.nan, 0.075])
+def test_ephemeris_timing_uncertainty_has_no_negative_epoch_cancellation(epoch, duration):
+    t0, period = 2455706.82976910, 2.470613372
+    predicted = t0 + epoch * period
+    times = np.linspace(predicted - 0.15, predicted + 0.15, 101)
+    summary = estimate_ephemeris_tmid_and_bounds(
+        times, t0, period, 4.1e-6, 2.4e-8,
+        expected_duration=duration, sigma_multiplier=35.0,
+    )
+    expected_sigma = np.hypot(4.1e-6, 96 * 2.4e-8)
+    assert summary['cycle_index'] == epoch
+    assert summary['uncertainty'] == pytest.approx(expected_sigma)
+    assert summary['propagated_half_width'] == pytest.approx(35 * expected_sigma)
+    assert summary['half_width'] >= 5 * (times[1] - times[0]) - 1e-9
+    if np.isfinite(duration):
+        assert summary['half_width'] == pytest.approx(1.5 * duration)
+    assert summary['duration_cadence_widened'] is True
+
+
+@pytest.mark.parametrize('partial', [False, True])
+def test_zero_ephemeris_errors_keep_a_transit_scale_timing_window(partial):
+    times = np.linspace(-0.1, -0.01 if partial else 0.1, 101)
+    summary = estimate_ephemeris_tmid_and_bounds(
+        times, 0.0, 1.0, 0.0, 0.0, expected_duration=0.05,
+    )
+    assert summary['uncertainty'] == 0
+    assert summary['half_width'] == pytest.approx(0.075)
+    if partial:
+        assert summary['bounds'][1] > times.max()
 
 
 def test_estimate_ephemeris_tmid_and_bounds_keeps_wider_bounds_for_one_sided_runs():
@@ -3096,6 +3131,139 @@ def test_compute_transit_qc_ktmf_uses_rebalanced_component_weights():
         + 1.3 * (1.0 - np.exp(-2.0))
     )
     assert ktmf_metric == pytest.approx(expected_ktmf)
+
+
+def _duration_sampling_fit(**overrides):
+    parameters = {
+        'u0': 0.0, 'u1': 0.0, 'u2': 0.0, 'u3': 0.0,
+        'rprs': 0.1, 'per': 3.0, 'ars': 12.0, 'ecc': 0.0,
+        'inc': 90.0, 'omega': 90.0, 'tmid': 0.0,
+    }
+    attributes = {
+        'parameters': parameters,
+        'errors': {},
+        'time': np.linspace(-0.05, 0.05, 101),
+    }
+    attributes.update(overrides)
+    return types.SimpleNamespace(**attributes)
+
+
+@pytest.mark.parametrize('key, invalid_value', [
+    ('rprs', -0.1), ('per', 0.0), ('ars', 0.0), ('ecc', -0.1), ('ecc', 1.0),
+])
+def test_duration_sampling_excludes_invalid_gaussian_geometry_without_zero_bias(
+    monkeypatch, key, invalid_value,
+):
+    import exotic.exotic as exotic_module
+
+    fit = _duration_sampling_fit(errors={key: 0.2})
+    valid_value = fit.parameters[key]
+    draws = iter([invalid_value, valid_value])
+    model_inputs = []
+    messages = []
+
+    def model(times, parameters):
+        assert parameters['rprs'] >= 0
+        assert parameters['per'] > 0 and parameters['ars'] > 0
+        assert 0 <= parameters['ecc'] < 1
+        model_inputs.append(parameters.copy())
+        return np.where(np.abs(times) < 0.01, 0.99, 1.0)
+
+    monkeypatch.setattr(exotic_module.np.random, 'normal', lambda *args: next(draws))
+    monkeypatch.setattr(exotic_module, 'transit', model)
+    monkeypatch.setattr(exotic_module, 'log_info', lambda message, **kwargs: messages.append(message))
+
+    baseline, durations = exotic_module.estimate_transit_duration_samples_from_fit(
+        fit, sample_count=2, grid_size=101,
+    )
+
+    assert baseline.shape == (101,)
+    assert len(model_inputs) == 2  # Best-fit model and the valid uncertainty trial.
+    assert durations.shape == (1,)
+    assert durations[0] > 0
+    assert fit.duration_sampling_invalid_count == 1
+    assert '1/2 independent Gaussian approximation' in messages[0]
+
+
+def test_duration_sampling_preserves_zero_depth_and_nontransiting_trials(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    fit = _duration_sampling_fit(errors={'rprs': 0.2})
+    draws = iter([0.0, 1.2])
+    seen = []
+
+    def model(times, parameters):
+        seen.append(parameters['rprs'])
+        return np.ones_like(times)
+
+    monkeypatch.setattr(exotic_module.np.random, 'normal', lambda *args: next(draws))
+    monkeypatch.setattr(exotic_module, 'transit', model)
+
+    _, durations = exotic_module.estimate_transit_duration_samples_from_fit(fit, sample_count=2)
+
+    np.testing.assert_array_equal(durations, [0.0, 0.0])
+    assert seen == [0.1, 0.0, 1.2]
+    assert fit.duration_sampling_invalid_count == 0
+
+
+@pytest.mark.parametrize('source', ['weighted', 'equal_weight'])
+def test_duration_sampling_uses_joint_posterior_and_the_fitted_exposure_model(monkeypatch, source):
+    import exotic.exotic as exotic_module
+
+    points = np.array([[0.05, 0.2, 10.0], [0.15, 0.8, 20.0]])
+    weighted = {'points': points, 'weights': np.array([0.0, 1.0])}
+    if source == 'equal_weight':
+        weighted.pop('weights')
+    fit = _duration_sampling_fit(
+        errors={'rprs': 10.0}, sampled_keys=['rprs', 'b', 'ars'],
+        results={'weighted_samples': weighted, 'samples': points[[1]]},
+    )
+    fit.prior = fit.parameters.copy()
+    fit.parameters = {key: value for key, value in fit.parameters.items() if not key.startswith('u')}
+    seen = []
+
+    def physical_values(point):
+        rprs, impact, ars = point
+        return {'rprs': rprs, 'ars': ars, 'inc': np.degrees(np.arccos(impact / ars))}
+
+    def model(times, parameters):
+        seen.append(parameters.copy())
+        return np.where(np.abs(times) < parameters['rprs'] / 10, 0.99, 1.0)
+
+    def unexpected_gaussian(*args):
+        raise AssertionError('Joint posterior samples must not be replaced with Gaussian draws.')
+
+    fit._physical_values_from_sample_point = physical_values
+    fit._transit_model = model
+    monkeypatch.setattr(exotic_module.np.random, 'normal', unexpected_gaussian)
+    monkeypatch.setattr(exotic_module, 'transit', lambda *args: pytest.fail('Use the fitted exposure model.'))
+
+    _, durations = exotic_module.estimate_transit_duration_samples_from_fit(fit, sample_count=4)
+
+    assert durations.shape == (4,)
+    for parameters in seen[1:]:
+        assert parameters['rprs'] == 0.15
+        assert parameters['ars'] == 20.0
+        assert parameters['inc'] == pytest.approx(np.degrees(np.arccos(0.8 / 20.0)))
+        assert parameters['u0'] == 0.0
+    expected_source = 'weighted joint posterior' if source == 'weighted' else 'equal-weight joint posterior'
+    assert fit.duration_sampling_source == expected_source
+
+
+def test_duration_sampling_reports_nonfinite_models_without_counting_them_as_zero(monkeypatch):
+    import exotic.exotic as exotic_module
+
+    fit = _duration_sampling_fit()
+    model_outputs = iter([np.ones(101), np.full(101, np.nan)])
+    monkeypatch.setattr(exotic_module, 'transit', lambda *args: next(model_outputs))
+    monkeypatch.setattr(exotic_module, 'log_info', lambda *args, **kwargs: None)
+
+    _, durations = exotic_module.estimate_transit_duration_samples_from_fit(
+        fit, sample_count=1, grid_size=101,
+    )
+
+    assert durations.size == 0
+    assert fit.duration_sampling_invalid_count == 1
 
 
 class _TmidPosteriorFit:
@@ -7082,7 +7250,7 @@ def test_evaluate_lightcurve_candidate_requests_nested_fit(monkeypatch, inferenc
     assert cflux_fit.shape == (6,)
 
 
-def test_fit_lightcurve_refines_nested_tmid_bounds_from_two_sided_lm_fit(monkeypatch):
+def test_fit_lightcurve_keeps_original_timing_window_when_initial_lm_would_narrow_it(monkeypatch):
     captured_calls = []
 
     def fake_lc_fitter(
@@ -7152,10 +7320,9 @@ def test_fit_lightcurve_refines_nested_tmid_bounds_from_two_sided_lm_fit(monkeyp
     assert myfit is not None
     assert captured_calls[0]["mode"] == "lm"
     assert captured_calls[1]["mode"] == "ns"
-    assert captured_calls[0]["bounds"]["tmid"] == pytest.approx([0.011347361950458953, 0.03865263804954105])
-    assert captured_calls[1]["bounds"]["tmid"] == pytest.approx([0.0175, 0.0325])
-    assert myfit.nested_tmid_refinement_applied is True
-    assert "recenter nested-sampling Tmid bounds" in myfit.nested_tmid_refinement_note
+    original_bounds = captured_calls[0]["bounds"]["tmid"]
+    assert captured_calls[1]["bounds"]["tmid"][0] <= original_bounds[0]
+    assert captured_calls[1]["bounds"]["tmid"][1] >= original_bounds[1]
 
 
 def test_fit_lightcurve_skips_nested_tmid_refinement_for_one_sided_lm_fit(monkeypatch):
@@ -7228,8 +7395,9 @@ def test_fit_lightcurve_skips_nested_tmid_refinement_for_one_sided_lm_fit(monkey
     assert myfit is not None
     assert captured_calls[0]["mode"] == "lm"
     assert captured_calls[1]["mode"] == "ns"
-    assert captured_calls[0]["bounds"]["tmid"] == pytest.approx([0.011347361950458953, 0.03865263804954105])
-    assert captured_calls[1]["bounds"]["tmid"] == pytest.approx([0.011347361950458953, 0.03865263804954105])
+    assert captured_calls[0]["bounds"]["tmid"][0] < times.min()
+    assert captured_calls[0]["bounds"]["tmid"][1] > times.max()
+    assert captured_calls[1]["bounds"]["tmid"] == pytest.approx(captured_calls[0]["bounds"]["tmid"])
     assert myfit.nested_tmid_refinement_applied is False
     assert "one side of the modeled transit" in myfit.nested_tmid_refinement_note
 

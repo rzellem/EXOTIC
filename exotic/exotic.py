@@ -22597,9 +22597,9 @@ def psf_solution_quality_score(psf_row, seed_pos=None,
     return float(score)
 
 
-def choose_best_psf_solution(primary_row, fallback_row, seed_pos=None):
-    primary_score = psf_solution_quality_score(primary_row, seed_pos=seed_pos)
-    fallback_score = psf_solution_quality_score(fallback_row, seed_pos=seed_pos)
+def choose_best_psf_solution(primary_row, fallback_row, seed_pos=None, max_sigma_pixels=PSF_FIT_MAX_SIGMA_PIXELS):
+    primary_score = psf_solution_quality_score(primary_row, seed_pos=seed_pos, max_sigma_pixels=max_sigma_pixels)
+    fallback_score = psf_solution_quality_score(fallback_row, seed_pos=seed_pos, max_sigma_pixels=max_sigma_pixels)
     if np.isfinite(primary_score) and (
         not np.isfinite(fallback_score)
         or primary_score <= fallback_score + PSF_FIT_SELECTION_MARGIN
@@ -22747,10 +22747,63 @@ def should_keep_header_wcs_alignment(
 
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
+CENTROID_ADAPTIVE_BOX_MAX = 80
+
+
+def estimate_star_outer_radius(data, pos, max_half=CENTROID_ADAPTIVE_BOX_MAX):
+    """Outer radius (px) of the star at pos, from the median of each 1-px ring out to max_half.
+
+    The ring median ignores neighbouring stars, and measuring from the profile's peak handles defocused
+    "donuts" whose centres are dark. Returns NaN when no star stands out from the local background.
+    """
+    try:
+        data = np.asarray(data)
+        xv, yv = mesh_box(pos, int(max_half), maxx=data.shape[1], maxy=data.shape[0])
+        sub = data[yv, xv].astype(float)
+        r = np.hypot(xv - pos[0], yv - pos[1])
+        ring = (r >= 0.85 * max_half) & (r <= max_half)
+        if np.count_nonzero(ring) < 20:
+            return np.nan
+        bg = float(np.nanmedian(sub[ring]))
+        radii = np.arange(0, int(0.85 * max_half))
+        prof = np.array([np.nanmedian(sub[(r >= k) & (r < k + 1)]) - bg if np.any((r >= k) & (r < k + 1)) else np.nan
+                         for k in radii])
+        if not np.any(np.isfinite(prof)):
+            return np.nan
+        k_peak = int(np.nanargmax(prof))
+        peak = prof[k_peak]
+        noise = 1.4826 * float(np.nanmedian(np.abs(sub[ring] - bg)))
+        # A clear star only: a faint one under a curved background (vignetting, a neighbour's halo) can have ring
+        # medians that never fall to 10% of its small peak, which must not read as 'huge star'.
+        if not np.isfinite(peak) or peak <= 10 * max(noise, 1e-9):
+            return np.nan
+        below = np.where(prof[k_peak:] < 0.1 * peak)[0]
+        return float(k_peak + below[0]) if below.size else np.nan
+    except Exception:
+        return np.nan
+
+
+def adaptive_centroid_box(data, pos, box):
+    """Widen the centroid window for stars larger than it (heavily defocused images, rzellem/EXOTIC#1420).
+
+    Ordinary stars are a few pixels across and keep the given box. When the star's outer radius exceeds 0.6 of the
+    window's half-width, the window becomes 1.5x that radius (capped at CENTROID_ADAPTIVE_BOX_MAX).
+    """
+    outer = estimate_star_outer_radius(data, pos)
+    if np.isfinite(outer) and outer > 0.6 * box:
+        return int(max(box, min(np.ceil(1.5 * outer), CENTROID_ADAPTIVE_BOX_MAX)))
+    return int(box)
+
+
 def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weightedcenter=False, fast_mode=False):
     stage_start = perf_counter()
     # get sub field in image
     try:
+        requested_box = int(box)
+        box = adaptive_centroid_box(data, pos, box)
+        # A window widened for a large (defocused) star must also accept the wide PSF it was widened for;
+        # ordinary stars keep the standard plausibility limit.
+        max_sigma = PSF_FIT_MAX_SIGMA_PIXELS if box == requested_box else max(PSF_FIT_MAX_SIGMA_PIXELS, box / 2.0)
         xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
         subarray = data[yv, xv]
         try:
@@ -22785,7 +22838,8 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
 
         # lower bound: [xc, yc, amp, sigx, sigy, rotation,  bg]
         lo = [pos[0] - box * 0.5, pos[1] - box * 0.5, 0, 0.5, 0.5, -np.pi / 4, np.nanmin(subarray) - 1]
-        up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, 20, 20, np.pi / 4, np.nanmax(subarray) + 1]
+        sigma_cap = max(20.0, box / 1.5)  # a widened window (defocused star) may need wider PSFs than 20 px
+        up = [pos[0] + box * 0.5, pos[1] + box * 0.5, 1e7, sigma_cap, sigma_cap, np.pi / 4, np.nanmax(subarray) + 1]
         x0 = np.array([*pos, *init], dtype=float)
         lo_arr = np.array(lo, dtype=float)
         up_arr = np.array(up, dtype=float)
@@ -22841,8 +22895,8 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             except Exception as exc:
                 log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
 
-        selected_fit = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos)
-        selected_fit = choose_best_psf_solution(selected_fit, moment_fit, seed_pos=pos)
+        selected_fit = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos, max_sigma_pixels=max_sigma)
+        selected_fit = choose_best_psf_solution(selected_fit, moment_fit, seed_pos=pos, max_sigma_pixels=max_sigma)
         if not np.all(np.isfinite(selected_fit[:5])):
             log.debug(
                 f"Centroid PSF fit at {np.round(pos, 2)} rejected as implausible "

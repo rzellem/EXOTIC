@@ -486,7 +486,11 @@ class NASAExoplanetArchive:
             else:
                 return self._new_scrape(filename="eaConf.json")
         else:
-            # replaces NEA default with most recent publication
+            # replaces NEA default with most recent publication. A column that is
+            # empty in the default row is float64 (all NaN); pandas 3 refuses to
+            # write a string such as 'BJD-TDB' into it, so widen those columns.
+            default = default.astype({c: object for c in default.columns
+                                      if c in extra.columns and default[c].dtype != extra[c].dtype})
             default.iloc[0] = extra.iloc[0]
 
             # Preserve orbital constraints before the legacy scalar-value merge.

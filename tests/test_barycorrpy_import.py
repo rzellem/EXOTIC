@@ -3,8 +3,56 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from types import ModuleType
 
 import pytest
+
+
+@pytest.mark.parametrize('cache_api', ['legacy', 'modern'])
+@pytest.mark.parametrize('cached', [False, True])
+def test_bootstrap_supports_both_astropy_cache_apis(monkeypatch, cache_api, cached):
+    from exotic import earth_orientation as orientation
+
+    lookups = []
+    imports = []
+    converter = object()
+    utc_tdb = ModuleType('barycorrpy.utc_tdb')
+    utc_tdb.JDUTC_to_BJDTDB = converter
+    monkeypatch.setitem(sys.modules, 'barycorrpy.utc_tdb', utc_tdb)
+
+    # Strict signatures reproduce the pre-8.0 TypeError and require the quiet
+    # missing-cache behavior on 8.0+, without masking any lookup exception.
+    def legacy_lookup(url_key, pkgname='astropy'):
+        lookups.append(url_key)
+        return cached
+
+    def modern_lookup(url_key, pkgname='astropy', *, on_missing):
+        assert on_missing == 'ignore'
+        lookups.append(url_key)
+        return cached
+
+    def import_reference(url_key, filename, *, replace):
+        imports.append((url_key, filename, replace))
+
+    monkeypatch.setattr(orientation, 'is_url_in_cache',
+                        legacy_lookup if cache_api == 'legacy' else modern_lookup)
+    monkeypatch.setattr(orientation, 'import_file_to_cache', import_reference)
+
+    assert orientation.load_barycentric_converter() is converter
+    assert lookups == [orientation.iers.IERS_B_URL]
+    assert imports == ([] if cached else [
+        (orientation.iers.IERS_B_URL, orientation.iers.IERS_B_FILE, False)])
+
+
+def test_bootstrap_does_not_hide_cache_lookup_errors(monkeypatch):
+    from exotic import earth_orientation as orientation
+
+    def failed_lookup(url_key, *, on_missing):
+        raise TypeError('cache lookup failed internally')
+
+    monkeypatch.setattr(orientation, 'is_url_in_cache', failed_lookup)
+    with pytest.raises(TypeError, match='cache lookup failed internally'):
+        orientation.load_barycentric_converter()
 
 
 @pytest.mark.parametrize('cached', [False, True])
@@ -15,6 +63,7 @@ def test_import_uses_local_iers_b_without_network(tmp_path, cached, auto_downloa
         import logging
         import sys
         import warnings
+        from pathlib import Path
         from unittest.mock import patch
 
         from astropy.config.paths import set_temp_cache
@@ -28,6 +77,7 @@ def test_import_uses_local_iers_b_without_network(tmp_path, cached, auto_downloa
         with set_temp_cache(cache):
             if cached:
                 cached_file = data.import_file_to_cache(iers.IERS_B_URL, iers.IERS_B_FILE)
+                cached_mtime = Path(cached_file).stat().st_mtime_ns
 
             # A brand-new runtime has no download cache directory yet. Treat
             # that startup warning as a failure rather than overlooking it.
@@ -53,6 +103,7 @@ def test_import_uses_local_iers_b_without_network(tmp_path, cached, auto_downloa
                 assert iers.conf.auto_max_age == 30
                 if cached:
                     assert pint.iers_b_file == cached_file
+                    assert Path(cached_file).stat().st_mtime_ns == cached_mtime
                 print('startup-ok')
         """
     )

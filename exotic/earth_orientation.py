@@ -5,6 +5,7 @@ Use the newest readable IERS table when sources are unavailable or stale, and
 report that choice. Astropy's global download and age settings are preserved.
 """
 from contextlib import contextmanager
+from inspect import signature
 import logging
 from threading import RLock
 
@@ -36,9 +37,11 @@ def load_barycentric_converter():
     with astropy-iers-data. Keep any existing cached table. Calculation-time
     IERS-A refreshes remain the responsibility of earth_orientation_context.
     """
-    # A new runtime has no cache directory; the import below creates it.
-    # Astropy 8 can treat this expected absence quietly without hiding errors.
-    if not is_url_in_cache(iers.IERS_B_URL, on_missing='ignore'):
+    # Before Astropy 8, a missing cache already returns False quietly and
+    # on_missing is unsupported. On Astropy 8+, request that same behavior.
+    cache_options = ({'on_missing': 'ignore'}
+                     if 'on_missing' in signature(is_url_in_cache).parameters else {})
+    if not is_url_in_cache(iers.IERS_B_URL, **cache_options):
         # Astropy hashes only the canonical URL into a safe cache directory name,
         # as required by barycorrpy's lookup; no file contents are hashed.
         import_file_to_cache(iers.IERS_B_URL, iers.IERS_B_FILE, replace=False)

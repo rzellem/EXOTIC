@@ -63,6 +63,9 @@ AU = const.au # m
 R_SUN = const.R_sun # m
 R_JUP = const.R_jup # m
 
+# These columns contain catalogue metadata even when every CSV value is empty.
+_ARCHIVE_TEXT_COLUMNS = ('pl_name', 'hostname', 'pl_tsystemref', 'pl_refname', 'pl_pubdate')
+
 # CALCULATED VALUES
 G = const.G.to(AU**3 / (const.M_sun * u.day**2))                    # AU^3 /(msun * day^2)
 SA = lambda m, p: (G * m * p ** 2. / (4. * np.pi ** 2.)) ** (1. / 3.)  # Keplerian semi-major axis (au)
@@ -358,7 +361,12 @@ class NASAExoplanetArchive:
                 "from https://exoplanetarchive.ipac.caltech.edu and run again.")
 
         if dataframe:
-            return pandas.read_csv(StringIO(response.text), float_precision='round_trip')
+            # All-empty metadata otherwise becomes float64, which pandas 3
+            # cannot fill with a later publication's label (e.g. BJD-TDB).
+            return pandas.read_csv(
+                StringIO(response.text), float_precision='round_trip',
+                dtype={column: object for column in _ARCHIVE_TEXT_COLUMNS},
+            )
         else:
             return response.text
 
@@ -517,6 +525,9 @@ class NASAExoplanetArchive:
                             # TODO could use mean for some variables (not mid-transit)
                             # log_info(i,k,edata[k][edata[k].notna()].values[0])
                         else:
+                            if k in _ARCHIVE_TEXT_COLUMNS:
+                                # Unknown metadata stays missing, not numeric zero.
+                                continue
                             # permanent nans - require manual entry
                             if k == 'pl_orblper':  # omega
                                 default.loc[default.pl_name == i, k] = 0

@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pandas
 import pytest
@@ -16,6 +17,71 @@ class DummyResponse:
 
     def json(self):
         return self._payload
+
+
+def test_tap_query_preserves_empty_text_columns_and_numeric_epoch(monkeypatch):
+    response = SimpleNamespace(
+        status_code=200,
+        headers={'content-type': 'text/csv'},
+        text=('pl_name,hostname,pl_tsystemref,pl_refname,pl_pubdate,pl_tranmid\n'
+              'WASP-50 b,,,,,2458411.841111111\n'),
+    )
+    monkeypatch.setattr('exotic.api.nea.requests.get', lambda *args, **kwargs: response)
+    nea = NASAExoplanetArchive('WASP-50 b')
+
+    table = nea._tap_query('https://example.org/?query=', {'select': '*', 'from': 'ps'})
+
+    for column in ('hostname', 'pl_tsystemref', 'pl_refname', 'pl_pubdate'):
+        assert table[column].dtype == object
+        assert pandas.isna(table[column].iloc[0])
+    assert pandas.api.types.is_numeric_dtype(table['pl_tranmid'])
+    assert table['pl_tranmid'].iloc[0] == float('2458411.841111111')
+
+
+@pytest.mark.parametrize('label_source', ['newest', 'older', 'default_and_newest', 'missing'])
+def test_new_scrape_merges_time_standard_text_into_empty_default_column(
+    monkeypatch, tmp_path, label_source,
+):
+    nea = NASAExoplanetArchive('WASP-50 b')
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / 'pl_names.json').write_text('{"wasp50b": "WASP-50 b"}', encoding='utf-8')
+    epoch = float('2458411.841111111')
+    default = {
+        'pl_name': 'WASP-50 b', 'hostname': 'WASP-50', 'pl_pubdate': '2019-07',
+        'pl_refname': 'Default paper', 'pl_tsystemref': None, 'pl_tranmid': None,
+        'pl_tranmiderr1': .0001, 'pl_tranmiderr2': -.0001, 'pl_orbper': 1.9550962,
+        'pl_ratror': .12, 'pl_ratrorerr1': .001, 'pl_ratrorerr2': -.001, 'pl_ratdor': 8.0,
+    }
+    newest = dict(default, pl_pubdate='2024-10', pl_refname='Newest paper')
+    older = dict(default, pl_pubdate='2024-05', pl_refname='Older paper', pl_tranmid=epoch)
+    if label_source in ('newest', 'default_and_newest'):
+        newest.update(pl_tsystemref='BJD-TDB', pl_tranmid=epoch)
+    elif label_source == 'older':
+        older['pl_tsystemref'] = 'BJD-TDB'
+    if label_source == 'default_and_newest':
+        default['pl_tsystemref'] = 'BJD-TDB'
+    csv_tables = iter([
+        pandas.DataFrame([default]).to_csv(index=False, float_format='%.17g'),
+        pandas.DataFrame([newest, older]).to_csv(index=False, float_format='%.17g'),
+    ])
+
+    def get_response(*args, **kwargs):
+        return SimpleNamespace(status_code=200, headers={'content-type': 'text/csv'},
+                               text=next(csv_tables))
+
+    monkeypatch.setattr('exotic.api.nea.requests.get', get_response)
+
+    planet, candidate, parameters = nea.planet_info()
+
+    assert planet == 'WASP-50 b'
+    assert candidate is False
+    assert parameters['midT'] == epoch
+    expected_standard = None if label_source == 'missing' else 'BJD-TDB'
+    assert parameters['midTStandard'] == expected_standard
+    stored = json.loads((tmp_path / 'eaConf.json').read_text())[0]
+    assert stored['pl_tsystemref'] == expected_standard
+    exported = json.loads(nea.planet_info(fancy=True))
+    assert exported['Published Mid-Transit Time Standard'] == (expected_standard or 'UNKNOWN')
 
 
 def test_legacy_epoch_standard_lookup_uses_matching_publication_and_preserves_precision(monkeypatch):

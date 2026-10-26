@@ -477,8 +477,6 @@ class Inputs:
 
                     init_file = user_input("\nPlease enter the Directory and Filename of "
                                            "your Initialization File: ", type_=str)
-                if init_file == 'ok':
-                    init_file = '/Users/rzellem/Documents/EXOTIC/inits.json'
                 init_file = Path(init_file)
                 planet_params = self.comp_params(init_file, planet_dict)
                 return init_file, planet_params
@@ -1425,11 +1423,6 @@ def prereduced_file(file):
         try:
             if not file:
                 file = user_input("Enter the path and file name of your data file: ", type_=str)
-            if file == "ok":
-                file = "/Users/rzellem/Documents/EXOTIC/sample-data/NormalizedFluxHAT-P-32 bDecember 17, 2017.txt"
-                # file = "/Users/rzellem/Downloads/fluxorama.csv
-                log_info("Hello, Rob.")
-
             file = Path(file)
 
             if file.is_file():

@@ -1,14 +1,8 @@
-# first create an environment with the proper dependencies + version
-# git clone https://github.com/rzellem/EXOTIC.git
-# cd EXOTIC
-# git checkout tess
-# conda create -n tess_exotic python=3.9
-# conda activate tess_exotic
-# pip install -e .
-# pip install lightkurve==2.0.6 statsmodels numba==0.57.1 wotan==1.10 transitleastsquares==1.0.31
-# pip install numpy==1.21.6
-# cd examples/
-# python tess.py -t "HAT-P-18 b"
+# Use a Python 3.12+ environment as described in the repository README.
+# From the repository root with that environment active:
+# python -m pip install -e .
+# python -m pip install lightkurve wotan transitleastsquares
+# python examples/tess/tess.py -t "HAT-P-18 b"
 
 import os
 import copy
@@ -25,13 +19,11 @@ from scipy.ndimage import binary_dilation
 from scipy.signal import savgol_filter, medfilt
 from astropy import constants as const
 from astropy import units as u
-from astropy.time import Time
 from scipy.ndimage import label
-import statsmodels.api as sm
 from pylightcurve import exotethys
 import lightkurve as lk
 from wotan import flatten
-from exotic.api.elca import transit, lc_fitter
+from exotic.api.elca import lc_fitter
 from exotic.api.output_aavso import OutputFiles
 from exotic.utils import safe_output_filename
 from transitleastsquares import transitleastsquares

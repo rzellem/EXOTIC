@@ -401,6 +401,12 @@ def TTV(epochs, tt):
 # directory path of file
 fpath = os.path.dirname(os.path.abspath(__file__))
 def estimate_prior( amplitude, periodicity, amp_lim=2, per_lim=4, file_name = os.path.join(fpath,"ttv_grid.fits"), show=True):
+    """Estimate a retrieval prior from a precomputed N-body simulation grid.
+
+    The grid FITS file is an external input and is not bundled with EXOTIC.
+    Pass its location through ``file_name``. The default looks for
+    ``ttv_grid.fits`` beside this module; this function does not generate it.
+    """
 
     with fits.open(file_name) as ttv_grid_list:
 

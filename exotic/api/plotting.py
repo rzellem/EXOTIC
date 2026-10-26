@@ -195,7 +195,7 @@ def corner(xs, bins=20, range=None, weights=None, color="k", hist_bin_factor=1,
     # Parse the parameter ranges.
     if range is None:
         if "extents" in hist2d_kwargs:
-            log.warn("Deprecated keyword argument 'extents'. Use 'range' instead.")
+            log.warning("Deprecated keyword argument 'extents'. Use 'range' instead.")
             range = hist2d_kwargs.pop("extents")
         else:
             range = [[x.min(), x.max()] for x in xs]

@@ -252,7 +252,7 @@ if __name__ == "__main__":
     plt.close()
 
     for key in myfit.errors:
-        print(f"{key} & {myfit.parameters[key]:.5f} $\pm$ {myfit.errors[key]:.5f}")
+        print(f"{key} & {myfit.parameters[key]:.5f} $\\pm$ {myfit.errors[key]:.5f}")
 
     for i, data in enumerate(myfit.rv_data):
         print(f"Inflated RV uncertainties for {data['name']} by {data['diff']:2f} m/s")

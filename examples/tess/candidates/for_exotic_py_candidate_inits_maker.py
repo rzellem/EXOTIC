@@ -3,11 +3,10 @@ import os
 import time
 import json
 import csv
-from datetime import datetime
 from math import degrees, floor
 import pandas as pd
 import numpy as np
-from astropy.constants import G, M_sun, R_sun, au
+from astropy.constants import G, M_sun, R_sun
 from astropy import units as u
 
 def download_tic_json(tic_id):

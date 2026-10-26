@@ -1,9 +1,10 @@
-## To run script after installing EXOTIC locally from the Main branch do the following in terminal
-# cd EXOTIC
-# cd examples
-# python tess_individ_lc.py -t "WASP-77 A b"
-#To run a different target simply call the code again with your new target:
-# python tess_individ_lc.py -t "K2-132 b"
+# Use a Python 3.12+ environment as described in the repository README.
+# From the repository root with that environment active:
+# python -m pip install -e .
+# python -m pip install lightkurve wotan
+# python examples/tess/tess_individ_lc.py -t "WASP-77 A b"
+# To run a different target, change the target name:
+# python examples/tess/tess_individ_lc.py -t "K2-132 b"
 import os
 import copy
 import json
@@ -19,16 +20,13 @@ from scipy.ndimage import binary_dilation
 from scipy.signal import savgol_filter, medfilt
 from astropy import constants as const
 from astropy import units as u
-from astropy.time import Time
 from scipy.ndimage import label
-import statsmodels.api as sm
 from pylightcurve import exotethys
 import lightkurve as lk
 from wotan import flatten
-from exotic.api.elca import transit, lc_fitter
+from exotic.api.elca import lc_fitter
 from exotic.api.output_aavso import OutputFiles
 from exotic.utils import safe_output_filename
-from transitleastsquares import transitleastsquares
 
 
 def output_file_path(output_dir, prefix, *parts, extension):

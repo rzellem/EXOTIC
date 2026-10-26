@@ -343,7 +343,6 @@ MICROOBSERVATORY_TELESCOP_SATURATION_VALUES = {
 }
 COMPARISON_STAR_MIN_COVERAGE_FRACTION = 0.8
 COMPARISON_STAR_MIN_VALID_FRAMES = 5
-COMPARISON_STAR_COVERAGE_SIGMA = 3.0  # Legacy constant; coverage rejection is fraction-based.
 COMPARISON_STAR_COVERAGE_MAX_ITERS = 10
 # A comparison star that is off the frame in more than this fraction of the
 # series is dropped as a reference. "Off the frame" per frame means either the
@@ -36421,7 +36420,9 @@ def _main_impl():
                 f"up to {effective_ars_retries} automatic a/Rs refit(s)."
             )
 
-        # Seed random number generator (for run to run consistency)
+        # Mix the small target/epoch identifiers into the integer required by
+        # NumPy's seed API. SHA-256 keeps this mapping stable between processes
+        # (unlike Python's hash); no science-file content is read or hashed.
         if exotic_infoDict['random_seed']:
             log_info(f"Setting random number seed to {exotic_infoDict['random_seed']}")
         else:
@@ -36584,7 +36585,8 @@ def _main_impl():
             log_info("Limb-darkening coefficients ready.")
             reduction_stage_timer.checkpoint("FITS validation, timestamp conversion, and limb darkening")
 
-            # check for EPW_MD5 checksum
+            # Preserve the producer's existing EPW_MD5 identifier for linkage
+            # in AAVSO output metadata; do not recompute or validate the digest.
             if 'EPW_MD5' in header:
                 epw_md5 = header['EPW_MD5']
 

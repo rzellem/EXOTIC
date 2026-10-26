@@ -11,29 +11,42 @@
 ![Mac](https://img.shields.io/badge/Mac-000000?style=for-the-badge&logo=apple&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 
-A Python 3 package for reducing and analyzing photometric data of exoplanetary transits. As an exoplanet passes in front of its host star, the observed brightness of the star drops by a small amount. This drop in brightness is known as a [transit]((https://exoplanets.nasa.gov/alien-worlds/ways-to-find-a-planet/#/2)). Our software aids in creating lightcurves from images, enabling extraction of planetary parameters (e.g. Rp/Rs, Inclination, Mid-transit, etc.) through fitting astrophysical models to the data. 
+A Python 3 package for reducing and analyzing photometric data of exoplanetary transits. As an exoplanet passes in front of its host star, the observed brightness of the star drops by a small amount. This drop in brightness is known as a [transit](https://exoplanets.nasa.gov/alien-worlds/ways-to-find-a-planet/#/2). Our software aids in creating lightcurves from images, enabling extraction of planetary parameters (e.g. Rp/Rs, Inclination, Mid-transit, etc.) through fitting astrophysical models to the data.
 
 ![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/docs/images/transitsimple.jpg)
 (NASA Ames)
 
 ## Installation + Setup
 
-To install EXOTIC, use Python 3.12 or newer. Python 3.13 is tested and recommended. You can then install EXOTIC by following these steps:
+To install EXOTIC, use Python 3.12 or newer. Python 3.12, 3.13, and 3.14 are covered
+by the compatibility test matrix. For the latest Python 3.14 maintenance release,
+follow the virtual environment instructions for [Windows](<docs/regions/English/EXOTIC Installation Instructions for Windows 10.md>),
+[macOS](docs/regions/English/EXOTIC-Installation-Instructions-for-Mac-Users.md),
+or [Linux](docs/regions/English/EXOTIC-Installation-Instructions-for-Linux.md).
+On Windows, the [Windows installation guide](<docs/regions/English/EXOTIC Installation Instructions for Windows 10.md>)
+covers using the bundled CPython 3.12/3.13/3.14 x64 UltraNest wheels.
+
+You can also install EXOTIC with Conda as follows:
 
 1. Install [Anaconda](https://www.anaconda.com/products/distribution) or [Miniconda](https://docs.conda.io/en/latest/miniconda.html) (a minimal version of Anaconda) on your computer.
 2. Create a new virtual environment and activate it:
 
    ```
-   conda create -n exotic python=3.13
+   conda create -n exotic python=3.14 pip
    conda activate exotic
    ```
-3. Install EXOTIC and its dependencies:
+3. Install EXOTIC and its dependencies. On macOS and Linux:
    ```
-   pip install exotic
+   python -m pip install exotic
+   ```
+   On Windows, run this from the EXOTIC checkout so pip can use the bundled
+   native wheels in the active Conda environment:
+   ```
+   python -m pip install --find-links wheelhouse --only-binary=ultranest -e .
    ```
 4. MPI support is optional but recommended when your computer already has a compatible MPI runtime, or when you have permission to install one. It can support MPI-aware work in UltraNest and LDTk, but ordinary EXOTIC reductions run normally without it. EXOTIC detects working MPI support automatically; no EXOTIC setting is required. If an MPI runtime is available but `mpi4py` is not already installed, add the optional Python bindings with:
    ```
-   pip install "exotic[mpi]"
+   python -m pip install "exotic[mpi]"
    ```
    If you cannot install system software, skip this step; no core EXOTIC reduction capability is removed.
 5. (Optional) Run EXOTIC's graphical user interface (GUI):
@@ -191,7 +204,6 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "use_eebls_to_initialize_tmid_and_bounds": true,
             "pick_comparison_by_eebls_snr": true,
             "use_impactparameter_rather_than_inclination_to_fit": true,
-            "Use target-driven comp selection rather than comp-driven comp selection": false,
             "require_comp_star": true,
 
             "Pixel Scale (Ex: 5.21 arcsecs/pixel)": null,

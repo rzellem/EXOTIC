@@ -2164,23 +2164,6 @@ def _format_ktmf_component_annotation(row):
     )
 
 
-def _compact_ktmf_detail(row):
-    detail = row.get('detail')
-    if not detail:
-        return None
-    detail = str(detail)
-    if row.get('label') == "Expected Rp/R*":
-        if "fixed to the input prior" in detail or "prior" in detail.lower():
-            return "Rp/R* prior assumed; not scored."
-        keep = []
-        for part in detail.split(','):
-            part = part.strip()
-            if part.startswith("Rp/R* sigma="):
-                keep.append(part)
-        return ", ".join(keep) if keep else detail
-    return detail
-
-
 def _ktmf_plot_rows(fit):
     metric, contributions, status = _fit_ktmf_metric_contributions_status(fit)
     component_rows = []

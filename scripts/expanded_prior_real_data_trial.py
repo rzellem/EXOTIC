@@ -3,6 +3,10 @@
 This is a manual validation helper. It fits each data set with a deliberately
 narrow Rp/R* prior, expands that prior, and compares the corrected warm-started
 fit with an independent cold fit over the same expanded prior.
+
+Supply local light-curve paths with ``--dataset-path INDEX PATH``. The built-in
+dataset indices select the existing observation-specific priors and bounds;
+see ``--help`` or scripts/README.md for examples.
 """
 
 from __future__ import annotations
@@ -13,16 +17,17 @@ import json
 import math
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from exotic.api.elca import lc_fitter
+if TYPE_CHECKING:
+    from exotic.api.elca import lc_fitter
 
 
 DATASETS = (
     {
         "name": "WASP-43b full transit",
-        "path": Path(r"D:\WASP43b_codex_current_fix_run\temp\NormalizedFlux_WASP-43 b_2026-03-20.txt"),
         "format": "normalized",
         "prior": {
             "rprs": 0.1594,
@@ -39,11 +44,6 @@ DATASETS = (
     },
     {
         "name": "TrES-5b full transit",
-        "path": Path(
-            r"D:\TrES5b_20260716_baron_rp\TrES5b_20260716_baron_rp"
-            r"\20260718_112527\Diagnostics\comp7\working_artifacts"
-            r"\FinalLightCurve_TrES-5b_2026-07-16.csv"
-        ),
         "format": "final_lightcurve",
         "prior": {
             "rprs": 0.143,
@@ -60,10 +60,6 @@ DATASETS = (
     },
     {
         "name": "KELT-20b one-sided partial transit",
-        "path": Path(
-            r"D:\KELT-20\20260718_003832_codex_full_test"
-            r"\working_artifacts\NormalizedFlux_KELT-20b_2026-07-15.txt"
-        ),
         "format": "normalized",
         "prior": {
             "rprs": 0.1144,
@@ -185,6 +181,8 @@ def run_fit(
     live_points: int,
     warmstart_source: lc_fitter | None = None,
 ) -> tuple[lc_fitter, dict]:
+    from exotic.api.elca import lc_fitter
+
     np.random.seed(seed)
     started = time.perf_counter()
     fit = lc_fitter(
@@ -310,31 +308,57 @@ def run_dataset(config: dict, live_points: int, seed: int) -> dict:
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Dataset indices: " + "; ".join(
+            f"{index} = {config['name']}" for index, config in enumerate(DATASETS)
+        ),
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--live-points", type=int, default=100)
     parser.add_argument("--seed", type=int, default=4729)
     parser.add_argument(
+        "--dataset-path",
+        nargs=2,
+        metavar=("INDEX", "PATH"),
+        action="append",
+        required=True,
+        help="Local light curve for a dataset index; repeat for multiple datasets.",
+    )
+    parser.add_argument(
         "--dataset-index",
         type=int,
         action="append",
-        help="Zero-based dataset index to run; repeat to select more than one.",
+        help="Run only these indices; by default, run the supplied dataset paths.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    trial_started = time.perf_counter()
-    results = []
+    paths = {}
+    for value, path in args.dataset_path:
+        try:
+            index = int(value)
+        except ValueError:
+            parser.error("--dataset-path INDEX must be an integer")
+        if index < 0 or index >= len(DATASETS):
+            parser.error(f"--dataset-path INDEX must be between 0 and {len(DATASETS) - 1}")
+        paths[index] = Path(path).expanduser()
     selected_indices = (
-        list(range(len(DATASETS)))
+        list(paths)
         if args.dataset_index is None
         else args.dataset_index
     )
     for index in selected_indices:
         if index < 0 or index >= len(DATASETS):
             parser.error(f"--dataset-index must be between 0 and {len(DATASETS) - 1}")
-        config = DATASETS[index]
+        if index not in paths:
+            parser.error(f"selected dataset {index} requires --dataset-path {index} PATH")
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    trial_started = time.perf_counter()
+    results = []
+    for index in selected_indices:
+        config = {**DATASETS[index], "path": paths[index]}
         print(f"TRIAL START: {config['name']}", flush=True)
         result = run_dataset(
             config,

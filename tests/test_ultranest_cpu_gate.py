@@ -11,6 +11,7 @@ import exotic.api.ultranest_utils as utils
 def clean_gate_environment(monkeypatch):
     monkeypatch.delenv(utils.ULTRANEST_CPU_GATE_ENV, raising=False)
     monkeypatch.delenv(utils.ULTRANEST_CPU_THRESHOLD_ENV, raising=False)
+    monkeypatch.delenv(utils.RESOURCE_WAIT_EVENTS_ENV, raising=False)
 
 
 def test_cpu_gate_waits_for_load_to_drop_before_workers_and_sampling(monkeypatch):
@@ -83,6 +84,64 @@ def test_silent_cpu_gate_still_waits(monkeypatch):
     utils._wait_for_cpu_capacity(verbose=False, stream=stream)
     assert sleeps == [5.0]
     assert stream.getvalue() == ''
+
+
+@pytest.mark.parametrize('loads', [[80.0, 30.0], [30.0]])
+def test_gate_events_include_sampling_and_waits_even_in_silent_fits(monkeypatch, capsys, loads):
+    monkeypatch.setenv(utils.RESOURCE_WAIT_EVENTS_ENV, '1')
+    now = SimpleNamespace(value=100.0)
+    readings = iter(loads)
+    monkeypatch.setattr(utils.time, 'monotonic', lambda: now.value)
+
+    def sample(interval):
+        now.value += interval
+        return next(readings)
+
+    monkeypatch.setattr(utils.psutil, 'cpu_percent', sample)
+    monkeypatch.setattr(utils.time, 'sleep', lambda seconds: setattr(now, 'value', now.value + seconds))
+    stream = io.StringIO()
+    worker = f'{utils.os.getpid()}:{utils.threading.get_ident()}'
+
+    def run(**kwargs):
+        # The gate has ended before the actual sampler is started.
+        assert capsys.readouterr().out.splitlines() == [
+            f'[exotic-runtime] gate_begin {worker} 100.000000000',
+            f'[exotic-runtime] gate_end {worker} {now.value:.9f}',
+            f'[exotic-runtime] processing_begin {worker} {now.value:.9f}',
+        ]
+        return 'complete'
+
+    assert utils.run_reactive_sampler(SimpleNamespace(run=run), verbose=False, stream=stream) == 'complete'
+    assert now.value == (107 if len(loads) == 2 else 101)
+    assert stream.getvalue() == ''
+    assert capsys.readouterr().out.splitlines() == [
+        f'[exotic-runtime] processing_end {worker} {now.value:.9f}',
+    ]
+
+
+def test_gate_events_end_and_preserve_the_actual_measurement_failure(monkeypatch, capsys):
+    monkeypatch.setenv(utils.RESOURCE_WAIT_EVENTS_ENV, '1')
+    monkeypatch.setattr(utils.time, 'monotonic', lambda: 100.0)
+
+    def sample(interval):
+        raise OSError('CPU counters unavailable')
+
+    monkeypatch.setattr(utils.psutil, 'cpu_percent', sample)
+    with pytest.raises(OSError, match='CPU counters unavailable'):
+        utils._wait_for_cpu_capacity(verbose=False)
+    worker = f'{utils.os.getpid()}:{utils.threading.get_ident()}'
+    assert capsys.readouterr().out.splitlines() == [
+        f'[exotic-runtime] gate_begin {worker} 100.000000000',
+        f'[exotic-runtime] gate_end {worker} 100.000000000',
+    ]
+
+
+def test_disabled_gate_has_no_events_or_excluded_time(monkeypatch, capsys):
+    monkeypatch.setenv(utils.RESOURCE_WAIT_EVENTS_ENV, '1')
+    utils.configure_ultranest_cpu_gate(enabled=False)
+    monkeypatch.setattr(utils.psutil, 'cpu_percent', lambda **kw: pytest.fail('Gate is disabled'))
+    utils._wait_for_cpu_capacity(verbose=False)
+    assert capsys.readouterr().out == ''
 
 
 def test_cpu_gate_has_no_wait_timeout(monkeypatch):

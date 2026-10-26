@@ -8,6 +8,37 @@ import exotic.inputs as inputs_module
 from exotic.inputs import Inputs, camera, parse_aavso_prereduced_overrides
 
 
+@pytest.mark.parametrize("prompted", [False, True])
+def test_search_init_accepts_literal_ok_filename(tmp_path, monkeypatch, prompted):
+    init_file = tmp_path / "ok"
+    init_file.write_text(json.dumps({
+        "user_info": {},
+        "optional_info": {},
+        "planetary_parameters": {"Planet Name": "HAT-P-32 b"},
+    }))
+    monkeypatch.chdir(tmp_path)
+    answers = iter(["ok"] if prompted else [])
+    monkeypatch.setattr(inputs_module, "user_input", lambda *args, **kwargs: next(answers))
+
+    result, parameters = Inputs(init_opt="y").search_init(None if prompted else "ok", {})
+
+    assert result.resolve() == init_file
+    assert parameters["pName"] == "HAT-P-32 b"
+
+
+@pytest.mark.parametrize("prompted", [False, True])
+def test_prereduced_accepts_literal_ok_filename(tmp_path, monkeypatch, prompted):
+    data_file = tmp_path / "ok"
+    data_file.write_text("example light curve\n")
+    monkeypatch.chdir(tmp_path)
+    answers = iter(["ok"] if prompted else [])
+    monkeypatch.setattr(inputs_module, "user_input", lambda *args, **kwargs: next(answers))
+
+    result = inputs_module.prereduced_file(None if prompted else "ok")
+
+    assert result.resolve() == data_file
+
+
 def test_camera_accepts_cmos_as_ccd_without_prompt():
     assert camera("CMOS") == "CCD"
 

@@ -19,13 +19,11 @@ from scipy.ndimage import binary_dilation
 from scipy.signal import savgol_filter, medfilt
 from astropy import constants as const
 from astropy import units as u
-from astropy.time import Time
 from scipy.ndimage import label
-import statsmodels.api as sm
 from pylightcurve import exotethys
 import lightkurve as lk
 from wotan import flatten
-from exotic.api.elca import transit, lc_fitter
+from exotic.api.elca import lc_fitter
 from exotic.api.output_aavso import OutputFiles
 from exotic.utils import safe_output_filename
 from transitleastsquares import transitleastsquares

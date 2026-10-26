@@ -21,7 +21,7 @@ You are a helpful chat assistant for a citizen science project, sponsored by NAS
 - Submit feedback anonymously through a feedback form
 **Partnership:** Sponsored by NASA's Universe of Learning program
 
-This repository contains examples of how to use the EXOTIC software to perform a variety of tasks related to exoplanet transit science. The python package is designed to be used with FITS images, photometric data, radial velocity data, and ephemeris data. The examples below are organized by the type of data used in the analysis. Compatible with Python 3.12 and newer; Python 3.13 is recommended.
+This repository contains examples of how to use the EXOTIC software to perform a variety of tasks related to exoplanet transit science. The python package is designed to be used with FITS images, photometric data, radial velocity data, and ephemeris data. The examples below are organized by the type of data used in the analysis. Compatible with Python 3.12 and newer; the installation guides cover Python 3.14 virtual environments.
 
 EXOTIC (Exoplanet Transit Interpretation Code) is a software application developed by the Jet Propulsion Laboratory (JPL) for the purpose of analyzing exoplanet transit data. This tool is designed to assist both amateur and professional astronomers in characterizing exoplanets by interpreting light curves—graphs that show the brightness of a star over time. When an exoplanet passes in front of its host star, it causes a slight dimming of the star's light, which can be captured and analyzed to determine various characteristics of the exoplanet, such as its size, orbit, and atmosphere.
 
@@ -32,12 +32,12 @@ Key Features of EXOTIC:
 - Community Collaboration: The software supports collaboration within the amateur astronomy community, allowing users to contribute their findings and data to larger exoplanetary research projects.
 By using EXOTIC, users can contribute to the broader field of exoplanet research, often working in conjunction with professional scientists to refine and validate discoveries. The software is part of NASA's effort to engage the public in scientific research and provide tools that make advanced astronomical analysis more accessible.
 
-To install EXOTIC, use Python 3.12 or newer. Python 3.13 is tested and recommended. You can then install EXOTIC by following these steps:
+To install EXOTIC, use Python 3.12 or newer. The compatibility matrix covers Python 3.12, 3.13, and 3.14 with minimum and latest Astropy versions. You can then install EXOTIC by following these steps:
 
 1. Open a terminal or command prompt.
 2. Create a new environment (optional but recommended):
    ```
-   conda create -n exotic python=3.10
+   conda create -n exotic python=3.14 pip
    conda activate exotic
    ```
 3. Install EXOTIC and its dependencies:
@@ -629,7 +629,7 @@ Several techniques exist for discovering an exoplanet, with the transit method l
 
 The significant increase in discovered exoplanets and candidates calls for follow-up observations to identify planetary characteristics. Large observatories such as the JWST are using these discovered targets as potential exoplanet studies. However, ephemerides may become ``stale'' for transiting exoplanets, which is when the mid-transit time $\Delta T_{mid}$ $1\sigma$ uncertainty exceeds half the transit duration $t_{dur}$. Follow-up observations are needed to reduce the overhead of large observatories by minimizing the uncertainty in the next predicted mid-transit time. By conducting transit maintenance with a 6" telescope, it is possible to achieve $3\sigma$ observations for the transit of $\ge$188 exoplanets, potentially saving approximately 10,000 days of observation time for both JWST and ARIEL.
 
-Citizen science projects such as Exoplanet Watch\footnote https://exoplanets.nasa.gov/exoplanet-watch/ and ExoClock\footnote https://www.exoclock.space host a network of small ground-based telescopes ($\le$1 m) that aims to increase the efficiency of large observatories by keeping ephemerides fresh for transiting exoplanets and candidates. To support the project's objective, Exoplanet Watch developed an open-sourced data reduction tool written in Python<=3.10 called the EXOplanet Transit Interpretation Code. EXOTIC is a universal data reduction tool that uses raw FITS files or a pre-reduced time series to fit a model lightcurve with full posteriors. Designing a universal data reduction tool for transiting exoplanet science requires compatibility with various telescopes and a robust optimization algorithm incorporating uncertainty quantification. Following the analysis, EXOTIC provides results in a report form that users can submit to the American Association of Variable Star Observers https://www.aavso.org (AAVSO). Furthermore, users can conduct further analysis using supplementary software packages in the EXOTIC repository.
+Citizen science projects such as Exoplanet Watch\footnote https://exoplanets.nasa.gov/exoplanet-watch/ and ExoClock\footnote https://www.exoclock.space host a network of small ground-based telescopes ($\le$1 m) that aims to increase the efficiency of large observatories by keeping ephemerides fresh for transiting exoplanets and candidates. To support the project's objective, Exoplanet Watch developed an open-sourced data reduction tool written in Python 3.12+ called the EXOplanet Transit Interpretation Code. EXOTIC is a universal data reduction tool that uses raw FITS files or a pre-reduced time series to fit a model lightcurve with full posteriors. Designing a universal data reduction tool for transiting exoplanet science requires compatibility with various telescopes and a robust optimization algorithm incorporating uncertainty quantification. Following the analysis, EXOTIC provides results in a report form that users can submit to the American Association of Variable Star Observers https://www.aavso.org (AAVSO). Furthermore, users can conduct further analysis using supplementary software packages in the EXOTIC repository.
 
 ## Implementation
 Once provided with a sequence of images including an exoplanet's transit, EXOTIC conducts photometry and updates key orbital parameters, including the mid-transit time $T_{mid}$, planet-star radius ratio $R_{p}/R_{s}$, and orbital inclination $i$. Users can also supply prereduced data in place of an image sequence. The pipeline then generates a model lightcurve of the exoplanet transit along with files including refined system parameters.
@@ -801,7 +801,7 @@ The simultaneous fitting module within the EXOTIC repository enables integrating
   - Suitable for users with large file sizes, many files, privacy concerns, or slow internet connection.
 
 - **Limitations:**
-  - Requires Python3.10 and multiple sub-packages installation on the user's computer.
+  - Requires Python 3.12 or newer and multiple sub-packages installation on the user's computer.
 
 Before you run EXOTIC for the first time, to contribute your own transiting exoplanet data to the AAVSO Exoplanet Section Database and Exoplanet Watch, you need to sign up for your own free AAVSO account so that we can give you credit for your work. You only need to do this step once, and on subsequent data sets, you will use the same AAVSO Observer Code, so keep track of your four-letter Observer Code for future reference. You don't need to be a paid member of the AAVSO in order to create an AAVSO account and upload your data. Despite the name, you don't need to be American to contribute to the American Association of Variable Star Observers. It's open to anyone and everyone. The Observer Code maintains anonymity on our Results page, while enabling scientists writing papers about exoplanets you studied to include you as a co-author.
 

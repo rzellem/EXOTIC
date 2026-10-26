@@ -253,11 +253,13 @@ class OutputFiles:
         gaia_pmra_header = f"#GAIAPMRA={gaia_pmra}\n" if gaia_pmra else ""
         gaia_pmdec_header = f"#GAIAPMDEC={gaia_pmdec}\n" if gaia_pmdec else ""
 
-        # compute 32 character hash of the results_dict
+        # Content-address only the small in-memory fit-results dictionary so
+        # distinct reductions of the same target/epoch retain distinct reports.
+        # Those existing identifiers cannot distinguish changed fit results.
+        # Compute once here at report creation; no science file is scanned.
         hash_object = hashlib.sha256(dumps(results_dict).encode())
         hash_id = hash_object.hexdigest()[:32]
 
-        #params_file = self.dir / f"TESS_{hash_id}_{self.plname}_{tmidstr}_AAVSO.txt"
         params_file = aavso_output_directory(self.dir) / safe_output_filename(
             tmidstr,
             hash_id,
@@ -265,7 +267,6 @@ class OutputFiles:
             "AAVSO",
             extension="txt",
         )
-        # 2459642_61_5164d266e1755aead98dbec0f26e7b7c_gj436b_AAVSO
 
         with params_file.open('w') as f:
             f.write("#TYPE=EXOPLANET\n"  # fixed

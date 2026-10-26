@@ -5,9 +5,8 @@ import json
 import csv
 import pandas as pd
 import numpy as np
-from astropy.constants import G, M_sun, R_sun, au
+from astropy.constants import G, M_sun, R_sun
 from astropy import units as u
-from datetime import datetime
 from math import degrees, floor
 
 # Function to download the TIC JSON file from ExoFOP and save to target directory

@@ -36,12 +36,7 @@
 #    # NOTE: See companion file version.py for version info.
 # ########################################################################### #
 
-# Import metadata handling based on Python version
-try:
-    from importlib import metadata  # Python 3.8+
-except ImportError:
-    # Fallback to importlib_metadata for older versions
-    import importlib_metadata as metadata  # Python <3.8
+from importlib import metadata
 
 from pathlib import Path
 from importlib import import_module
@@ -54,25 +49,13 @@ for p in path_update:
     if p not in sys.path:
         sys.path.append(p)
 
-# Import custom version reading function for fallback scenario
-try:  
-    # First attempt: import as a relative module (when running as part of a package)
-    from .api.versioning import version_read
-except ImportError:
-    # Second attempt: import as an absolute package (when running standalone)
-    from api.versioning import version_read
-
 # Version detection 
 try:
     # First attempt: get version from package metadata
     __version__ = metadata.version(__name__)
 except metadata.PackageNotFoundError:
-    # Second attempt: package is not installed, try reading version from exotic script
-    try:
-        __version__ = version_read("exotic.py")
-    except IOError:
-        # Unable to read from exotic script
-        __version__ = "unknown"
+    # Source checkouts use the version module written by setuptools_scm.
+    from .version import __version__
 
 
 def _load_runtime_callable(name):

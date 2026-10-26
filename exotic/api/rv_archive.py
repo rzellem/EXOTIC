@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 from astroquery.simbad import Simbad
 from astropy.coordinates import SkyCoord
 from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive
-from pyvo.dal import tap
 import pyvo as vo
 
 ESO_TAP_OBS = "http://archive.eso.org/tap_obs"

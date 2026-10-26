@@ -68,7 +68,6 @@
         "Skip Low Comparison Coverage Rejection": "Set optional_info 'skip_low_comparison_coverage_rejection' to y to disable EXOTIC's default rejection of comparison stars that are valid in far fewer frames than the rest of the comparison-star field. Default n.",
         "Fit Lightcurve to Every Comparison Candidate": "Set optional_info 'fit_lightcurve_to_every_comparison_candidate' to y to save one target lightcurve fit plot per comparison star into working_artifacts/ using the selected photometry setup. Default n.",
         "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require an actual comparison star for the best-fit photometry result.",
-        "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
         "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
         "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
         "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
@@ -186,7 +185,6 @@
         "scintillation_coefficient": null,
         "skip_low_comparison_coverage_rejection": false,
         "fit_lightcurve_to_every_comparison_candidate": false,
-        "Use target-driven comp selection rather than comp-driven comp selection": false,
         "require_comp_star": true,
         "Image Scale (Ex: 5.21 arcsecs/pixel)": null,
         "Pixel Scale (arsec/pixel)": null,

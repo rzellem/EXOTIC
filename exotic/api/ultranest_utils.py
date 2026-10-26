@@ -4,6 +4,7 @@ import math
 import multiprocessing
 import os
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -48,6 +49,7 @@ ULTRANEST_WORKER_ENV_KEYS = (
 ULTRANEST_WORKER_BACKEND_ENV = "EXOTIC_ULTRANEST_WORKER_BACKEND"
 ULTRANEST_CPU_GATE_ENV = "EXOTIC_ULTRANEST_CPU_GATE"
 ULTRANEST_CPU_THRESHOLD_ENV = "EXOTIC_ULTRANEST_CPU_THRESHOLD"
+RESOURCE_WAIT_EVENTS_ENV = "EXOTIC_RESOURCE_WAIT_EVENTS"
 DEFAULT_CPU_THRESHOLD_PERCENT = 50.0
 CPU_SAMPLE_SECONDS = 1.0
 CPU_GATE_POLL_SECONDS = 5.0
@@ -97,10 +99,36 @@ def configure_ultranest_cpu_gate(enabled=None, threshold=None):
     return _cpu_gate_settings()
 
 
+@contextmanager
+def _report_runtime_phase(phase):
+    """Tell the Archive clock about gates and parallel fits, including quiet fits.
+
+    These flushed events use the host's shared monotonic clock so pipe delivery
+    delays do not become processing time. They go to stdout independently of
+    the optional progress stream. No science products are opened or inspected.
+    """
+    report = _is_enabled(os.environ.get(RESOURCE_WAIT_EVENTS_ENV, '0'))
+    worker = f'{os.getpid()}:{threading.get_ident()}'
+    if report:
+        sys.stdout.write(f'[exotic-runtime] {phase}_begin {worker} {time.monotonic():.9f}\n')
+        sys.stdout.flush()
+    try:
+        yield
+    finally:
+        if report:
+            sys.stdout.write(f'[exotic-runtime] {phase}_end {worker} {time.monotonic():.9f}\n')
+            sys.stdout.flush()
+
+
 def _wait_for_cpu_capacity(verbose=True, stream=None):
     enabled, threshold = _cpu_gate_settings()
     if not enabled:
         return
+    with _report_runtime_phase('gate'):
+        _poll_cpu_capacity(threshold, verbose=verbose, stream=stream)
+
+
+def _poll_cpu_capacity(threshold, verbose=True, stream=None):
     output_stream = stream if stream is not None else sys.stdout
     waited = False
     while True:
@@ -757,7 +785,10 @@ def run_reactive_sampler(
     output_stream = stream if stream is not None else sys.stdout
 
     _wait_for_sampler_cpu_capacity(sampler, verbose=(mode != "silent"), stream=output_stream)
-    with _parallel_vectorized_loglike(sampler) as (worker_count, worker_backend, draw_sizes):
+    with (
+        _report_runtime_phase('processing'),
+        _parallel_vectorized_loglike(sampler) as (worker_count, worker_backend, draw_sizes),
+    ):
         if draw_sizes is not None and mode != "silent":
             memory_label = "unknown RAM"
             if draw_sizes["ram_gib"] is not None:

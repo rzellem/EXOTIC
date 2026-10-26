@@ -8,41 +8,38 @@
 
 ## Installation and Running
 
-EXOTIC can run on a Windows, Macintosh, or Linux/Unix computer. You can also use EXOTIC via the free Google Colab, which features cloud computing, many helpful plotting functions, and a simplified installation. However, if you are a user with many images or large images, we recommend running EXOTIC locally on your own computer.
+EXOTIC runs on Windows, macOS, and Linux with **Python 3.12 or newer**.
+The installation guides include Python 3.14 virtual environments. An existing
+supported Python installation can be used; there is no need to replace it just
+to install EXOTIC.
 
- **Google Colab Cloud**
-  - Features: does not require the user to install any software locally on their own computer.
-  - Limitations: Requires user to upload their images to a free Gdrive account.
-  - Recommendations: If you run out of space on your default Google/Gdrive account, you can sign up for a new, free account to use. Some users even make a new Google account for every new dataset to avoid running out of space.
-  - [How to use EXOTIC on the Colab video](https://drive.google.com/file/d/10zlQRgT8iV3dSe0FVW7tiL-V86ewai_1/view)
-  - [How to use EXOTIC on the Colab written instructions](http://docs.google.com/document/d/1GLnfX1DdGPpd1ArKNcoF2GGV6pwKR3aEYuwjSQlhiZQ/edit?usp=sharing)
-  - [EXOTIC: Google Colab Cloud Version](https://colab.research.google.com/drive/1UcDfm3z1WnfdOpRwjCQYwDgK9Wh2cU6x?usp=sharing) (includes step-by-step instructions)
-  
+For local installation, follow the guide for your operating system:
 
- **Locally On Your Own Computer**
-  - Features: Images are read off of the user's harddrive- nothing is uploaded to Gdrive. This method can be helpful for those with large filesizes, many files, or a slow internet connection.
-  - Limitations: Requires user to install Python3 and multiple subpackages.
-  
-  - Installation Instructions:
-    1. ​[Download and install the latest release of Python.](https://www.python.org/downloads/)
-        **NOTE FOR WINDOWS USERS:** make sure to check the box "Add Python to PATH" when installing.
-        **NOTE FOR ALL USERS:** please download and install the latest release of Python, even if you have a previous installation already on your computer, to ensure that all Python packages are properly installed.
-    2. [Download the latest release of EXOTIC.](https://github.com/rzellem/EXOTIC/releases)
-    3. Unzip this file.
-    4. Double-click on the appropriate installer for your operating system:
-        - Windows: run_exotic_windows.bat
-        - Macintosh: run_exotic_macintosh.command
-        - Linux: run_exotic_linux.sh
-    5. If you get a security warning about the software being from an unidentified, unsigned, or non-trusted developer, you can bypass it by:
-        - Windows: click "More info" and then the "Run away" box at the bottom of the window.
-        - Macintosh: Please follow [these instructions](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac).
+- [Windows](<regions/English/EXOTIC Installation Instructions for Windows 10.md>)
+- [macOS](regions/English/EXOTIC-Installation-Instructions-for-Mac-Users.md)
+- [Linux](regions/English/EXOTIC-Installation-Instructions-for-Linux.md)
+
+The [repository README](../README.md) covers Conda installation and
+optional MPI support. For cloud use without a local installation, follow its
+[Google Colab tutorials](../README.md#google-colab-cloud).
+
+The checkout launchers install or update the published EXOTIC package in the
+selected Python environment before opening the GUI. Run them from a terminal
+with that environment active so installation progress and errors stay visible:
+
+- Windows: `run_exotic_windows.bat`
+- macOS: `./run_exotic_mac.command`
+- Linux: `./run_exotic_linux.sh`
 
 - **We also recommend that you download our [sample transiting exoplanet dataset](https://github.com/rzellem/EXOTIC_sampledata)** to confirm that EXOTIC is running correctly on the Google Colab Cloud or your own computer.
 - How EXOTIC Works
-  - [Document](https://github.com/rzellem/EXOTIC/blob/main/Documentation/English/How-EXOTIC-Works.pdf)
+  - [Document](regions/English/How-EXOTIC-Works.pdf)
   - [Video](https://drive.google.com/file/d/1x0kl8WtpEw9wS0JInbjVWvdzuTc9TTvS/view)
 
-- Lastly, we offer these documents [in other languages](https://github.com/rzellem/EXOTIC/raw/main/Documentation/)
+- Lastly, we offer these documents [in other languages](regions/).
+
+Outdated installation PDFs, a configuration reference PDF, and the old chatbot
+documentation snapshot are preserved in [older_for_review](../older_for_review/README.md).
 
 ## Requirements
 FITS files with a modern header including parameters for UT time, exposure time, WCS coordinations (optional) are required for EXOTIC.
@@ -56,7 +53,9 @@ A lightcurve from the sample dataset is shown below:
 
 ![Lightcurve graph showing relative flux versus phase with error bars and interpolated curve.](https://github.com/rzellem/EXOTIC/raw/main/docs/images/HAT-P-32bExample.png)
 
-For the full output of EXOTIC please see the [example output](https://github.com/rzellem/EXOTIC/raw/main/Documentation/English/example_output.txt)
+A [historical sample run log](../older_for_review/docs/regions/English/example_output.txt)
+is preserved for review. It was produced with Python 3.8.3 and shows an older
+EXOTIC output format.
 
 ```
 *********************************************************
@@ -76,12 +75,12 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
 ## How to Run EXOTIC with the Sample Data Locally on your Computer
 1. Download the [Sample Data](https://github.com/rzellem/EXOTIC_sampledata/releases/) and unzip the file.
 
-2. Launch EXOTIC by double-clicking on the appropriate installer for your operating system:
-      - Windows: run_exotic_windows.bat
-      - Macintosh: run_exotic_macintosh.command
-      - Linux: run_exotic_linux.sh
+2. Activate the environment where you installed EXOTIC and run `exotic-gui`.
+   To install or update it first, use the launcher for your operating system
+   as described in [Installation and Running](#installation-and-running).
 
-3. A new loading screen will pop up where you will see many required packages being automatically installed and updated. If this is your first time running the code, this can take up to a few minutes, depending on your internet connection.
+3. If you used a checkout launcher, wait for installation or updating to finish.
+   Starting `exotic-gui` directly uses the already installed package.
 
 ![EXOTIC Loading Screen](https://github.com/rzellem/EXOTIC/blob/develop/docs/images/exotic_loading.png)
 
@@ -159,7 +158,7 @@ The scatter in the residuals of the lightcurve fit is: 0.5414 %
 
 ## Initializaton File
 
-Get EXOTIC up and running faster with a json file. Please see the included file ([inits.json](inits.json)) meant for the [sample data](https://github.com/rzellem/EXOTIC_sampledata). The initialization file has the following fields:
+Get EXOTIC up and running faster with a json file. Please see the included file ([inits.json](../inits.json)) meant for the [sample data](https://github.com/rzellem/EXOTIC_sampledata). The initialization file has the following fields:
 
 ```json
 {

@@ -47,7 +47,6 @@ from datetime import datetime
 import json
 import os
 import platform
-import python_version
 import re
 import subprocess
 import sys
@@ -183,13 +182,11 @@ def gui_reduction_command(reduction_choice, input_kind=1):
 
 
 def main():
-    try:
-        python_version.check(min=(3, 8, 0), max=(4, 0, 0))
-    except Exception as e:
-        print(f"\nERROR: EXOTIC {str(e)}. ... EXITING!\n")
+    if not (3, 12) <= sys.version_info < (4, 0):
+        print("\nERROR: EXOTIC requires Python 3.12 or newer, below Python 4. ... EXITING!\n")
         print("Press the <ENTER> key to continue. ...")
         sys.stdin.read(1)
-        exit(65)  # package is not installed
+        exit(65)  # unsupported Python runtime
     else:
         print(f"\nSUCCESS: Valid Python version {platform.python_version()} detected!\n")
 
@@ -467,7 +464,6 @@ def main():
                 "Overexposure Threshold Fraction": "Set optional_info 'overexposure_threshold_fraction' to the fraction of saturation used for rejection. Default 0.9.",
                 "Photometry Noise Budget": "Optional noise terms for raw-image photometry: gain_electrons_per_adu, read_noise_electrons, dark_current_electrons_per_second_per_pixel, flat_field_fractional_error, telescope_aperture_m, and scintillation_coefficient. Leave null to ignore an optional term.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
-                "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
@@ -516,7 +512,6 @@ def main():
                 "reject_overexposed_stars": True,
                 "saturation_value": 65535,
                 "overexposure_threshold_fraction": 0.9,
-                "Use target-driven comp selection rather than comp-driven comp selection": "n",
                 "require_comp_star": "y"
             }
 
@@ -1604,7 +1599,6 @@ def main():
                 "Saturation Value": "Set optional_info 'saturation_value' to the detector saturation value in the same units as the image pixels. If omitted/default, EXOTIC uses FITS SATURATE when available, maps TELESCOP Cecilia to 4096, otherwise scales 65535 by X times Y binning from XBINNING/YBINNING, XBINING/YBINING, CCDXBIN/CCDYBIN, or CCDSUM (in that order). Missing/invalid binning leaves 65535 unchanged. Header saturation and custom configured limits are not scaled.",
                 "Overexposure Threshold Fraction": "Set optional_info 'overexposure_threshold_fraction' to the fraction of saturation used for rejection. Default 0.9.",
                 "Require Comparison Star": "Set optional_info 'require_comp_star' to y to require a real comparison star for the best-fit photometry result.",
-                "Target-Driven Comparison Selection": "Set optional_info 'Use target-driven comp selection rather than comp-driven comp selection' to y to force the legacy target-driven comparison-star selection path. Default n.",
                 "Boolean Values": "All boolean settings accept JSON true/false, numeric 1/0, or case-insensitive strings y/n. The equivalent strings yes/no and on/off are also accepted.",
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
@@ -1708,7 +1702,6 @@ def main():
                     "flat_field_fractional_error": null,
                     "telescope_aperture_m": null,
                     "scintillation_coefficient": null,
-                    "Use target-driven comp selection rather than comp-driven comp selection": "n",
                     "require_comp_star": "y"
                 }
 
@@ -1784,7 +1777,6 @@ def main():
                     "flat_field_fractional_error": null,
                     "telescope_aperture_m": null,
                     "scintillation_coefficient": null,
-                    "Use target-driven comp selection rather than comp-driven comp selection": "n",
                     "require_comp_star": "y"
                 }
 

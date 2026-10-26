@@ -1,0 +1,60 @@
+name: Python tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }} / Astropy ${{ matrix.astropy }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      MPLBACKEND: Agg
+      PYTHONDONTWRITEBYTECODE: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.12', '3.13', '3.14']
+        astropy: [minimum, latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install EXOTIC and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          astropy_requirement='astropy>=8.0.1'
+          if [[ '${{ matrix.astropy }}' == minimum ]]; then
+            astropy_requirement='astropy==8.0.1'
+          fi
+          wheel_options=()
+          native_wheels=()
+          if [[ '${{ runner.os }}' == Windows ]]; then
+            wheel_options=(--find-links wheelhouse --only-binary=ultranest)
+            python_tag='${{ matrix.python-version }}'
+            python_tag="${python_tag//./}"
+            native_wheels=("wheelhouse/ultranest-4.5.0-cp${python_tag}-cp${python_tag}-win_amd64.whl")
+            if [[ "$python_tag" == 314 ]]; then
+              native_wheels+=(wheelhouse/sep-1.4.1-cp314-cp314-win_amd64.whl)
+            fi
+          fi
+          python -m pip install --upgrade "${wheel_options[@]}" -e '.[test]' "$astropy_requirement" "${native_wheels[@]}"
+      - name: Show resolved compatibility versions
+        run: python -c "import sys, astropy, numpy, ultranest, ultranest.mlfriends, sep; print(sys.version); print('Astropy', astropy.__version__, 'NumPy', numpy.__version__, 'UltraNest', ultranest.__version__, 'SEP', sep.__version__)"
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Verify the default install works without MPI
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('mpi4py') is None"
+          python -c "import ldtk; import exotic.exotic"
+      - name: Run tests
+        run: python -m pytest -q -p no:cacheprovider

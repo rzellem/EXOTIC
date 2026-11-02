@@ -275,6 +275,10 @@ def _configured_ultranest_worker_backend():
         return "process"
     if backend in {"thread", "threads", "threading"}:
         return "thread"
+    if backend in {"none", "single", "off", "0"}:
+        return "none"
+    if sys.platform.startswith("linux") and not _is_colab_runtime():
+        return "process"
     return "none"
 
 

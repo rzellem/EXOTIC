@@ -10,7 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 import numpy as np
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -129,6 +132,8 @@ def _wait_for_cpu_capacity(verbose=True, stream=None):
 
 
 def _poll_cpu_capacity(threshold, verbose=True, stream=None):
+    if psutil is None:
+        return
     output_stream = stream if stream is not None else sys.stdout
     waited = False
     while True:

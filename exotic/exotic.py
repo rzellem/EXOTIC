@@ -20956,7 +20956,7 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
         if np.all(np.isfinite(shift)) and np.isfinite(error):
             max_shift = max(abs(shift[0]), abs(shift[1]))
             if max_shift <= max(roi_current.shape):
-                fft_tform = SimilarityTransform(scale=1, rotation=0, translation=[-shift[1], -shift[0]])
+                fft_tform = SimilarityTransform(scale=1, rotation=0, translation=[shift[1], shift[0]])
                 fft_high_confidence = error <= 0.1 and max_shift <= max(roi_current.shape) * 0.25
                 _record_transform_stage_timing('fft_translation', perf_counter() - stage_start, True)
                 if fft_high_confidence:

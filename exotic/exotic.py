@@ -22684,7 +22684,7 @@ def _fit_seed_anchored_psf(data, pos, psf_function=gaussian_psf, box=8, bound_ra
         model = psf_function(xv, yv, *pars)
         return (subarray - model).flatten()
 
-    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', ftol=1e-4, xtol=1e-4, max_nfev=40, method='trf')
     if np.isfinite(moment_fit[6]):
         res.x[6] = moment_fit[6]
     return res.x
@@ -22943,7 +22943,7 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             return (subarray - model).flatten()
 
         try:
-            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', ftol=1e-4, xtol=1e-4, max_nfev=40, method='trf')
         except Exception as exc:
             if (
                 has_usable_signal
@@ -22974,17 +22974,25 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
 
         anchored_fit = _nan_psf_result()
         if not weightedcenter:
-            try:
-                anchored_box = max(4, min(int(box), 8))
-                anchored_fit = _fit_seed_anchored_psf(
-                    data,
-                    pos,
-                    psf_function=psf_function,
-                    box=anchored_box,
-                    bound_radius=4.0,
-                )
-            except Exception as exc:
-                log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
+            primary_clean = (
+                getattr(res, 'success', False)
+                and np.all(np.isfinite(res.x[:5]))
+                and np.hypot(res.x[0] - pos[0], res.x[1] - pos[1]) <= 2.5
+                and 0.5 <= res.x[3] <= 15.0
+                and 0.5 <= res.x[4] <= 15.0
+            )
+            if not primary_clean:
+                try:
+                    anchored_box = max(4, min(int(box), 8))
+                    anchored_fit = _fit_seed_anchored_psf(
+                        data,
+                        pos,
+                        psf_function=psf_function,
+                        box=anchored_box,
+                        bound_radius=4.0,
+                    )
+                except Exception as exc:
+                    log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
 
         selected_fit = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos)
         selected_fit = choose_best_psf_solution(selected_fit, moment_fit, seed_pos=pos)
@@ -35932,6 +35940,28 @@ def parse_args():
 def _main_impl():
     # command line args
     args = parse_args()
+    if args.multiprocess_transformations is None:
+        _env_mp_tf = os.environ.get("EXOTIC_MULTIPROCESS_TRANSFORMATIONS")
+        if _env_mp_tf:
+            try:
+                args.multiprocess_transformations = int(_env_mp_tf)
+            except ValueError:
+                pass
+        if args.multiprocess_transformations is None:
+            _tl_cfg_path = os.path.expanduser("~/.config/TransitLab/config.json")
+            if os.path.isfile(_tl_cfg_path):
+                try:
+                    import json as _json_tl
+                    with open(_tl_cfg_path, "r", encoding="utf-8") as _f_tl:
+                        _tl_cfg = _json_tl.load(_f_tl)
+                    _val = _tl_cfg.get("MultiprocessTransformations")
+                    if _val is not None and int(_val) > 0:
+                        args.multiprocess_transformations = int(_val)
+                except Exception:
+                    pass
+        if args.multiprocess_transformations is None and sys.platform.startswith("linux"):
+            args.multiprocess_transformations = min(8, max(1, os.cpu_count() or 1))
+
     if args.multiprocess_transformations is not None and args.multiprocess_transformations < 1:
         raise ValueError("--multiprocess-transformations requires an integer greater than 0.")
     if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits < 1:

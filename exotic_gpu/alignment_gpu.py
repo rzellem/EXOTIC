@@ -210,7 +210,9 @@ def phase_cross_correlation_gpu(
                 [(peak[i] if peak[i] <= mid[i] else peak[i] - shape[i]) for i in range(len(shape))],
                 dtype=float,
             )
-            err_val = float(np.max(icorr))
+            # Return normalized RMS error to match skimage contract: 0 = perfect match, 1 = no match.
+            peak_corr = float(np.max(icorr))
+            err_val = float(max(0.0, min(1.0, 1.0 - peak_corr)))
             if return_error:
                 return (shift, err_val, float("nan"))
             return (shift, err_val)
@@ -243,7 +245,9 @@ def phase_cross_correlation_gpu(
                 [(peak[i] if peak[i] <= mid[i] else peak[i] - shape[i]) for i in range(len(shape))],
                 dtype=float,
             )
-            err_val = float(np.max(icorr))
+            # Return normalized RMS error to match skimage contract: 0 = perfect match, 1 = no match.
+            peak_corr = float(np.max(icorr))
+            err_val = float(max(0.0, min(1.0, 1.0 - peak_corr)))
             if return_error:
                 return (shift, err_val, float("nan"))
             return (shift, err_val)
@@ -376,8 +380,8 @@ def _probe_gpu_tier() -> Dict[str, Any]:
         min_work = 25
     elif mem_gb < 11.0:
         tier_name = "mid"
-        min_pixels = 16_384
-        min_stack = 8
+        min_pixels = 4_096
+        min_stack = 4
         batch = 16
         min_work = 15
     elif mem_gb <= 24.0:
@@ -438,10 +442,8 @@ def should_use_gpu_for_alignment(
         pixels = 0
     if pixels <= 0:
         return False
-    # Very tiny ROIs (<4 kpx) always stay on CPU — CUDA launch overhead not worth it.
-    # Formerly 20 kpx; lowered to 4 kpx so small-ROI datasets (e.g. Qatar ~10 kpx)
-    # can still dispatch to the GPU when CUDA is already warm.
-    if pixels < 4_096 and n_images < tier["min_stack_for_small_frame"]:
+    # ROIs < 4 kpx always stay on CPU — CUDA launch overhead not worth it.
+    if pixels < 4_096:
         return False
     if pixels < tier["min_pixels_per_frame"] and n_images < tier["min_stack_for_small_frame"]:
         return False

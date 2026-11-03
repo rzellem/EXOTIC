@@ -11428,24 +11428,9 @@ def configure_windows_multiprocessing_main_spec():
     return True
 
 
-def _should_use_spawn_context():
-    """Return True when child processes must use 'spawn' to avoid CUDA fork issues.
-
-    On Linux the default multiprocessing start method is 'fork', which inherits
-    the parent's CUDA context but cannot re-initialise it in children.  When the
-    exotic_gpu package has successfully initialised a CUDA backend we must switch
-    to 'spawn' so that worker processes start with a clean address space.
-    """
-    if sys.platform == "win32":
-        return True          # Windows always requires spawn
-    return _EXOTIC_GPU_AVAILABLE   # Linux/macOS: spawn only when CUDA is active
-
-
 def ProcessPoolExecutor(*args, **kwargs):
     if sys.platform == "win32":
         return ThreadPoolExecutor(*args, **kwargs)
-    if _should_use_spawn_context():
-        kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
     return _ProcessPoolExecutor(*args, **kwargs)
 
 
@@ -11457,7 +11442,8 @@ def ImageProcessPoolExecutor(*args, **kwargs):
     pickle-safe functions and benefit materially from bypassing the GIL, so use
     a spawned process context for that narrower workload.
     """
-    kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
+    if sys.platform == "win32":
+        kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
     return _ProcessPoolExecutor(*args, **kwargs)
 
 
@@ -21560,7 +21546,8 @@ def _get_reference_transform_cache(reference_image, roi):
 
 
 def _transformation_pool_initializer(reference_file):
-    global _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE
+    global _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE, _EXOTIC_GPU_USE_ALIGN_GPU
+    _EXOTIC_GPU_USE_ALIGN_GPU = False
     suppress_inherited_tk_cleanup_in_worker()
     _TRANSFORM_REFERENCE_IMAGE = load_image_data(reference_file)
     _TRANSFORM_REFERENCE_CACHE = None
@@ -21599,7 +21586,8 @@ _ALIGNMENT_POOL_CONTEXT = {}
 
 def _alignment_pool_initializer(reference_file, generalDark, generalBias, generalFlat,
                                 demosaic_fmt, demosaic_out, demosaic_mult, bad_pixel_reference):
-    global _ALIGNMENT_POOL_CONTEXT, _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE
+    global _ALIGNMENT_POOL_CONTEXT, _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE, _EXOTIC_GPU_USE_ALIGN_GPU
+    _EXOTIC_GPU_USE_ALIGN_GPU = False
     suppress_inherited_tk_cleanup_in_worker()
     _ALIGNMENT_POOL_CONTEXT = {
         'generalDark': generalDark,

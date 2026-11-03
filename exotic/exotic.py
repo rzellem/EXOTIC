@@ -30902,6 +30902,10 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
                 for component in NOISE_BUDGET_COMPONENT_KEYS:
                     aper_data[f"{k}_noise_{component}"][frame_index] = np.nan
             _used_gpu_phot = True
+            log.debug(
+                f"GPU batch aperture: frame={frame_index}, stars={len(star_keys)}, "
+                f"apertures={len(frame_apertures)}, used_gpu_phot=True"
+            )
         except Exception as _e_gpu:
             log.debug(f"GPU batch aperture failed for frame {frame_index}: {_e_gpu}")
             _used_gpu_phot = False

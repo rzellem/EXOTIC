@@ -438,8 +438,10 @@ def should_use_gpu_for_alignment(
         pixels = 0
     if pixels <= 0:
         return False
-    # Tiny ROIs (<20 kpx) always stay on CPU, regardless of tier.
-    if pixels < 20_000 and n_images < tier["min_stack_for_small_frame"]:
+    # Very tiny ROIs (<4 kpx) always stay on CPU — CUDA launch overhead not worth it.
+    # Formerly 20 kpx; lowered to 4 kpx so small-ROI datasets (e.g. Qatar ~10 kpx)
+    # can still dispatch to the GPU when CUDA is already warm.
+    if pixels < 4_096 and n_images < tier["min_stack_for_small_frame"]:
         return False
     if pixels < tier["min_pixels_per_frame"] and n_images < tier["min_stack_for_small_frame"]:
         return False

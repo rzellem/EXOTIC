@@ -11428,9 +11428,24 @@ def configure_windows_multiprocessing_main_spec():
     return True
 
 
+def _should_use_spawn_context():
+    """Return True when child processes must use 'spawn' to avoid CUDA fork issues.
+
+    On Linux the default multiprocessing start method is 'fork', which inherits
+    the parent's CUDA context but cannot re-initialise it in children.  When the
+    exotic_gpu package has successfully initialised a CUDA backend we must switch
+    to 'spawn' so that worker processes start with a clean address space.
+    """
+    if sys.platform == "win32":
+        return True          # Windows always requires spawn
+    return _EXOTIC_GPU_AVAILABLE   # Linux/macOS: spawn only when CUDA is active
+
+
 def ProcessPoolExecutor(*args, **kwargs):
     if sys.platform == "win32":
         return ThreadPoolExecutor(*args, **kwargs)
+    if _should_use_spawn_context():
+        kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
     return _ProcessPoolExecutor(*args, **kwargs)
 
 
@@ -11442,8 +11457,7 @@ def ImageProcessPoolExecutor(*args, **kwargs):
     pickle-safe functions and benefit materially from bypassing the GIL, so use
     a spawned process context for that narrower workload.
     """
-    if sys.platform == "win32":
-        kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
+    kwargs.setdefault('mp_context', multiprocessing.get_context('spawn'))
     return _ProcessPoolExecutor(*args, **kwargs)
 
 

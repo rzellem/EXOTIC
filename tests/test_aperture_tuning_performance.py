@@ -1,7 +1,36 @@
 import numpy as np
+import pytest
 from astropy.io import fits
 
 import exotic.exotic as exotic_module
+
+
+@pytest.mark.parametrize("sigma", [1.3, 6.0])
+def test_fixed_aperture_scale_uses_sample_median_including_broad_stars(sigma):
+    rows = np.zeros((5, 7), dtype=float)
+    rows[:, 3:5] = np.array([4.8918, sigma, sigma, sigma, np.nan])[:, None]
+    psf_data = {"target": rows}
+
+    scale = exotic_module.representative_aperture_sigma_from_psf_data(psf_data, range(5))
+
+    assert scale == pytest.approx(sigma)
+    assert exotic_module.ANNULUS_SIGMA_MAX * scale == pytest.approx(15.0 * sigma)
+
+
+def test_fixed_aperture_scale_respects_comparison_only_estimation():
+    target = np.zeros((3, 7), dtype=float)
+    comp1 = target.copy()
+    comp2 = target.copy()
+    target[:, 3:5] = 7.0
+    comp1[:, 3:5] = np.array([1.0, 1.2, 1.4])[:, None]
+    comp2[:, 3:5] = np.array([1.2, 1.4, 1.6])[:, None]
+
+    scale = exotic_module.representative_aperture_sigma_from_psf_data(
+        {"target": target, "comp1": comp1, "comp2": comp2},
+        range(3), comparison_indices=(0, 1),
+    )
+
+    assert scale == pytest.approx(1.3)
 
 
 def test_evenly_spaced_aperture_tuning_indices_span_full_sequence():

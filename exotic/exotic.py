@@ -22265,7 +22265,8 @@ APERTURE_AUTOTUNE_MIN_FRAMES = 8
 APERTURE_AUTOTUNE_MAX_FRAMES = 24
 QUICK_LOOK_APERTURE_AUTOTUNE_MAX_FRAMES = 12
 
-# Refit full PSF moments periodically; use a faster moment estimator for most frames.
+# Refit the full centroid periodically; fast frames retain moment positions
+# with a compact Gaussian fit for the physical PSF shape.
 CENTROID_FULL_FIT_CADENCE = 6
 
 
@@ -22548,6 +22549,22 @@ def _nan_psf_result():
     return np.full(7, np.nan, dtype=float)
 
 
+def _centroid_with_fitted_psf_shape(centroid_row, fitted_row):
+    """Keep the tracking position, but never use whole-box moments as a PSF width.
+
+    Positive sky fluctuations and neighbouring stars contribute to the moment
+    variance throughout the centroid box. Only a fitted star profile measures
+    the width used by aperture and sky-annulus geometry.
+    """
+    result = np.array(centroid_row, dtype=float, copy=True)
+    fitted_row = np.asarray(fitted_row, dtype=float)
+    if np.all(np.isfinite(fitted_row[3:6])) and np.all(fitted_row[3:5] > 0):
+        result[3:6] = fitted_row[3:6]
+    else:
+        result[3:6] = np.nan
+    return result
+
+
 def fit_centroid_or_warn_out_of_frame(data, pos, starIndex, **kwargs):
     if not pixel_within_image(pos[0], pos[1], data.shape):
         plateStatus.outOfFrameWarning(starIndex)
@@ -22769,7 +22786,18 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
                     _has_usable_centroid_signal(subarray, init[0])
                     and centroid_position_is_finite(moment_fit)
                 ):
-                    return moment_fit
+                    try:
+                        shape_fit = _fit_seed_anchored_psf(
+                            data, pos, psf_function=psf_function,
+                            box=max(4, min(int(box), 8)), bound_radius=4.0,
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            f"PSF width fit failed at {np.round(pos, 2)} for star {starIndex}; "
+                            f"retaining the centroid without a measured PSF width: {exc}"
+                        )
+                        shape_fit = _nan_psf_result()
+                    return _centroid_with_fitted_psf_shape(moment_fit, shape_fit)
 
                 plateStatus.lowFluxAmplitudeWarning(starIndex, pos[0], pos[1])
                 log.debug(
@@ -22803,8 +22831,11 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
                 has_usable_signal
                 and centroid_position_is_finite(moment_fit)
             ):
-                log.debug(f"Centroid PSF fit failed at {np.round(pos, 2)}; using moment centroid instead: {exc}")
-                return moment_fit
+                log.warning(
+                    f"Centroid PSF fit failed at {np.round(pos, 2)}; "
+                    f"retaining the moment centroid without a measured PSF width: {exc}"
+                )
+                return _centroid_with_fitted_psf_shape(moment_fit, _nan_psf_result())
 
             if not has_usable_signal:
                 plateStatus.lowFluxAmplitudeWarning(starIndex, pos[0], pos[1])
@@ -22840,14 +22871,14 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             except Exception as exc:
                 log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
 
-        selected_fit = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos)
-        selected_fit = choose_best_psf_solution(selected_fit, moment_fit, seed_pos=pos)
+        fitted_psf = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos)
+        selected_fit = choose_best_psf_solution(fitted_psf, moment_fit, seed_pos=pos)
         if not np.all(np.isfinite(selected_fit[:5])):
             log.debug(
                 f"Centroid PSF fit at {np.round(pos, 2)} rejected as implausible "
                 "(large seed offset, elongated PSF, or invalid width)."
             )
-        return selected_fit
+        return _centroid_with_fitted_psf_shape(selected_fit, fitted_psf)
     finally:
         _record_photometry_stage_timing('fit_centroid', perf_counter() - stage_start)
 
@@ -30551,6 +30582,21 @@ def aperture_frame_sigma_from_psf_data(psf_data, frame_index, fallback_sigma=np.
     return finite_positive_or_nan(fallback_sigma)
 
 
+def representative_aperture_sigma_from_psf_data(psf_data, frame_indices, fallback_sigma=np.nan,
+                                                comparison_indices=None):
+    """Size a fixed grid from the tuning sample, rather than its first frame."""
+    sigmas = np.asarray([
+        aperture_frame_sigma_from_psf_data(
+            psf_data, int(frame_index), comparison_indices=comparison_indices,
+        )
+        for frame_index in frame_indices
+    ], dtype=float)
+    sigmas = sigmas[np.isfinite(sigmas) & (sigmas > 0)]
+    if sigmas.size:
+        return float(np.median(sigmas))
+    return finite_positive_or_nan(fallback_sigma)
+
+
 def mask_aperture_star_frame(aper_data, key, frame_index):
     if not isinstance(aper_data, dict) or key not in aper_data:
         return
@@ -37916,9 +37962,9 @@ def _main_impl():
                 and not use_aperture_corrections_and_full_image_fwhm
             ):
                 aperture_tuning_start = perf_counter()
-                sigma = aperture_frame_sigma_from_psf_data(
+                sigma = representative_aperture_sigma_from_psf_data(
                     psf_data,
-                    0,
+                    coarse_tune_frame_indices,
                     comparison_indices=aperture_frame_sigma_comp_indices,
                 )
                 if not np.isfinite(sigma) or sigma <= 0:
@@ -38420,33 +38466,46 @@ def _main_impl():
                     )
                 elif use_aperture_photometry and i < coarse_tune_frames:
                     coarse_frame_cache[i] = np.array(imageData, copy=True)
-                    populate_aperture_data_for_frame(
-                        imageData,
-                        i,
-                        psf_data,
-                        comp_star_count,
-                        coarse_aper_data,
-                        coarse_aperture_values,
-                        coarse_annulus_values,
-                        fast_aperture_mask,
-                        adaptive_apertures=use_adaptive_apertures,
-                        fallback_sigma=sigma,
-                        use_aperture_corrections_and_full_image_fwhm=use_aperture_corrections_and_full_image_fwhm,
-                        noise_config=frame_noise_config,
-                        exposure_s=frame_exposure_s,
-                        airmass=frame_airmass,
-                        comp_indices=aperture_estimation_comp_indices,
-                        include_target=aperture_estimation_includes_target,
-                        frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
-                    )
-                    apply_overexposure_masks_to_aperture_frame(
-                        coarse_aper_data,
-                        i,
-                        target_overexposed_frame_mask[i],
-                        comp_overexposed_masks,
-                    )
 
                     if i == coarse_tune_frames - 1:
+                        if not use_aperture_corrections_and_full_image_fwhm:
+                            sigma = representative_aperture_sigma_from_psf_data(
+                                psf_data,
+                                range(coarse_tune_frames),
+                                fallback_sigma=sigma,
+                                comparison_indices=aperture_frame_sigma_comp_indices,
+                            )
+                            if not use_adaptive_apertures:
+                                coarse_aperture_values = coarse_apertures_sigma * sigma
+                                coarse_annulus_values = coarse_annuli_sigma * sigma
+                        for sample_index in range(coarse_tune_frames):
+                            populate_aperture_data_for_frame(
+                                coarse_frame_cache[sample_index],
+                                sample_index,
+                                psf_data,
+                                comp_star_count,
+                                coarse_aper_data,
+                                coarse_aperture_values,
+                                coarse_annulus_values,
+                                fast_aperture_mask,
+                                adaptive_apertures=use_adaptive_apertures,
+                                fallback_sigma=sigma,
+                                use_aperture_corrections_and_full_image_fwhm=(
+                                    use_aperture_corrections_and_full_image_fwhm
+                                ),
+                                noise_config=frame_noise_configs[sample_index],
+                                exposure_s=exptimes[sample_index],
+                                airmass=airMassList[sample_index],
+                                comp_indices=aperture_estimation_comp_indices,
+                                include_target=aperture_estimation_includes_target,
+                                frame_sigma_comp_indices=aperture_frame_sigma_comp_indices,
+                            )
+                            apply_overexposure_masks_to_aperture_frame(
+                                coarse_aper_data,
+                                sample_index,
+                                target_overexposed_frame_mask[sample_index],
+                                comp_overexposed_masks,
+                            )
                         subset_airmass = np.asarray(airMassList[:coarse_tune_frames], dtype=float)
                         coarse_psf_quality_masks = {
                             f"comp{comp_idx + 1}": psf_quality_mask_for_key(

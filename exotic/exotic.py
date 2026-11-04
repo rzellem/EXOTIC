@@ -28111,6 +28111,7 @@ def compact_comparison_attempt_for_output(attempt):
     return {
         'rank': attempt.get('rank'),
         'comp_index': attempt.get('comp_index'),
+        'ensemble_membership': attempt.get('ensemble_membership'),
         'label': attempt.get('label'),
         'selected': attempt.get('selected'),
         'selection_reason': attempt.get('selection_reason'),
@@ -29414,6 +29415,69 @@ def build_normalized_comp_ensemble(normalized_flux_map, exclude_key):
     return ensemble
 
 
+def comparison_ensemble_membership_summary(summaries, member_keys, comp_flux_map,
+                                           validity_mask_func=valid_comparison_frame_mask):
+    """Describe actual reference members and every omitted candidate for output."""
+    used_keys = set(member_keys or [])
+    used, omitted = [], []
+    for summary in summaries or []:
+        comp_index = summary.get('comp_index')
+        key = summary.get('key') or (f'comp{comp_index + 1}' if comp_index is not None else None)
+        flux = comp_flux_map.get(key)
+        valid_count = (
+            int(np.count_nonzero(validity_mask_func(np.asarray(flux, dtype=float))))
+            if flux is not None else int(summary.get('coverage_count') or 0)
+        )
+        row = {
+            'key': key,
+            'label': summary.get('label') or key,
+            'position': summary.get('position'),
+            'usable_frame_count': valid_count,
+            'overexposure_rejected_count': int(summary.get('overexposure_rejected_count') or 0),
+        }
+        if key in used_keys:
+            used.append(row)
+        else:
+            if valid_count < LIGHTCURVE_MIN_VALID_POINTS:
+                reason = f'only {valid_count} usable flux measurements after frame rejection'
+            elif summary.get('coverage_rejected'):
+                reason = 'rejected by the existing comparison coverage check'
+            elif summary.get('suitability_outlier_rejected'):
+                reason = 'rejected by the existing comparison stability check'
+            else:
+                reason = 'not selected by comparison calibration or the configured ensemble limit'
+            row['reason'] = reason
+            omitted.append(row)
+    used_masks = [
+        validity_mask_func(np.asarray(comp_flux_map[row['key']], dtype=float))
+        for row in used if row['key'] in comp_flux_map
+    ]
+    frame_counts = np.sum(np.vstack(used_masks), axis=0) if used_masks else np.array([], dtype=int)
+    partial_frame_count = int(np.count_nonzero((frame_counts > 0) & (frame_counts < len(used))))
+    warning = ''
+    if omitted:
+        warning = (
+            f"Partial comparison ensemble: using {len(used)} of {len(used) + len(omitted)} "
+            "comparison candidates. Omitted "
+            + '; '.join(f"{row['label']} ({row['reason']})" for row in omitted)
+            + '.'
+        )
+    if partial_frame_count:
+        warning += (
+            f" {partial_frame_count} input frame(s) lack measurements for some of the "
+            f"{len(used)} retained members; the ensemble uses available measurements in those frames."
+        )
+    return {
+        'requested_count': len(used) + len(omitted),
+        'used_count': len(used),
+        'partial': bool(omitted or partial_frame_count),
+        'frames_with_partial_members': partial_frame_count,
+        'used_members': used,
+        'omitted_members': omitted,
+        'warning': warning,
+    }
+
+
 def build_absolute_comp_ensemble_flux(comp_flux_map, active_keys,
                                       validity_mask_func=valid_comparison_frame_mask):
     normalized_members = []
@@ -29592,8 +29656,9 @@ def build_inverse_variance_weighted_comp_ensemble(
 def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
                                                comp_flux_map, comp_error_map, member_keys,
                                                validity_mask_func=valid_comparison_frame_mask,
-                                               gain_e_per_adu=None):
-    """Combine exactly the requested reference members without catalogue magnitudes."""
+                                               gain_e_per_adu=None,
+                                               allow_partial_comparison_ensemble=False):
+    """Combine supplied references, permitting omissions only when explicitly enabled."""
     requested_keys = [key for key in member_keys or [] if key]
     ensemble_flux, ensemble_error, used_keys = build_inverse_variance_weighted_comp_ensemble(
         comp_flux_map,
@@ -29602,7 +29667,7 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
         validity_mask_func=validity_mask_func,
         gain_e_per_adu=gain_e_per_adu,
     )
-    if ensemble_flux is None or used_keys != requested_keys:
+    if ensemble_flux is None or (used_keys != requested_keys and not allow_partial_comparison_ensemble):
         return {
             'applied': False,
             'failure_reason': 'not every requested comparison had a usable flux series',
@@ -29618,8 +29683,9 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
         ensemble_error = source_flux_uncertainty_from_counts(ensemble_flux)
     ensemble_error = np.asarray(ensemble_error, dtype=float)
 
-    all_members_valid = np.ones(target_flux.shape, dtype=bool)
-    for key in requested_keys:
+    all_members_valid = np.full(target_flux.shape, not allow_partial_comparison_ensemble, dtype=bool)
+    valid_member_count = np.zeros(target_flux.shape, dtype=int)
+    for key in used_keys:
         member_flux = np.asarray(comp_flux_map[key], dtype=float)
         if member_flux.shape != target_flux.shape:
             return {
@@ -29627,7 +29693,12 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
                 'failure_reason': f'{key} had a mismatched flux-series shape',
                 'member_keys': used_keys,
             }
-        all_members_valid &= validity_mask_func(member_flux)
+        member_valid = validity_mask_func(member_flux)
+        valid_member_count += member_valid
+        if allow_partial_comparison_ensemble:
+            all_members_valid |= member_valid
+        else:
+            all_members_valid &= member_valid
 
     valid = (
         all_members_valid
@@ -29655,7 +29726,7 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
         'failure_reason': (
             None
             if np.count_nonzero(valid) >= LIGHTCURVE_MIN_VALID_POINTS
-            else 'fewer than five frames contained every requested comparison member'
+            else 'fewer than five frames contained usable target/reference measurements'
         ),
         'member_keys': used_keys,
         'reference_flux': ensemble_flux,
@@ -29663,6 +29734,7 @@ def build_relative_comparison_ensemble_series(target_flux, target_flux_error,
         'relative_flux': relative_flux,
         'relative_flux_error': relative_flux_error,
         'valid_mask': valid,
+        'valid_member_count': np.where(valid, valid_member_count, 0),
     }
 
 
@@ -32605,7 +32677,8 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                                                observed_filter=None,
                                                target_catalog_match=None,
                                                require_apparent_magnitudes=True,
-                                               use_exactly_the_comps_provided=False):
+                                               use_exactly_the_comps_provided=False,
+                                               allow_partial_comparison_ensemble=False):
     ranked_summaries = ranked_comparison_calibration_summaries(
         comparison_calibration,
         include_unvetted=use_exactly_the_comps_provided,
@@ -32749,6 +32822,18 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         maximum_number_of_ensemble_comparisons_for_stellar_variability
                     )
                 ]
+            if allow_partial_comparison_ensemble:
+                _, _, measurable_keys = build_inverse_variance_weighted_comp_ensemble(
+                    comp_flux_map, comp_error_map,
+                    [summary['key'] for summary in selected_summaries],
+                    validity_mask_func=(
+                        robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
+                    ),
+                    gain_e_per_adu=gain_e_per_adu,
+                )
+                selected_summaries = [
+                    summary for summary in selected_summaries if summary['key'] in measurable_keys
+                ]
             ensemble_members = []
             calibrated_members = []
             for summary in selected_summaries:
@@ -32776,7 +32861,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     comp_flux_map,
                     comp_error_map,
                     calibrated_members,
-                    minimum_members=len(calibrated_members),
+                    minimum_members=(1 if allow_partial_comparison_ensemble else len(calibrated_members)),
                     validity_mask_func=(
                         robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
                     ),
@@ -32795,11 +32880,12 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask
                     ),
                     gain_e_per_adu=gain_e_per_adu,
+                    allow_partial_comparison_ensemble=allow_partial_comparison_ensemble,
                 )
                 if relative_series.get('applied'):
                     valid_member_count = np.where(
                         relative_series['valid_mask'],
-                        len(requested_keys),
+                        relative_series['valid_member_count'],
                         0,
                     )
                     prebuilt_ensemble_series = {
@@ -32857,7 +32943,15 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                 f"{rejected_member.get('reason')}."
             )
 
-        if len(ensemble_members) >= STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS:
+        ensemble_membership = comparison_ensemble_membership_summary(
+            comparison_calibration.get('comp_summaries', ranked_summaries),
+            [member['key'] for member in ensemble_members], comp_flux_map,
+            validity_mask_func=(robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask),
+        )
+        if ensemble_membership['warning']:
+            log_info(ensemble_membership['warning'], warn=True)
+        minimum_members = 1 if allow_partial_comparison_ensemble else STELLAR_VARIABILITY_ENSEMBLE_MIN_MEMBERS
+        if len(ensemble_members) >= minimum_members:
             member_text = ", ".join(
                 (
                     f"{member['label']} (catalog sigma={member['magnitude_error']:.4f} mag)"
@@ -33024,6 +33118,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                         'ensemble_frame_rejected_count': ensemble_summary['ensemble_frame_rejected_count'],
                         'ensemble_frame_required_valid_pairs': len(ensemble_members),
                         'ensemble_member_keys': ensemble_summary['ensemble_member_keys'],
+                        'ensemble_membership': ensemble_membership,
                         'fit': fit_result,
                         'full_reduction_fit': fit_result,
                         'good_times': np.asarray(fit_result.time, dtype=float),
@@ -33102,8 +33197,10 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     }
             if use_exactly_the_comps_provided:
                 log_info(
-                    "Error: the exact supplied stellar-variability ensemble did not yield a usable "
-                    "light curve; exact-comparison mode will not drop a member or select another star.",
+                    ("Error: the remaining supplied stellar-variability ensemble did not yield a usable light curve."
+                     if allow_partial_comparison_ensemble else
+                     "Error: the exact supplied stellar-variability ensemble did not yield a usable "
+                     "light curve; exact-comparison mode will not drop a member or select another star."),
                     error=True,
                 )
                 return {
@@ -33111,6 +33208,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     'attempts': attempts,
                     'selected_result': None,
                     'selection_metric': 'exact_stellar_variability_ensemble',
+                    'ensemble_membership': ensemble_membership,
                 }
             log_info(
                 "Warning: the stellar-variability comparison ensemble did not yield a usable "
@@ -33120,8 +33218,10 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
         else:
             if use_exactly_the_comps_provided:
                 log_info(
-                    "Error: the exact supplied comparison ensemble contained fewer than two usable "
-                    "members; exact-comparison mode will not fall back to one star.",
+                    ("Error: no supplied stellar-variability ensemble member had a usable flux series."
+                     if allow_partial_comparison_ensemble else
+                     "Error: the exact supplied comparison ensemble contained fewer than two usable "
+                     "members; exact-comparison mode will not fall back to one star."),
                     error=True,
                 )
                 return {
@@ -33129,6 +33229,7 @@ def select_stellar_variability_only_photometry(times, jd_times, airmass, p_dict,
                     'attempts': attempts,
                     'selected_result': None,
                     'selection_metric': 'exact_stellar_variability_ensemble',
+                    'ensemble_membership': ensemble_membership,
                 }
             log_info(
                 "Warning: fewer than two bright, unsaturated, VSX-vetted comparison stars had usable "
@@ -34495,6 +34596,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                                                  exposure_times_seconds=None,
                                                  gain_e_per_adu=None,
                                                  use_exactly_the_comps_provided=False,
+                                                 allow_partial_comparison_ensemble=False,
                                                  inference_method='ultranest',
                                                  restrict_baseline_to_an_hour=
                                                  RESTRICT_BASELINE_TO_AN_HOUR_DEFAULT):
@@ -34732,11 +34834,21 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             candidate_target_flux = target_flux
             candidate_target_flux_error = target_flux_error
 
+        ensemble_membership = comparison_ensemble_membership_summary(
+            comparison_calibration.get('comp_summaries', ranked_summaries),
+            member_keys,
+            comp_flux_map,
+            validity_mask_func=(robust_flux_floor_mask if method == 'psf' else valid_comparison_frame_mask),
+        )
+        comparison_calibration['ensemble_membership'] = ensemble_membership
         exact_members_complete = (
             not use_exactly_the_comps_provided
+            or allow_partial_comparison_ensemble
             or member_keys == active_keys
         )
         if ensemble_flux is not None and member_keys and exact_members_complete:
+            if ensemble_membership['warning']:
+                log_info(ensemble_membership['warning'], warn=True)
             candidate_frame_keep_mask = np.ones(times.shape[0], dtype=bool)
             for summary in ranked_summaries:
                 if summary.get('key') not in set(member_keys):
@@ -34854,6 +34966,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
                 'ensemble_frame_rejected_count': int(np.count_nonzero(~candidate_frame_keep_mask)),
                 'ensemble_frame_required_valid_pairs': len(member_keys),
                 'ensemble_member_keys': member_keys,
+                'ensemble_membership': ensemble_membership,
             }
             preflight_plans.append({
                 'field_rank': 0,
@@ -34880,9 +34993,11 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
         else:
             if use_exactly_the_comps_provided:
                 log_info(
-                    "Error: the fixed comparison ensemble could not be built with every supplied "
-                    "comparison star; exact-comparison mode will not drop a member or fall back to "
-                    "a different reference.",
+                    ("Error: no usable comparison ensemble could be built from the remaining supplied measurements."
+                     if allow_partial_comparison_ensemble else
+                     "Error: the fixed comparison ensemble could not be built with every supplied "
+                     "comparison star; exact-comparison mode will not drop a member or fall back to "
+                     "a different reference."),
                     error=True,
                 )
             else:
@@ -35272,6 +35387,7 @@ def fit_ranked_comparison_calibration_candidates(times, jd_times, airmass, ld, p
             'ensemble_frame_rejected_count': comp_summary.get('ensemble_frame_rejected_count', 0),
             'ensemble_frame_required_valid_pairs': comp_summary.get('ensemble_frame_required_valid_pairs', 0),
             'ensemble_member_keys': list(comp_summary.get('ensemble_member_keys') or []),
+            'ensemble_membership': comp_summary.get('ensemble_membership'),
             'fit': selection_fit,
             'provisional_fit': None,
             'full_reduction_fit': final_reduction.get('fit'),
@@ -36048,6 +36164,10 @@ def _main_impl():
                 'use_exactly_the_comps_provided',
                 USE_EXACTLY_PROVIDED_COMPARISONS_DEFAULT,
             )
+        )
+        allow_partial_comparison_ensemble = parse_bool_config_value(
+            exotic_infoDict.get('allow_partial_comparison_ensemble', False),
+            False, 'allow_partial_comparison_ensemble',
         )
         use_ensemble_photometry_for_stellar_variability = (
             should_use_ensemble_photometry_for_stellar_variability(
@@ -37733,6 +37853,11 @@ def _main_impl():
                             f"  Exact supplied comp #{comp_index}: "
                             f"pixels=[{pixel_position[0]:.3f}, {pixel_position[1]:.3f}]"
                         )
+                if allow_partial_comparison_ensemble:
+                    log_info(
+                        "Partial comparison ensembles enabled: continue with measurable supplied "
+                        "members and report every omitted comparison in the results."
+                    )
             elif use_ensemble_photometry_rather_than_single_comp:
                 log_info(
                     "Ensemble comparison photometry enabled per optional_info setting; the final target "
@@ -39360,6 +39485,7 @@ def _main_impl():
                         target_catalog_match=primary_target_catalog_match,
                         require_apparent_magnitudes=require_apparent_magnitudes,
                         use_exactly_the_comps_provided=use_exactly_the_comps_provided,
+                        allow_partial_comparison_ensemble=allow_partial_comparison_ensemble,
                     )
                 else:
                     comparison_fit_search = fit_ranked_comparison_calibration_candidates(
@@ -39402,6 +39528,7 @@ def _main_impl():
                         gain_e_per_adu=fallback_gain_e_per_adu,
                         use_exactly_the_comps_provided=use_exactly_the_comps_provided,
                         inference_method='lm' if quick_look_mode else 'ultranest',
+                        allow_partial_comparison_ensemble=allow_partial_comparison_ensemble,
                     )
                     if (not quick_look_mode
                             and use_ensemble_photometry_for_stellar_variability and vsp_comp_stars):
@@ -39440,6 +39567,7 @@ def _main_impl():
                             target_catalog_match=primary_target_catalog_match,
                             require_apparent_magnitudes=require_apparent_magnitudes,
                             use_exactly_the_comps_provided=use_exactly_the_comps_provided,
+                            allow_partial_comparison_ensemble=allow_partial_comparison_ensemble,
                         )
                 comparison_calibration['ranked_fit_comp_indices'] = [
                     summary['comp_index'] for summary in comparison_fit_search['ranked_summaries']
@@ -39447,6 +39575,26 @@ def _main_impl():
                 comparison_calibration['fit_attempt_summaries'] = comparison_fit_search['attempts']
 
                 selected_attempt = comparison_fit_search['selected_result']
+                ensemble_membership = (
+                    selected_attempt.get('ensemble_membership') if selected_attempt is not None
+                    else (comparison_fit_search.get('ensemble_membership')
+                          or comparison_calibration.get('ensemble_membership'))
+                )
+                if ensemble_membership:
+                    ensemble_membership['fit_available'] = selected_attempt is not None
+                    if selected_attempt is None:
+                        ensemble_membership['warning'] = (
+                            'Comparison ensemble did not produce a target fit. '
+                            + ensemble_membership.get('warning', '')
+                        )
+                    try:
+                        with (Path(exotic_infoDict['save']) / 'ComparisonEnsemble.json').open(
+                                'w', encoding='utf-8') as handle:
+                            json.dump(stellar_variability_json_safe(ensemble_membership), handle, indent=2)
+                            handle.write('\n')
+                    except OSError as exc:
+                        log_info(f"Could not save comparison ensemble details: {exc}. "
+                                 + ensemble_membership.get('warning', ''), warn=True)
                 fit_attempts = comparison_fit_search['attempts']
                 if fit_attempts:
                     comparison_calibration['selected_fit_diagnostics'] = (
@@ -39520,7 +39668,9 @@ def _main_impl():
                         selection_basis = 'comparison_field'
                     else:
                         selection_basis = 'comparison_field_retry'
-                    if selection_basis == 'exact_stellar_variability_ensemble':
+                    if ensemble_membership and ensemble_membership.get('partial'):
+                        log_info(ensemble_membership['warning'], warn=True)
+                    elif selection_basis == 'exact_stellar_variability_ensemble':
                         ensemble_members = selected_attempt.get('ensemble_member_keys') or []
                         log_info(
                             "Stellar-variability-only comparison selection used the exact supplied "
@@ -39643,6 +39793,7 @@ def _main_impl():
                                            selected_fit_data_highres=selected_attempt.get('data_highres'),
                                            selected_fit_final_output_dir=selected_attempt.get('final_output_dir'),
                                            calibration_field_score=comparison_calibration['field_score'],
+                                           ensemble_membership=ensemble_membership,
                                            selection_basis=selection_basis,
                                            stellar_variability_only=stellar_variability_only,
                                            selection_metric=comparison_fit_search.get('selection_metric', 'ktmf'),
@@ -39806,6 +39957,10 @@ def _main_impl():
                     if fit_attempts:
                         failed_attempt = fit_attempts[-1]
                         failed_comp_index = failed_attempt['comp_index']
+                        failed_comp_label = failed_attempt.get('label') or (
+                            f"Comp {failed_comp_index + 1}"
+                            if failed_comp_index is not None else 'comparison ensemble'
+                        )
                         failure_reason = failed_attempt['fit_diagnostics'].get(
                             'failure_reason',
                             "the full comparison-star candidate reduction did not converge to a usable solution.",
@@ -39816,13 +39971,24 @@ def _main_impl():
                             "Comparison-star calibration exhausted "
                             f"{attempted_count}/{ranked_count} ranked comparison star(s) for "
                             f"{comparison_calibration['method_label']} without a usable fully reduced target fit "
-                            f"(last attempt: Comp {failed_comp_index + 1}; reason: {failure_reason})."
+                            f"(last attempt: {failed_comp_label}; reason: {failure_reason})."
                         )
                     else:
-                        failure_message = (
-                            "Comparison-star calibration did not produce any coverage-qualified "
-                            "comparison stars to fully reduce against the target fit."
-                        )
+                        if ensemble_membership and not ensemble_membership.get('used_count'):
+                            failure_message = (
+                                "No supplied comparison ensemble member had a usable flux series "
+                                "after frame rejection. " + ensemble_membership.get('warning', '')
+                            )
+                        elif use_exactly_the_comps_provided and not allow_partial_comparison_ensemble:
+                            failure_message = (
+                                "The complete supplied comparison ensemble could not be measured; "
+                                "allow_partial_comparison_ensemble is disabled."
+                            )
+                        else:
+                            failure_message = (
+                                "Comparison-star calibration did not produce a usable target fit "
+                                "with the available reference measurements."
+                            )
                     if require_comp_star:
                         log_info(f"Error: {failure_message}", error=True)
                         return

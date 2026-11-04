@@ -2434,6 +2434,12 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
             "annulus_max": 30.08,
         },
     }
+    photometry_info['ensemble_membership'] = {
+        'requested_count': 3, 'used_count': 2, 'partial': True,
+        'used_members': [{'label': 'Comp 2'}, {'label': 'Comp 3'}],
+        'omitted_members': [{'label': 'Comp 1', 'reason': 'overexposed in every frame'}],
+        'warning': 'Partial comparison ensemble: omitted Comp 1 (overexposed in every frame).',
+    }
     comp_star_header = {"ra": "10.1", "dec": "-20.2", "x": "493", "y": "202"}
 
     OutputFiles(fit, p_dict, i_dict, [0.1]).aavso(
@@ -2509,6 +2515,8 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     assert ktmf_decision["comparison_selection"]["candidates"][0]["selection_reason"].startswith("not selected: KTMF")
 
     photometry = aavso_json_header(output_text, "PHOTOMETRY-XC")
+    assert photometry['ensemble_membership'] == photometry_info['ensemble_membership']
+    assert 'omitted Comp 1' in photometry['ensemble_membership']['warning']
     assert photometry["selected_comparison_star"] == 2
     assert photometry["comparison_field_score_percent"] == pytest.approx(0.42)
     assert photometry["reused_selected_full_reduction_fit"] is True
@@ -2532,3 +2540,30 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     assert bad_pixel["enabled"] is True
     assert bad_pixel["bad_pixel_count"] == 3
     assert bad_pixel["counts_path"] == "BadPixelDetectionCounts.fits"
+
+
+@pytest.mark.parametrize('variability_only', [False, True])
+def test_partial_ensemble_warning_and_members_are_saved_in_final_results(tmp_path, variability_only):
+    (tmp_path / 'working_artifacts').mkdir()
+    fit = (SimpleNamespace(stellar_variability_only=True, time=np.arange(6),
+                           stellar_variability_scatter=0.001,
+                           stellar_variability_transit_exclusion={})
+           if variability_only else DummyFit())
+    membership = {
+        'requested_count': 3, 'used_count': 2, 'partial': True,
+        'used_members': [{'label': 'Comp 2'}, {'label': 'Comp 3'}],
+        'omitted_members': [{'label': 'Comp 1', 'reason': '0 usable flux measurements'}],
+        'warning': 'Partial comparison ensemble: using 2 of 3; omitted Comp 1 (0 usable flux measurements).',
+    }
+    info = {'ensemble_membership': membership}
+    OutputFiles(fit, {'pName': 'Syntheticb'}, {'save': str(tmp_path), 'date': '2020-01-01'}, [0.1]).final_planetary_params(
+        phot_opt=True, vsp_params=[], comp_star='ensemble', min_aper=5, min_annul=12,
+        photometry_info=info, publish_to_root=True,
+    )
+    path = next(tmp_path.glob('FinalParams_*.json'))
+    payload = json.loads(path.read_text())
+    parameters = payload['FINAL STELLAR VARIABILITY PARAMETERS' if variability_only else 'FINAL PLANETARY PARAMETERS']
+    assert parameters['Comparison ensemble WARNING'] == membership['warning']
+    assert parameters['Comparison ensemble members used'] == '2 of 3: Comp 2, Comp 3'
+    from exotic.output_files import build_aavso_photometry_metadata
+    assert build_aavso_photometry_metadata(info)['ensemble_membership'] == membership

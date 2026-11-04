@@ -387,12 +387,14 @@ def test_comp_params_defaults_apparent_and_exact_comparison_options(tmp_path):
 
     assert inputs.info_dict["require_apparent_magnitudes"] is True
     assert inputs.info_dict["use_exactly_the_comps_provided"] is False
+    assert inputs.info_dict['allow_partial_comparison_ensemble'] is False
 
 
 def test_comp_params_reads_apparent_and_exact_comparison_options(tmp_path):
     init_data = {
         "user_info": {},
         "optional_info": {
+            'allow_partial_comparison_ensemble': True,
             "require_apparent_magnitudes": False,
             "use_exactly_the_comps_provided": True,
         },
@@ -406,6 +408,7 @@ def test_comp_params_reads_apparent_and_exact_comparison_options(tmp_path):
 
     assert inputs.info_dict["require_apparent_magnitudes"] is False
     assert inputs.info_dict["use_exactly_the_comps_provided"] is True
+    assert inputs.info_dict['allow_partial_comparison_ensemble'] is True
 
 
 def test_comp_params_accepts_exact_comparison_option_beside_user_coordinates(tmp_path):

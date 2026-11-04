@@ -289,6 +289,7 @@ class Inputs:
             'use_ensemble_photometry_for_stellar_variability': True,
             'require_apparent_magnitudes': True,
             'use_exactly_the_comps_provided': False,
+            'allow_partial_comparison_ensemble': False,
             'maximum_number_of_ensemble_comparisons_for_transit': 5,
             'maximum_number_of_ensemble_comparisons_for_stellar_variability': 5,
             'photometer_fortuitous_variables': True,
@@ -630,6 +631,7 @@ class Inputs:
                 'use_exactly_the_comps_provided',
                 'Use Exactly the Comparisons Provided? (y/n)',
             ),
+            'allow_partial_comparison_ensemble': 'allow_partial_comparison_ensemble',
             'maximum_number_of_ensemble_comparisons_for_transit': (
                 'maximum_number_of_ensemble_comparisons_for_transit',
                 'Maximum Number of Ensemble Comparisons for Transit',

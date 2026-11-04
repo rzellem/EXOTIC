@@ -9179,3 +9179,51 @@ def test_main_suppresses_all_internal_logging_error_tracebacks(monkeypatch, caps
     finally:
         environment_logger.handlers = []
         logging.raiseExceptions = original_raise_exceptions
+
+
+@pytest.mark.parametrize('allow_partial', [False, True])
+@pytest.mark.parametrize('usable_members', [1, 2])
+def test_transit_ensemble_partial_option_controls_construction_without_replacements(monkeypatch, allow_partial, usable_members):
+    frame_count = 12
+    keep = np.ones(frame_count, dtype=bool)
+    calibration = {
+        'method': 'aperture', 'a': 0, 'an': 0, 'aper': 5.0, 'annulus': 12.0,
+        'comp_summaries': [
+            {'key': f'comp{i}', 'comp_index': i - 1, 'label': f'Comp {i}',
+             'aggregate_score': np.inf, 'psf_quality_keep_mask': keep,
+             'ensemble_frame_keep_mask': keep}
+            for i in (1, 2, 3)
+        ],
+    }
+    aperture = {
+        'target': np.full((frame_count, 1, 1), 1000.0),
+        'comp1': np.full((frame_count, 1, 1), np.nan),
+        'comp2': np.full((frame_count, 1, 1), 200.0),
+        'comp3': np.full((frame_count, 1, 1), 300.0 if usable_members == 2 else np.nan),
+    }
+    captured = {}
+    def capture_preflight(times, jd_times, airmass, ld, p_dict, target_flux, comp_flux, **kwargs):
+        captured['comp_flux'] = comp_flux
+        captured['time'] = times
+        raise RuntimeError('remaining ensemble reached transit preflight')
+    monkeypatch.setattr('exotic.exotic.build_comparison_candidate_preflight', capture_preflight)
+    def run():
+        return fit_ranked_comparison_calibration_candidates(
+            np.linspace(0, 0.05, frame_count), np.linspace(2460000, 2460000.05, frame_count),
+            np.linspace(1, 1.2, frame_count), [0.1] * 4, {}, calibration, {}, aperture,
+            np.ones(frame_count), use_ensemble_photometry_rather_than_single_comp=True,
+            use_exactly_the_comps_provided=True, allow_partial_comparison_ensemble=allow_partial,
+            restrict_baseline_to_an_hour=False,
+        )
+    if allow_partial:
+        with pytest.raises(RuntimeError, match='remaining ensemble reached transit preflight'):
+            run()
+        assert len(captured['time']) == frame_count
+        assert np.all(np.isfinite(captured['comp_flux']))
+    else:
+        assert run()['selected_result'] is None
+        assert captured == {}
+    membership = calibration['ensemble_membership']
+    assert membership['used_count'] == usable_members
+    assert [row['key'] for row in membership['omitted_members']] == (['comp1'] if usable_members == 2 else ['comp1', 'comp3'])
+    assert [row['key'] for row in membership['used_members']] == (['comp2', 'comp3'] if usable_members == 2 else ['comp2'])

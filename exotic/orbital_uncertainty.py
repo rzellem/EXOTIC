@@ -6,6 +6,8 @@ measure conditional posterior sensitivity. No optimiser or sampler is run and
 no fitted parameter, error, or stored posterior weight is changed.
 """
 
+import os
+import sys
 import numpy as np
 
 try:
@@ -84,6 +86,32 @@ def _conditional_orbit_draws(fit, ecc, omega, values, weights):
     return physical_values, logl + prior_density, support_expansion
 
 
+def _evaluate_orbit_scenario(orbit, fit, values, weights, baseline_logl):
+    ecc, omega = orbit
+    draws, score, expansion = _conditional_orbit_draws(fit, *orbit, values, weights)
+    log_weights = np.log(weights) + score - baseline_logl
+    finite = np.isfinite(log_weights)
+    if not finite.any():
+        return orbit, {'status': 'no_likelihood_overlap', 'ecc': orbit[0], 'omega_planet_degrees': orbit[1]}
+
+    normalized = np.zeros(len(weights))
+    normalized[finite] = np.exp(log_weights[finite] - np.max(log_weights[finite]))
+    normalized /= normalized.sum()
+    summaries = {key: summarize_posterior(draws[key], normalized)
+                 for key in ('tmid', 'rprs', 'ars', 'b', 'inc') if key in draws}
+    means = {}
+    for key in summaries:
+        anchor = float(draws[key][finite][0])
+        means[key] = float(anchor + np.sum(normalized[finite] * (draws[key][finite] - anchor)))
+    return orbit, {
+        'status': 'evaluated', 'ecc': orbit[0], 'omega_planet_degrees': orbit[1],
+        'effective_sample_count': float(1 / np.sum(normalized ** 2)),
+        'largest_normalized_weight': float(normalized.max()),
+        'maximum_conditional_b_prior_support_expansion_fraction': float(expansion.max()),
+        'random_conditional_posterior_intervals': summaries, 'posterior_means': means,
+    }
+
+
 def orbital_posterior_sensitivity(fit, record, region):
     """Separate conditional random uncertainty from orbit-assumption changes.
 
@@ -138,6 +166,46 @@ def orbital_posterior_sensitivity(fit, record, region):
         return cache[orbit]
 
     limit = (record.get('ecc') or {}).get('kind') == 'upper_limit'
+
+    # Pre-evaluate orbital scenarios in parallel across all available CPU cores
+    unique_orbits = []
+    ref_orbit = (0., 0.) if limit else (float(e0), float(w0 % 360) if e0 else 0.)
+    unique_orbits.append(ref_orbit)
+
+    joint = record.get('joint_posterior')
+    if joint:
+        eccentricities, angles, orbital_weights = _joint_orbit_arrays(joint)
+        for e, w in zip(eccentricities, angles):
+            orbit = (float(e), float(w % 360) if e else 0.)
+            if orbit not in unique_orbits:
+                unique_orbits.append(orbit)
+    else:
+        eccentricities = np.linspace(*region['ecc_range'], 3 if limit else 5)
+        for interval in region['omega_ranges_planet_degrees']:
+            angles = np.arange(16) * 22.5 if interval is None else np.linspace(*interval, 9)
+            for e in eccentricities:
+                for w in angles:
+                    orbit = (float(e), float(w % 360) if e else 0.)
+                    if orbit not in unique_orbits:
+                        unique_orbits.append(orbit)
+
+    max_workers = min(16, os.cpu_count() or 1, len(unique_orbits))
+    if max_workers > 1 and sys.platform != "win32":
+        try:
+            import multiprocessing as mp
+            from concurrent.futures import ProcessPoolExecutor, as_completed
+            ctx = mp.get_context('fork')
+            with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as executor:
+                futures = {
+                    executor.submit(_evaluate_orbit_scenario, orb, fit, values, weights, baseline_logl): orb
+                    for orb in unique_orbits
+                }
+                for future in as_completed(futures):
+                    orb, scn = future.result()
+                    cache[orb] = scn
+        except Exception:
+            pass
+
     reference = evaluate(0., 0.) if limit else evaluate(e0, w0)
     result = {
         'status': 'evaluated', 'method': 'saved_joint_posterior_likelihood_and_prior_ratio_importance_sensitivity',

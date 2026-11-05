@@ -10,7 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 
 import numpy as np
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -129,6 +132,8 @@ def _wait_for_cpu_capacity(verbose=True, stream=None):
 
 
 def _poll_cpu_capacity(threshold, verbose=True, stream=None):
+    if psutil is None:
+        return
     output_stream = stream if stream is not None else sys.stdout
     waited = False
     while True:
@@ -270,6 +275,10 @@ def _configured_ultranest_worker_backend():
         return "process"
     if backend in {"thread", "threads", "threading"}:
         return "thread"
+    if backend in {"none", "single", "off", "0"}:
+        return "none"
+    if sys.platform.startswith("linux") and not _is_colab_runtime():
+        return "process"
     return "none"
 
 

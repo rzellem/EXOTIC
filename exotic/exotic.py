@@ -116,7 +116,10 @@ import logging
 import tempfile
 from matplotlib.animation import FuncAnimation
 # Pyplot imports
-import bottleneck as bn
+try:
+    import bottleneck as bn
+except ImportError:
+    import numpy as bn
 import matplotlib.pyplot as plt
 import numpy as np
 # photometry
@@ -128,8 +131,151 @@ from scipy.optimize import least_squares
 from scipy.signal import savgol_filter
 from scipy.ndimage import binary_erosion, gaussian_filter, label as ndimage_label, maximum_filter, median_filter
 from scipy.special import ndtri
-from skimage.registration import phase_cross_correlation
+# Portable sys.path injector: makes `import exotic_gpu.*` work regardless of cwd.
+# exotic_gpu/ lives in the EXOTIC/ directory, which is the grandparent of the current file:
+#   exotic/exotic.py  →  dirname() = exotic/  →  dirname() = EXOTIC/
+import os.path as _gpu_os_path_pinj
+import sys as _gpu_sys_pinj
+_gpu_curr_file = _gpu_os_path_pinj.abspath(__file__)
+_gpu_exotic_pkg_dir = _gpu_os_path_pinj.dirname(_gpu_curr_file)        # exotic/
+_gpu_exotic_repo_dir = _gpu_os_path_pinj.dirname(_gpu_exotic_pkg_dir)  # EXOTIC/ repo root containing exotic_gpu/
+if _gpu_os_path_pinj.isdir(_gpu_exotic_repo_dir) and _gpu_exotic_repo_dir not in _gpu_sys_pinj.path:
+    _gpu_sys_pinj.path.insert(0, _gpu_exotic_repo_dir)
+del _gpu_os_path_pinj, _gpu_sys_pinj, _gpu_curr_file, _gpu_exotic_pkg_dir, _gpu_exotic_repo_dir
+
+# ============ EXOTIC GPU ACCELERATION INTEGRATION ============
+from skimage.registration import phase_cross_correlation as _skimage_phase_cross_correlation
 from skimage.transform import SimilarityTransform
+
+_EXOTIC_GPU_AVAILABLE = False
+_EXOTIC_GPU_ALIGN_BACKEND = "cpu"
+_EXOTIC_GPU_PHOT_BACKEND = "cpu"
+_EXOTIC_GPU_PSF_MOMENTS = None
+_EXOTIC_GPU_BATCH_APERTURE = None
+_EXOTIC_GPU_ALIGN_FUNC = None
+_EXOTIC_GPU_ALIGN_BATCH_FUNC = None
+_EXOTIC_GPU_USE_ALIGN_GPU = False
+_EXOTIC_GPU_USE_PHOT_GPU = False
+_EXOTIC_GPU_USE_PSF_MOMENTS = False
+_gpu_should_align = lambda *_: False
+_gpu_should_phot = lambda *_: False
+_gpu_tier_info = None  # populated later; used for the startup banner
+
+try:
+    import os as _os_gpu
+    _force_gpu = _os_gpu.environ.get("EXOTIC_ENABLE_GPU", "1") not in ("0", "false", "False", "no", "No")
+    if _force_gpu:
+        try:
+            from exotic_gpu.alignment_gpu import (
+                phase_cross_correlation_gpu as _gpu_pcc,
+                should_use_gpu_for_alignment as _gpu_sa,
+                get_gpu_info as _gpu_align_info,
+                get_gpu_tier as _gpu_tier_fn,
+            )
+            _gpu_should_align = _gpu_sa
+            _align_info = _gpu_align_info()
+            try:
+                _gpu_tier_info = _gpu_tier_fn()
+            except Exception:
+                _gpu_tier_info = None
+            if _align_info.get("available"):
+                _EXOTIC_GPU_AVAILABLE = True
+                _EXOTIC_GPU_ALIGN_BACKEND = _align_info["backend"]
+                _EXOTIC_GPU_ALIGN_FUNC = _gpu_pcc
+                _EXOTIC_GPU_USE_ALIGN_GPU = True
+            try:
+                from exotic_gpu.alignment_gpu import (
+                    batch_phase_cross_correlation_gpu as _gpu_batch_pcc,
+                )
+                _EXOTIC_GPU_ALIGN_BATCH_FUNC = _gpu_batch_pcc
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        try:
+            from exotic_gpu.photometry_gpu import (
+                compute_frame_aperture_grid_batch as _gpu_batch_phot,
+                should_use_gpu_photometry as _gpu_sp,
+                get_phot_gpu_backend as _gpu_phot_be,
+            )
+            _gpu_should_phot = _gpu_sp
+            _EXOTIC_GPU_PHOT_BACKEND = _gpu_phot_be()
+            if _EXOTIC_GPU_PHOT_BACKEND != "cpu":
+                _EXOTIC_GPU_USE_PHOT_GPU = True
+                _EXOTIC_GPU_AVAILABLE = True
+            _EXOTIC_GPU_BATCH_APERTURE = _gpu_batch_phot
+        except Exception:
+            pass
+
+        try:
+            from exotic_gpu.psf_fitting_gpu import (
+                gaussian_psf_moments_cpu as _gpu_psf_mom,
+            )
+            _EXOTIC_GPU_PSF_MOMENTS = _gpu_psf_mom
+            _EXOTIC_GPU_USE_PSF_MOMENTS = True
+            _EXOTIC_GPU_AVAILABLE = True
+        except Exception:
+            pass
+
+    # Print one-shot startup banner so users always know their GPU status.
+    try:
+        _env_gpu_banner_lines = []
+        _env_gpu_force_flag = ("ON" if _force_gpu else "OFF (EXOTIC_ENABLE_GPU=0)")
+        _env_gpu_banner_lines.append("")
+        _env_gpu_banner_lines.append("=" * 68)
+        _env_gpu_banner_lines.append(" EXOTIC GPU acceleration")
+        _env_gpu_banner_lines.append("=" * 68)
+        _env_gpu_banner_lines.append(f"  env EXOTIC_ENABLE_GPU : {_env_gpu_force_flag}")
+        if _EXOTIC_GPU_AVAILABLE:
+            _env_gpu_banner_lines.append(f"  align backend       : {_EXOTIC_GPU_ALIGN_BACKEND}")
+            _env_gpu_banner_lines.append(f"  phot  backend       : {_EXOTIC_GPU_PHOT_BACKEND}")
+            if _gpu_tier_info and _gpu_tier_info.get("tier") != "cpu":
+                _nm = _gpu_tier_info.get("name") or "(unknown)"
+                _tr = _gpu_tier_info.get("tier") or "?"
+                _mg = _gpu_tier_info.get("memory_gb", 0.0)
+                _bp = _gpu_tier_info.get("min_pixels_per_frame", 0)
+                _bs = _gpu_tier_info.get("recommended_batch_size", 0)
+                _env_gpu_banner_lines.append(f"  device              : {_nm} (tier={_tr}, {_mg:.1f} GB VRAM)")
+                _env_gpu_banner_lines.append(f"  tier thresholds     : min_pixels/frame={_bp:,}, batch_size={_bs}")
+            _env_gpu_banner_lines.append("  status              : GPU acceleration ACTIVE")
+        else:
+            _env_gpu_banner_lines.append("  status              : CPU fallback (no supported GPU found)")
+        _env_gpu_banner_lines.append("=" * 68)
+        _env_gpu_banner_lines.append("")
+        print("\n".join(_env_gpu_banner_lines))
+    except Exception:
+        pass
+
+    del _force_gpu
+    del _os_gpu
+
+except Exception:
+    pass
+
+
+def phase_cross_correlation(moving, reference, upsample_factor=1, *args, **kwargs):
+    """GPU-accelerated phase_cross_correlation with smart dispatch."""
+    global _EXOTIC_GPU_ALIGN_FUNC
+    try:
+        if _EXOTIC_GPU_USE_ALIGN_GPU and _EXOTIC_GPU_ALIGN_FUNC is not None:
+            _shape = getattr(moving, "shape", None)
+            if _shape is not None and len(_shape) == 2 and _gpu_should_align(_shape):
+                _res = _EXOTIC_GPU_ALIGN_FUNC(
+                    moving, reference,
+                    upsample_factor=upsample_factor,
+                    return_error=True,
+                )
+                if isinstance(_res, tuple) and len(_res) >= 2:
+                    _shift, _err = _res[0], _res[1]
+                    return (np.asarray(_shift, dtype=float),
+                            float(_err) if np.isfinite(_err) else 0.0,
+                            np.nan)
+    except Exception:
+        pass
+    return _skimage_phase_cross_correlation(moving, reference, upsample_factor=upsample_factor, *args, **kwargs)
+
+# ============ END EXOTIC GPU ACCELERATION INTEGRATION ============
 # error handling for scraper
 from tenacity import RetryError, retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_fixed
 # color, color_demosaicing
@@ -20810,7 +20956,7 @@ def transformation(image_data, file_name, roi=1, report_failure=True, reference_
         if np.all(np.isfinite(shift)) and np.isfinite(error):
             max_shift = max(abs(shift[0]), abs(shift[1]))
             if max_shift <= max(roi_current.shape):
-                fft_tform = SimilarityTransform(scale=1, rotation=0, translation=[-shift[1], -shift[0]])
+                fft_tform = SimilarityTransform(scale=1, rotation=0, translation=[shift[1], shift[0]])
                 fft_high_confidence = error <= 0.1 and max_shift <= max(roi_current.shape) * 0.25
                 _record_transform_stage_timing('fft_translation', perf_counter() - stage_start, True)
                 if fft_high_confidence:
@@ -21400,7 +21546,8 @@ def _get_reference_transform_cache(reference_image, roi):
 
 
 def _transformation_pool_initializer(reference_file):
-    global _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE
+    global _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE, _EXOTIC_GPU_USE_ALIGN_GPU
+    _EXOTIC_GPU_USE_ALIGN_GPU = False
     suppress_inherited_tk_cleanup_in_worker()
     _TRANSFORM_REFERENCE_IMAGE = load_image_data(reference_file)
     _TRANSFORM_REFERENCE_CACHE = None
@@ -21439,7 +21586,8 @@ _ALIGNMENT_POOL_CONTEXT = {}
 
 def _alignment_pool_initializer(reference_file, generalDark, generalBias, generalFlat,
                                 demosaic_fmt, demosaic_out, demosaic_mult, bad_pixel_reference):
-    global _ALIGNMENT_POOL_CONTEXT, _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE
+    global _ALIGNMENT_POOL_CONTEXT, _TRANSFORM_REFERENCE_IMAGE, _TRANSFORM_REFERENCE_CACHE, _EXOTIC_GPU_USE_ALIGN_GPU
+    _EXOTIC_GPU_USE_ALIGN_GPU = False
     suppress_inherited_tk_cleanup_in_worker()
     _ALIGNMENT_POOL_CONTEXT = {
         'generalDark': generalDark,
@@ -22539,7 +22687,7 @@ def _fit_seed_anchored_psf(data, pos, psf_function=gaussian_psf, box=8, bound_ra
         model = psf_function(xv, yv, *pars)
         return (subarray - model).flatten()
 
-    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', ftol=1e-4, xtol=1e-4, max_nfev=40, method='trf')
     if np.isfinite(moment_fit[6]):
         res.x[6] = moment_fit[6]
     return res.x
@@ -22825,7 +22973,7 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             return (subarray - model).flatten()
 
         try:
-            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', ftol=1e-4, xtol=1e-4, max_nfev=40, method='trf')
         except Exception as exc:
             if (
                 has_usable_signal
@@ -22859,17 +23007,25 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
 
         anchored_fit = _nan_psf_result()
         if not weightedcenter:
-            try:
-                anchored_box = max(4, min(int(box), 8))
-                anchored_fit = _fit_seed_anchored_psf(
-                    data,
-                    pos,
-                    psf_function=psf_function,
-                    box=anchored_box,
-                    bound_radius=4.0,
-                )
-            except Exception as exc:
-                log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
+            primary_clean = (
+                getattr(res, 'success', False)
+                and np.all(np.isfinite(res.x[:5]))
+                and np.hypot(res.x[0] - pos[0], res.x[1] - pos[1]) <= 2.5
+                and 0.5 <= res.x[3] <= 15.0
+                and 0.5 <= res.x[4] <= 15.0
+            )
+            if not primary_clean:
+                try:
+                    anchored_box = max(4, min(int(box), 8))
+                    anchored_fit = _fit_seed_anchored_psf(
+                        data,
+                        pos,
+                        psf_function=psf_function,
+                        box=anchored_box,
+                        bound_radius=4.0,
+                    )
+                except Exception as exc:
+                    log.debug(f"Seed-anchored PSF fit failed at {np.round(pos, 2)}: {exc}")
 
         fitted_psf = choose_best_psf_solution(res.x, anchored_fit, seed_pos=pos)
         selected_fit = choose_best_psf_solution(fitted_psf, moment_fit, seed_pos=pos)
@@ -27583,7 +27739,11 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         for candidate in evaluated_candidates
     ]
 
-    if multiprocess_lightcurve_fits is not None and multiprocess_lightcurve_fits > 0:
+    if multiprocess_lightcurve_fits is None:
+        n_cpu = os.cpu_count() or 4
+        multiprocess_lightcurve_fits = max(1, min(n_cpu - 1, 16)) if n_cpu > 1 else 1
+
+    if multiprocess_lightcurve_fits is not None and multiprocess_lightcurve_fits > 1:
         log_info(f"Using multiprocessing for candidate lightcurve fits ({multiprocess_lightcurve_fits} processes).")
         with suppress_tk_cleanup_during_process_pool():
             with ProcessPoolExecutor(
@@ -30836,28 +30996,6 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
         )
         aperture_correction_factors = aperture_correction.get('correction_factors')
 
-    if include_target:
-        target_flux, target_bg, target_noise = compute_star_aperture_grid(
-            image_data,
-            0,
-            psf_data['target'][frame_index, 0],
-            psf_data['target'][frame_index, 1],
-            frame_apertures,
-            frame_annuli,
-            fast_mode=fast_aperture_mask,
-            sigma_hint=frame_sigma,
-            aperture_correction_factors=aperture_correction_factors,
-            noise_config=noise_config,
-            exposure_s=exposure_s,
-            airmass=airmass,
-            return_noise=True,
-        )
-        aper_data['target'][frame_index] = target_flux
-        aper_data['target_bg'][frame_index] = target_bg
-        aper_data['target_unc'][frame_index] = target_noise['total']
-        for component in NOISE_BUDGET_COMPONENT_KEYS:
-            aper_data[f"target_noise_{component}"][frame_index] = target_noise[component]
-
     if comp_indices is None:
         selected_comp_indices = range(comp_star_count)
     else:
@@ -30867,29 +31005,85 @@ def populate_aperture_data_for_frame(image_data, frame_index, psf_data, comp_sta
             if 0 <= int(comp_idx) < int(comp_star_count)
         })
 
-    for comp_idx in selected_comp_indices:
-        ckey = f"comp{comp_idx + 1}"
-        comp_sigma = psf_sigma_from_fit(psf_data[ckey][frame_index], fallback_sigma=frame_sigma)
-        comp_flux, comp_bg, comp_noise = compute_star_aperture_grid(
-            image_data,
-            comp_idx + 1,
-            psf_data[ckey][frame_index, 0],
-            psf_data[ckey][frame_index, 1],
-            frame_apertures,
-            frame_annuli,
-            fast_mode=fast_aperture_mask,
-            sigma_hint=comp_sigma,
-            aperture_correction_factors=aperture_correction_factors,
-            noise_config=noise_config,
-            exposure_s=exposure_s,
-            airmass=airmass,
-            return_noise=True,
-        )
-        aper_data[ckey][frame_index] = comp_flux
-        aper_data[f"{ckey}_bg"][frame_index] = comp_bg
-        aper_data[f"{ckey}_unc"][frame_index] = comp_noise['total']
-        for component in NOISE_BUDGET_COMPONENT_KEYS:
-            aper_data[f"{ckey}_noise_{component}"][frame_index] = comp_noise[component]
+    _used_gpu_phot = False
+    if (
+        _EXOTIC_GPU_USE_PHOT_GPU
+        and _EXOTIC_GPU_BATCH_APERTURE is not None
+        and not use_aperture_corrections_and_full_image_fwhm
+    ):
+        try:
+            star_coords = []
+            star_keys = []
+            if include_target:
+                star_coords.append((psf_data['target'][frame_index, 0], psf_data['target'][frame_index, 1]))
+                star_keys.append('target')
+            for comp_idx in selected_comp_indices:
+                ckey = f"comp{comp_idx + 1}"
+                star_coords.append((psf_data[ckey][frame_index, 0], psf_data[ckey][frame_index, 1]))
+                star_keys.append(ckey)
+
+            batch_res = _EXOTIC_GPU_BATCH_APERTURE(image_data, star_coords, frame_apertures, frame_annuli)
+            for k, (f_grid, b_grid) in zip(star_keys, batch_res):
+                aper_data[k][frame_index] = f_grid
+                aper_data[f"{k}_bg"][frame_index] = b_grid
+                aper_data[f"{k}_unc"][frame_index] = np.sqrt(np.maximum(f_grid, 0.0) + np.maximum(b_grid, 0.0))
+                for component in NOISE_BUDGET_COMPONENT_KEYS:
+                    aper_data[f"{k}_noise_{component}"][frame_index] = np.nan
+            _used_gpu_phot = True
+            log.debug(
+                f"GPU batch aperture: frame={frame_index}, stars={len(star_keys)}, "
+                f"apertures={len(frame_apertures)}, used_gpu_phot=True"
+            )
+        except Exception as _e_gpu:
+            log.debug(f"GPU batch aperture failed for frame {frame_index}: {_e_gpu}")
+            _used_gpu_phot = False
+
+    if not _used_gpu_phot:
+        if include_target:
+            target_flux, target_bg, target_noise = compute_star_aperture_grid(
+                image_data,
+                0,
+                psf_data['target'][frame_index, 0],
+                psf_data['target'][frame_index, 1],
+                frame_apertures,
+                frame_annuli,
+                fast_mode=fast_aperture_mask,
+                sigma_hint=frame_sigma,
+                aperture_correction_factors=aperture_correction_factors,
+                noise_config=noise_config,
+                exposure_s=exposure_s,
+                airmass=airmass,
+                return_noise=True,
+            )
+            aper_data['target'][frame_index] = target_flux
+            aper_data['target_bg'][frame_index] = target_bg
+            aper_data['target_unc'][frame_index] = target_noise['total']
+            for component in NOISE_BUDGET_COMPONENT_KEYS:
+                aper_data[f"target_noise_{component}"][frame_index] = target_noise[component]
+
+        for comp_idx in selected_comp_indices:
+            ckey = f"comp{comp_idx + 1}"
+            comp_sigma = psf_sigma_from_fit(psf_data[ckey][frame_index], fallback_sigma=frame_sigma)
+            comp_flux, comp_bg, comp_noise = compute_star_aperture_grid(
+                image_data,
+                comp_idx + 1,
+                psf_data[ckey][frame_index, 0],
+                psf_data[ckey][frame_index, 1],
+                frame_apertures,
+                frame_annuli,
+                fast_mode=fast_aperture_mask,
+                sigma_hint=comp_sigma,
+                aperture_correction_factors=aperture_correction_factors,
+                noise_config=noise_config,
+                exposure_s=exposure_s,
+                airmass=airmass,
+                return_noise=True,
+            )
+            aper_data[ckey][frame_index] = comp_flux
+            aper_data[f"{ckey}_bg"][frame_index] = comp_bg
+            aper_data[f"{ckey}_unc"][frame_index] = comp_noise['total']
+            for component in NOISE_BUDGET_COMPONENT_KEYS:
+                aper_data[f"{ckey}_noise_{component}"][frame_index] = comp_noise[component]
 
     return aperture_correction
 
@@ -35910,6 +36104,28 @@ def parse_args():
 def _main_impl():
     # command line args
     args = parse_args()
+    if args.multiprocess_transformations is None:
+        _env_mp_tf = os.environ.get("EXOTIC_MULTIPROCESS_TRANSFORMATIONS")
+        if _env_mp_tf:
+            try:
+                args.multiprocess_transformations = int(_env_mp_tf)
+            except ValueError:
+                pass
+        if args.multiprocess_transformations is None:
+            _tl_cfg_path = os.path.expanduser("~/.config/TransitLab/config.json")
+            if os.path.isfile(_tl_cfg_path):
+                try:
+                    import json as _json_tl
+                    with open(_tl_cfg_path, "r", encoding="utf-8") as _f_tl:
+                        _tl_cfg = _json_tl.load(_f_tl)
+                    _val = _tl_cfg.get("MultiprocessTransformations")
+                    if _val is not None and int(_val) > 0:
+                        args.multiprocess_transformations = int(_val)
+                except Exception:
+                    pass
+        if args.multiprocess_transformations is None and sys.platform.startswith("linux"):
+            args.multiprocess_transformations = min(8, max(1, os.cpu_count() or 1))
+
     if args.multiprocess_transformations is not None and args.multiprocess_transformations < 1:
         raise ValueError("--multiprocess-transformations requires an integer greater than 0.")
     if args.multiprocess_lightcurve_fits is not None and args.multiprocess_lightcurve_fits < 1:

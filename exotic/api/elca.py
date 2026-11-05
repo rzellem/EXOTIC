@@ -48,7 +48,10 @@ from itertools import cycle, product
 import math
 import os
 import sys
-import bottleneck as bn
+try:
+    import bottleneck as bn
+except ImportError:
+    import numpy as bn
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np

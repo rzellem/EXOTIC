@@ -167,7 +167,7 @@ def orbital_posterior_sensitivity(fit, record, region):
 
     limit = (record.get('ecc') or {}).get('kind') == 'upper_limit'
 
-    # Pre-evaluar escenarios orbitales en paralelo a través de todos los núcleos CPU disponibles
+    # Pre-evaluate orbital scenarios in parallel across all available CPU cores
     unique_orbits = []
     ref_orbit = (0., 0.) if limit else (float(e0), float(w0 % 360) if e0 else 0.)
     unique_orbits.append(ref_orbit)

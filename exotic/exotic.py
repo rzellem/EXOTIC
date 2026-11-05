@@ -138,7 +138,7 @@ import os.path as _gpu_os_path_pinj
 import sys as _gpu_sys_pinj
 _gpu_curr_file = _gpu_os_path_pinj.abspath(__file__)
 _gpu_exotic_pkg_dir = _gpu_os_path_pinj.dirname(_gpu_curr_file)        # exotic/
-_gpu_exotic_repo_dir = _gpu_os_path_pinj.dirname(_gpu_exotic_pkg_dir)  # EXOTIC/  ← ahí está exotic_gpu/
+_gpu_exotic_repo_dir = _gpu_os_path_pinj.dirname(_gpu_exotic_pkg_dir)  # EXOTIC/ repo root containing exotic_gpu/
 if _gpu_os_path_pinj.isdir(_gpu_exotic_repo_dir) and _gpu_exotic_repo_dir not in _gpu_sys_pinj.path:
     _gpu_sys_pinj.path.insert(0, _gpu_exotic_repo_dir)
 del _gpu_os_path_pinj, _gpu_sys_pinj, _gpu_curr_file, _gpu_exotic_pkg_dir, _gpu_exotic_repo_dir

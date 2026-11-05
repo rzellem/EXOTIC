@@ -7,9 +7,8 @@
 #    bash EXOTIC/setup_cachyos_venv.sh
 #
 #  CRITICAL RULE for CachyOS baked-in NVIDIA kernels:
-#    If pacman ever prints:
-#      :: nvidia-open-dkms … y linux-cachyos-*-nvidia-open están en conflicto …
-#      ¿Quitar linux-cachyos-*-nvidia-open? [s/N]
+#    If pacman ever prompts about package conflicts between nvidia-open-dkms
+#    and linux-cachyos-*-nvidia-open:
 #    → press N (the default). NEVER install nvidia-dkms on these kernels.
 # ==============================================================================
 set -u

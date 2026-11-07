@@ -3,6 +3,7 @@ import sys
 import types
 import importlib.util
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -279,8 +280,15 @@ def test_fit_centroid_sizes_noisy_offset_star_from_fitted_profile(fast_mode, sig
 def test_fit_centroid_reports_consistent_background_between_fast_and_full_modes():
     image = _gaussian_image(center=(40.3, 35.7), amplitude=5000.0, sigma=2.0, background=123.4)
 
-    fast_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=True)
-    full_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', RuntimeWarning)
+        fast_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=True)
+        full_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=False)
+
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+    np.testing.assert_allclose(full_result[:2], [40.3, 35.7], atol=1e-5)
+    np.testing.assert_allclose(fast_result[3:5], [2.0, 2.0], atol=1e-5)
+    np.testing.assert_allclose(full_result[3:5], [2.0, 2.0], atol=1e-5)
 
     assert np.isfinite(fast_result[6])
     assert np.isfinite(full_result[6])

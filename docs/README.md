@@ -8,6 +8,19 @@
 
 ## Installation and Running
 
+Nested-fitting effort is estimated automatically; users do not need to choose
+`max_ncalls`. The initial allowance scales with fit dimensions, live points and
+requested effective samples. If it is used, EXOTIC projects the remaining work
+from pilot sampling diagnostics, with headroom and the existing API ceiling.
+Each comparison candidate shares that allowance across posterior, baseline and
+residual refits, and retries cannot repeatedly renew it. Budget stops retain
+the sampled fit and report that convergence may be incomplete. Priors and
+detection/selection criteria are unchanged. Reports include the automatic
+calculation, requested allowance and actual evaluation count. Advanced callers
+can override it with `optional_info.ultranest_max_ncalls` or
+`EXOTIC_ULTRANEST_MAX_NCALLS`; `"auto"` explicitly restores automatic estimation.
+See the main README for the calculation.
+
 EXOTIC runs on Windows, macOS, and Linux with **Python 3.12 or newer**.
 The installation guides include Python 3.14 virtual environments. An existing
 supported Python installation can be used; there is no need to replace it just

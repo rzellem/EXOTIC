@@ -333,7 +333,7 @@ def test_lc_fitter_auto_solves_baseline_when_a0_is_not_free(monkeypatch, tmp_pat
     assert np.median(fit.detrended[oot_mask]) == pytest.approx(1.0, abs=5e-4)
 
 
-def test_lc_fitter_falls_back_to_lm_after_nested_linalg_error(monkeypatch, tmp_path):
+def test_lc_fitter_reports_nested_linalg_error_without_substituting_lm(monkeypatch, tmp_path):
     elca = load_elca_with_stubs(monkeypatch, tmp_path)
     calls = []
 
@@ -361,22 +361,19 @@ def test_lc_fitter_falls_back_to_lm_after_nested_linalg_error(monkeypatch, tmp_p
     dataerr = np.full_like(time, 1e-3)
     data = elca.transit(time, prior)
 
-    fit = elca.lc_fitter(
-        time,
-        data,
-        dataerr,
-        airmass,
-        prior.copy(),
-        {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005]},
-        mode="ns",
-        verbose=False,
-    )
+    with pytest.raises(np.linalg.LinAlgError, match="Singular matrix"):
+        elca.lc_fitter(
+            time,
+            data,
+            dataerr,
+            airmass,
+            prior.copy(),
+            {"rprs": [0.08, 0.12], "tmid": [-0.005, 0.005]},
+            mode="ns",
+            verbose=False,
+        )
 
-    assert calls == ["ns", "lm"]
-    assert fit.mode == "lm"
-    assert fit.ns_type == "lm"
-    assert fit.nested_fit_fallback is True
-    assert fit.nested_fit_failure_reason == "LinAlgError: Singular matrix"
+    assert calls == ["ns"]
 
 
 def test_lc_fitter_auto_solves_mean_airmass_normalization(monkeypatch, tmp_path):

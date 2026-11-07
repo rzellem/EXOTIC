@@ -283,6 +283,46 @@ Set `ultranest_cpu_gate` to `false` to disable it. Command-line overrides are `-
 
 The gate runs before likelihood worker pools are created and covers all EXOTIC UltraNest fitters, including subsequent fit attempts and extensions. It checks current load independently in each process, so simultaneous jobs can pass together, and load can rise above the threshold after startup. This is a start gate, not a cap on running CPU usage or a fixed concurrency limit. MPI fitting APIs coordinate the decision across ranks using rank zero's host CPU usage.
 
+### Bounding UltraNest fitting effort
+
+EXOTIC automatically estimates a likelihood-evaluation budget for each comparison
+candidate. No user setting is required. The initial sampling allowance scales
+with the number of sampled dimensions, live points and requested effective
+samples: `32 * max(live_points, min_ess) * (dimensions + 1)` calls. If sampling
+uses that allowance, EXOTIC uses its measured cost per nested iteration, remaining
+live-tail mass, effective sample count and evidence uncertainty to estimate the
+remaining work. It doubles that estimate for headroom, within the existing API
+ceiling (normally 200,000 calls). APIs without a ceiling use four times their
+initial allowance as the ceiling. This is a computational heuristic; it cannot
+predict whether a transit is detectable or guarantee posterior convergence.
+
+That projection is made once per candidate. Posterior retries, baseline refits
+and residual-rejection refits share the resulting allowance, so repeatedly
+changing bounds cannot continually renew it. Natural completion can finish
+earlier. Priors, detection criteria and comparison-star selection are unchanged.
+Deferred live-point extensions carry forward the fit's remaining allowance.
+A required final fit on full-resolution data after a binned search estimates
+its own allowance, shared by all of that final fit's refinements.
+UltraNest can finish its current proposal batch before stopping, so the actual
+count can exceed the ceiling.
+
+At the ceiling EXOTIC retains the sampled result and reports that posterior
+convergence may be incomplete; its progress line says `stopped`. Fit results
+also record `exotic_call_limit` with the requested and actual counts. This is
+an effort limit. Once the shared allowance is spent, EXOTIC stops further posterior
+and residual-rejection refinements and keeps the last sampled fit with its
+matching measurements. Each comparison candidate gets its own allowance.
+Budget summaries are saved as `ultranest_evaluation_budget` in fit/report
+metadata, including the automatic calculation and pilot diagnostics. Standalone
+nested-fit searches also share the allowance across their posterior retries;
+direct `run_reactive_sampler` calls estimate the allowance for that invocation.
+
+Advanced callers can override automatic estimation with a positive integer in
+`optional_info.ultranest_max_ncalls` or `EXOTIC_ULTRANEST_MAX_NCALLS`. An explicit
+init value takes precedence over the environment. Omission or `null` inherits the
+environment and otherwise uses automatic estimation; `"auto"` explicitly selects
+automatic estimation. A smaller API ceiling still applies.
+
 ## Third-Party GUI Launchers
 
 ### TransitLab

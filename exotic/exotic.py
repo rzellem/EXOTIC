@@ -165,8 +165,10 @@ except ImportError:  # package import
     )
 try:  # ld
     from .api.ld import LimbDarkening, ld_re_punct_p
+    from .api.filters import normalize_microobservatory_filter
 except ImportError:  # package import
     from api.ld import LimbDarkening, ld_re_punct_p
+    from api.filters import normalize_microobservatory_filter
 try:  # plate solution
     from .api.plate_solution import NextAstroPlateSolution, NovaSourceListPlateSolution, PlateSolution
 except ImportError:  # package import
@@ -178,6 +180,10 @@ except ImportError:  # package import
 try:
     from .api.ultranest_utils import (
         configure_ultranest_cpu_gate,
+        configure_ultranest_max_ncalls,
+        record_ultranest_fit,
+        ultranest_budget_exhausted,
+        ultranest_budget_scope,
         get_mpi_status,
         suppress_inherited_tk_cleanup_in_worker,
         suppress_tk_cleanup_during_process_pool,
@@ -185,6 +191,10 @@ try:
 except ImportError:
     from api.ultranest_utils import (
         configure_ultranest_cpu_gate,
+        configure_ultranest_max_ncalls,
+        record_ultranest_fit,
+        ultranest_budget_exhausted,
+        ultranest_budget_scope,
         get_mpi_status,
         suppress_inherited_tk_cleanup_in_worker,
         suppress_tk_cleanup_during_process_pool,
@@ -1149,7 +1159,12 @@ def finalize_final_residual_rejection_payload(
         return payload
 
     if rejected_count <= 0:
-        if payload.get('note') is None:
+        if stopped_reason == 'evaluation_budget':
+            payload['note'] = (
+                "Residual rejection was not continued because the shared UltraNest "
+                "evaluation budget was exhausted; retained the fitted measurements."
+            )
+        elif payload.get('note') is None:
             payload['note'] = "No final-fit residual outliers were rejected."
         return payload
 
@@ -1160,6 +1175,8 @@ def finalize_final_residual_rejection_payload(
         stop_text = " Stopped because the next residual-rejected UltraNest refit did not converge."
     elif stopped_reason == 'shape_mismatch':
         stop_text = " Stopped because the next residual array did not align with the light-curve points."
+    elif stopped_reason == 'evaluation_budget':
+        stop_text = " Stopped because the shared UltraNest evaluation budget was exhausted."
 
     preflight_text = ""
     if preflight_rejected_count > 0:
@@ -5166,6 +5183,7 @@ def fit_quick_look_lightcurve_least_squares(
     return fit, fitted_flux, fitted_unc
 
 
+@ultranest_budget_scope
 def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, airmass, ld, p_dict,
                                                  jd_times=None,
                                                  target_flux_error=None,
@@ -5575,6 +5593,13 @@ def finalize_comparison_candidate_full_reduction(times, target_flux, comp_flux, 
         )
         residual_stop_reason = None
         for residual_refit_iteration in range(1, FINAL_RESIDUAL_REJECTION_MAX_REFITS + 1):
+            if ultranest_budget_exhausted():
+                residual_stop_reason = 'evaluation_budget'
+                log_info(
+                    "UltraNest candidate evaluation budget exhausted; retaining the fitted "
+                    "measurements and skipping further residual-rejection refits."
+                )
+                break
             min_required_points = max(len(fit_bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
             residual_keep_mask, residual_summary = final_residual_rejection_keep_mask(
                 final_fit,
@@ -5907,6 +5932,7 @@ def build_full_resolution_final_prior_from_previous_fit(previous_fit, p_dict):
     return prior
 
 
+@ultranest_budget_scope
 def refit_selected_fast_comparison_on_full_lightcurve(
     selected_result,
     p_dict,
@@ -6223,6 +6249,13 @@ def refit_selected_fast_comparison_on_full_lightcurve(
             )
         residual_stop_reason = None
         for residual_refit_iteration in range(1, FINAL_RESIDUAL_REJECTION_MAX_REFITS + 1):
+            if ultranest_budget_exhausted():
+                residual_stop_reason = 'evaluation_budget'
+                log_info(
+                    "Selected full-resolution evaluation budget exhausted; retaining the fitted "
+                    "measurements and skipping further residual-rejection refits."
+                )
+                break
             min_required_points = max(len(bounds) + 1, LIGHTCURVE_MIN_VALID_POINTS)
             residual_keep_mask, residual_summary = final_residual_rejection_keep_mask(
                 fit,
@@ -7176,6 +7209,7 @@ def sparse_posterior_diagnostics_summary(diagnostics):
     return "posterior sample support diagnostics are unavailable"
 
 
+@ultranest_budget_scope(resume_fit=True)
 def extend_sparse_posterior_live_points_if_needed(
     fit,
     enabled=None,
@@ -7193,6 +7227,14 @@ def extend_sparse_posterior_live_points_if_needed(
 
     if not enabled:
         annotate_sparse_posterior_live_point_extension(fit, False, False)
+        clear_fit_ultranest_resume_state(fit)
+        return fit
+
+    if ultranest_budget_exhausted():
+        annotate_sparse_posterior_live_point_extension(
+            fit, True, False,
+            note="Shared UltraNest evaluation budget exhausted; sampler extension was not run.",
+        )
         clear_fit_ultranest_resume_state(fit)
         return fit
 
@@ -8589,6 +8631,7 @@ def enforce_minimum_ars_retry_half_width(mode, bounds, min_half_width=ARS_RETRY_
     )
 
 
+@ultranest_budget_scope(retain_fit=True)
 def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     times,
     flux_values,
@@ -8828,6 +8871,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         )
         annotate_duration_prior(fit, duration_prior)
         annotate_partial_transit_geometry_prior_assumption(fit, prior_assumption)
+        record_ultranest_fit(fit)
         return fit
 
     current_bounds = sanitize_retry_search_bounds(
@@ -14196,6 +14240,7 @@ def build_final_fit_prefit_refinement_plan(
     return base_plan
 
 
+@ultranest_budget_scope
 def fit_final_lightcurve_with_oot_baseline_detrending(
     times,
     flux_values,
@@ -14325,6 +14370,13 @@ def fit_final_lightcurve_with_oot_baseline_detrending(
         original_tmid_bounds=prefit_plan.get('original_tmid_bounds'),
         refined_tmid_bounds=prefit_plan.get('refined_tmid_bounds'),
     )
+
+    if ultranest_budget_exhausted():
+        note = "Shared UltraNest evaluation budget exhausted; additional baseline and sampler refinements were not run."
+        annotate_out_of_transit_baseline_parameter_fit(fit, False, note=note)
+        annotate_out_of_transit_baseline_detrending(fit, False, note=note)
+        annotate_transit_detection_qc(fit)
+        return fit, working_flux, working_unc
 
     if detrend_on_outoftransit_baseline:
         baseline_parameter_result = fit_airmass_baseline_parameters_on_out_of_transit(
@@ -22539,7 +22591,9 @@ def _fit_seed_anchored_psf(data, pos, psf_function=gaussian_psf, box=8, bound_ra
         model = psf_function(xv, yv, *pars)
         return (subarray - model).flatten()
 
-    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+    # Retain SciPy's step-size stopping test. Disabling it lets a converged
+    # profile shrink the trust region to zero and overflow inside TRF.
+    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', method='trf')
     if np.isfinite(moment_fit[6]):
         res.x[6] = moment_fit[6]
     return res.x
@@ -22825,7 +22879,7 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             return (subarray - model).flatten()
 
         try:
-            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', xtol=None, method='trf')
+            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', method='trf')
         except Exception as exc:
             if (
                 has_usable_signal
@@ -22934,7 +22988,6 @@ def fit_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaus
             x0=[*pos, *init],
             bounds=[lo, up],
             jac='3-point',
-            xtol=None,
             method='trf',
         )
         flux_row = np.asarray(res.x, dtype=float)
@@ -23018,7 +23071,6 @@ def fit_legacy_psf_photometry_flux_row(data, centroid_row, starIndex, psf_functi
             x0=[*pos, *init],
             bounds=[lo, up],
             jac='3-point',
-            xtol=None,
             method='trf',
         )
     except Exception as exc:
@@ -23032,7 +23084,6 @@ def fit_legacy_psf_photometry_flux_row(data, centroid_row, starIndex, psf_functi
                 fcn2min,
                 x0=[*pos, *init],
                 jac='3-point',
-                xtol=None,
                 method='lm',
             )
         except Exception as lm_exc:
@@ -23296,6 +23347,27 @@ def resolve_noise_budget_value(info_dict, aliases, header=None, header_keys=(),
 def is_microobservatory_header(header):
     """Recognize the MicroObservatory creator recorded in incoming FITS data."""
     return header is not None and 'microobservatory' in str(header.get('CREATOR', '')).casefold()
+
+
+def apply_microobservatory_metadata(info_dict, header):
+    """Apply MObs site metadata and Ben/Donald standard filter naming."""
+    if 'filter' in info_dict:
+        info_dict['filter'] = normalize_microobservatory_filter(
+            header.get('TELESCOP'), info_dict['filter'],
+        )
+    if is_microobservatory_header(header):
+        # Carry detection into noise calculations that have no frame header.
+        info_dict['microobservatory_dataset'] = True
+    if 'CREATOR' in header:
+        if 'MicroObservatory' in header['CREATOR'] and 'MOBS' not in info_dict['second_obs'].upper():
+            if info_dict['second_obs'].upper() != "":
+                info_dict['second_obs'] += ",MOBS"
+            else:
+                info_dict['second_obs'] = "MOBS"
+            info_dict['elev'] = 1268
+            info_dict['lat'] = 31.675467
+            info_dict['long'] = -110.951376
+            info_dict['pixel_bin'] = "2x2"
 
 
 def noise_budget_config_from_info(info_dict, header=None):
@@ -28109,6 +28181,7 @@ def compact_comparison_attempt_for_output(attempt):
         return {}
 
     return {
+        'ultranest_evaluation_budget': getattr(attempt.get('fit'), 'ultranest_evaluation_budget', None),
         'rank': attempt.get('rank'),
         'comp_index': attempt.get('comp_index'),
         'ensemble_membership': attempt.get('ensemble_membership'),
@@ -35886,7 +35959,7 @@ def parse_args():
                              "mismatches, and unrecognized limb-darkening filters. Invalid initialization-file "
                              "RA/Dec values use NASA Exoplanet Archive coordinates when available, otherwise "
                              "the run aborts. Pixel mismatches use an automatic fallback; unrecognized filters "
-                             "abort unless wl_min and wl_max are provided.")
+                             "abort unless wl_min and wl_max are provided. Missing elevation uses 0 metres.")
     parser.add_argument('--multiprocess-transformations',
                         type=int,
                         default=None,
@@ -36077,9 +36150,11 @@ def _main_impl():
                 quick_look_mode = True
 
         if fitsortext == 1:
-            exotic_infoDict, userpDict['pName'] = inputs_obj.complete_red(userpDict['pName'])
+            exotic_infoDict, userpDict['pName'] = inputs_obj.complete_red(
+                userpDict['pName'], non_interactive_run=args.non_interactive_run)
         else:
-            exotic_infoDict, userpDict['pName'] = inputs_obj.prereduced(userpDict['pName'])
+            exotic_infoDict, userpDict['pName'] = inputs_obj.prereduced(
+                userpDict['pName'], non_interactive_run=args.non_interactive_run)
             for motion_key in ('dist', 'pm_ra', 'pm_dec'):
                 current_motion_value = userpDict.get(motion_key)
                 if current_motion_value is None or (isinstance(current_motion_value, str) and not current_motion_value.strip()):
@@ -36292,6 +36367,23 @@ def _main_impl():
                 ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT,
             )
         )
+        ultranest_max_ncalls = configure_ultranest_max_ncalls(
+            exotic_infoDict.get('ultranest_max_ncalls'),
+        )
+        if ultranest_max_ncalls is not None:
+            log_info(
+                f"UltraNest evaluation ceiling: {ultranest_max_ncalls} likelihood calls per "
+                "comparison-candidate reduction, shared by posterior retries and residual refits. "
+                "Budget stops retain the sampled result "
+                "and report that convergence may be incomplete."
+            )
+        else:
+            log_info(
+                "UltraNest evaluation budget: automatic. EXOTIC estimates effort from "
+                "fit dimensions, live points and pilot sampling results; posterior retries "
+                "and residual refits share that allowance. Budget stops retain the sampled "
+                "result and report that convergence may be incomplete."
+            )
         cpu_gate_enabled, cpu_threshold = configure_ultranest_cpu_gate_from_inputs(
             exotic_infoDict, args,
         )
@@ -36726,20 +36818,7 @@ def _main_impl():
                 header = fits.getheader(filename=inputfiles[0], ext=extension)
 
             # checks for MOBS data
-            if is_microobservatory_header(header):
-                # Carry detection into noise calculations that have no frame header.
-                exotic_infoDict['microobservatory_dataset'] = True
-            if 'CREATOR' in header:
-                if 'MicroObservatory' in header['CREATOR'] and 'MOBS' not in exotic_infoDict['second_obs'].upper():
-                    if exotic_infoDict['second_obs'].upper() != "":
-                        exotic_infoDict['second_obs'] += ",MOBS"
-                    else:
-                        exotic_infoDict['second_obs'] = "MOBS"
-                    exotic_infoDict['filter'] = "CV"
-                    exotic_infoDict['elev'] = 1268
-                    exotic_infoDict['lat'] = 31.675467
-                    exotic_infoDict['long'] = -110.951376
-                    exotic_infoDict['pixel_bin'] = "2x2"
+            apply_microobservatory_metadata(exotic_infoDict, header)
 
             exotic_infoDict.setdefault('observed_filter', exotic_infoDict.get('filter'))
             log_info("Calculating limb-darkening coefficients.")

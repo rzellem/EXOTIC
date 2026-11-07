@@ -29,6 +29,7 @@ def _cpu_gate_without_host_load(monkeypatch):
     monkeypatch.delenv(ultranest_utils.ULTRANEST_CPU_GATE_ENV, raising=False)
     monkeypatch.delenv(ultranest_utils.ULTRANEST_CPU_THRESHOLD_ENV, raising=False)
     monkeypatch.setattr(ultranest_utils.psutil, 'cpu_percent', lambda **kwargs: 0.0)
+    monkeypatch.delenv(ultranest_utils.ULTRANEST_MAX_NCALLS_ENV, raising=False)
 
 
 class _FakeStream(io.StringIO):
@@ -122,6 +123,30 @@ def test_run_reactive_sampler_silent_mode(monkeypatch):
     assert sampler.kwargs["show_status"] is False
     assert sampler.kwargs["viz_callback"] is False
     assert stream.getvalue() == ""
+
+
+@pytest.mark.parametrize('dimension,explicit_region', [(1, None), (2, None), (1, object())])
+def test_sampler_region_preserves_multidimensional_and_explicit_choices(
+    monkeypatch, dimension, explicit_region,
+):
+    from exotic.api.ultranest_regions import OneDimensionalRegion
+
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        x_dim = dimension
+
+        def run(self, **kwargs):
+            if explicit_region is not None:
+                assert kwargs['region_class'] is explicit_region
+            elif dimension == 1:
+                assert kwargs['region_class'] is OneDimensionalRegion
+            else:
+                assert 'region_class' not in kwargs
+            return {'status': 'ok'}
+
+    kwargs = {} if explicit_region is None else {'region_class': explicit_region}
+    assert run_reactive_sampler(FakeSampler(), run_kwargs=kwargs, verbose=False) == {'status': 'ok'}
 
 
 def test_run_reactive_sampler_translates_ultranest_degenerate_region_value_error(monkeypatch):
@@ -618,7 +643,8 @@ def test_run_reactive_sampler_rich_override_uses_native_status(monkeypatch):
     assert result == {"status": "ok"}
     assert sampler.kwargs["show_status"] is True
     assert "viz_callback" not in sampler.kwargs
-    assert stream.getvalue() == ""
+    assert 'Automatic evaluation budget' in stream.getvalue()
+    assert '[ultranest] running' not in stream.getvalue()
 
 
 def test_run_reactive_sampler_silent_mode_mutes_ultranest_logger(monkeypatch):

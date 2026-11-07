@@ -76,6 +76,76 @@ def test_mobs_defaults_match_exotic_metadata(monkeypatch, tmp_path):
     assert user_info["Secondary Observer Codes (N/A if none)"] == "MOBS"
 
 
+@pytest.mark.parametrize("obs", ["MObs", "Other"])
+@pytest.mark.parametrize("filter_key", ["FILTER", "FILT"])
+@pytest.mark.parametrize("telescope, observed_filter, expected", [
+    ("Ben", "Red", "R"),
+    ("Ben", " red ", "R"),
+    ("Ben", "Green", "V"),
+    ("Ben", "Blue", "B"),
+    ("Donald", "Red", "R"),
+    ("Donald", " red ", "R"),
+    ("Donald", "Green", "V"),
+    ("Donald", "Blue", "B"),
+    ("Donald", "Clear", "CV"),
+    ("Donald", "Custom filter", "Custom filter"),
+    ("Other", "Red", "Red"),
+    ("Cecilia", "Clear", "CV"),
+    ("Cecilia", " clear ", "CV"),
+    ("Ben", "R", "R"),
+    ("Other", "Blue", "Blue"),
+    ("Ben", "Custom filter", "Custom filter"),
+])
+def test_mobs_inits_uses_observed_filter(monkeypatch, tmp_path, obs, filter_key,
+                                       telescope, observed_filter, expected):
+    colab = import_colab(monkeypatch)
+    fits_path = _mobs_frame(tmp_path)
+    with fits.open(fits_path, mode="update") as hdul:
+        hdul[0].header["TELESCOP"] = telescope
+        hdul[0].header[filter_key] = observed_filter
+
+    path = colab.make_inits_file(
+        '"planetary_parameters": {}', tmp_path.as_posix(), f"{tmp_path.as_posix()}/",
+        fits_path.as_posix(), "[424, 286]", "[[465, 183]]", obs, "RTZ", "", False,
+    )
+    with open(path) as handle:
+        assert json.load(handle)["user_info"]["Filter Name (aavso.org/filters)"] == expected
+
+
+@pytest.mark.parametrize("telescope", ["Ben", " ben ", "Donald", " donald "])
+@pytest.mark.parametrize("cards, expected", [
+    ({}, "R"),
+    ({"FILTER": None}, "R"),
+    ({"FILTER": ""}, "R"),
+    ({"FILTER": "   "}, "R"),
+    ({"FILTER": "", "FILT": "Blue"}, "B"),
+    ({"FILT": "R"}, "R"),
+    ({"FILTER": "Clear"}, "CV"),
+    ({"FILTER": "Custom filter"}, "Custom filter"),
+])
+def test_color_telescope_inits_defaults_to_red_only_without_recorded_filter(
+        monkeypatch, tmp_path, telescope, cards, expected):
+    colab = import_colab(monkeypatch)
+    fits_path = _mobs_frame(tmp_path)
+    with fits.open(fits_path, mode="update") as hdul:
+        hdul[0].header["TELESCOP"] = telescope
+        hdul[0].header.update(cards)
+
+    path = colab.make_inits_file(
+        '"planetary_parameters": {}', tmp_path.as_posix(), f"{tmp_path.as_posix()}/",
+        fits_path.as_posix(), "[424, 286]", "[[465, 183]]", "MObs", "RTZ", "", False,
+    )
+    with open(path) as handle:
+        assert json.load(handle)["user_info"]["Filter Name (aavso.org/filters)"] == expected
+
+
+@pytest.mark.parametrize("telescope", ["Ben", "Donald"])
+def test_color_telescope_filter_default_without_observatory_marker(monkeypatch, telescope):
+    colab = import_colab(monkeypatch)
+    assert colab.find({"TELESCOP": telescope}, ["FILTER", "FILT"], "Other") == "R"
+    assert colab.find({"TELESCOP": telescope, "FILTER": "Blue"}, ["FILTER", "FILT"], "Other") == "B"
+
+
 @pytest.mark.parametrize(
     "cards, expected",
     [

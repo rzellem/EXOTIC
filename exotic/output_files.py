@@ -38,6 +38,7 @@ def posterior_reporting_metadata(fit, orbital_budget=None):
         'posterior_distribution_estimates': estimates,
         'timing_estimator_differences_seconds': timing_comparison,
         'tmid_bound_diagnostics': getattr(fit, 'tmid_bound_diagnostics', {}) or {},
+        'ultranest_evaluation_budget': getattr(fit, 'ultranest_evaluation_budget', None),
         'model_values': dict(getattr(fit, 'parameters', {}) or {}),
         'model_errors': dict(getattr(fit, 'errors', {}) or {}),
         'local_fit_uncertainty_approximations': getattr(fit, 'ultranest_error_fallbacks', {}) or {},
@@ -3752,6 +3753,9 @@ class AIDOutputFiles:
                 "AMASS,GROUP,CHART,NOTES\n"
             )
             for vsp_p in self.vsp_params:
+                # Apply the AID MERR cutoff before rounding for serialization.
+                if finite_float(vsp_p.get('mag_err')) > 0.5:
+                    continue
                 variable_name = default_variable_name
                 if use_row_names:
                     variable_name = vsp_p.get('_aid_name') or variable_name

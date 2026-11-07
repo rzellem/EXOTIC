@@ -54,36 +54,49 @@ def test_camera_keeps_dslr_as_dslr():
     assert camera("canon dslr") == "DSLR"
 
 
-def test_elevation_uses_explicit_inits_value_without_header_or_online_lookup(monkeypatch):
+@pytest.mark.parametrize("non_interactive_run", [False, True])
+@pytest.mark.parametrize("elev", ["275.5", 0, -25])
+def test_elevation_uses_explicit_inits_value_without_header_or_online_lookup(monkeypatch, non_interactive_run, elev):
     def fail_online_lookup(*args, **kwargs):
         raise AssertionError("Open-Elevation must not be called for an explicit inits value")
 
     monkeypatch.setattr(inputs_module, "open_elevation", fail_online_lookup)
 
-    assert inputs_module.elevation("275.5", -33.8, 151.2, hdr={"HEIGHT": 999}) == pytest.approx(275.5)
+    assert inputs_module.elevation(
+        elev, -33.8, 151.2, hdr={"HEIGHT": 999}, non_interactive_run=non_interactive_run,
+    ) == pytest.approx(float(elev))
 
 
 @pytest.mark.parametrize(
     "header_key",
     ("HEIGHT", "ELEVATION", "ELE", "EL", "OBSGEO-H", "ALT-OBS", "SITEELEV"),
 )
-def test_elevation_uses_each_supported_fits_header_before_online_lookup(monkeypatch, header_key):
+@pytest.mark.parametrize("non_interactive_run", [False, True])
+def test_elevation_uses_each_supported_fits_header_before_online_lookup(monkeypatch, header_key, non_interactive_run):
     def fail_online_lookup(*args, **kwargs):
         raise AssertionError("Open-Elevation must not be called when the FITS header has an elevation")
 
     monkeypatch.setattr(inputs_module, "open_elevation", fail_online_lookup)
 
-    assert inputs_module.elevation("", -33.8, 151.2, hdr={header_key: "432.1"}) == pytest.approx(432.1)
+    assert inputs_module.elevation(
+        "", -33.8, 151.2, hdr={header_key: "432.1"}, non_interactive_run=non_interactive_run,
+    ) == pytest.approx(432.1)
 
 
-def test_elevation_calls_open_elevation_when_inits_and_fits_values_are_blank(monkeypatch):
+@pytest.mark.parametrize("non_interactive_run", [False, True])
+@pytest.mark.parametrize("lookup_elevation", [81.0, 0.0, -25.0])
+def test_elevation_calls_open_elevation_when_inits_and_fits_values_are_blank(
+    monkeypatch, non_interactive_run, lookup_elevation,
+):
     calls = []
-    monkeypatch.setattr(inputs_module, "open_elevation", lambda lat, long: calls.append((lat, long)) or 81.0)
+    monkeypatch.setattr(inputs_module, "open_elevation", lambda lat, long: calls.append((lat, long)) or lookup_elevation)
     monkeypatch.setattr(inputs_module, "animate_toggle", lambda *args: None)
 
-    result = inputs_module.elevation("", -33.8, 151.2, hdr={"HEIGHT": "", "SITEELEV": "N/A"})
+    result = inputs_module.elevation(
+        "", -33.8, 151.2, hdr={"HEIGHT": "", "SITEELEV": "N/A"}, non_interactive_run=non_interactive_run,
+    )
 
-    assert result == pytest.approx(81.0)
+    assert result == pytest.approx(lookup_elevation)
     assert calls == [(-33.8, 151.2)]
 
 
@@ -111,6 +124,20 @@ def test_elevation_prompts_when_open_elevation_exhausts_its_retries(monkeypatch)
 
     assert result == pytest.approx(123.0)
     assert prompts == ["Enter the elevation (in meters) of where you observed: "]
+
+
+@pytest.mark.parametrize("lookup_elevation", [None, False, "N/A", float("nan"), float("inf")])
+def test_elevation_defaults_to_zero_without_prompt_when_non_interactive_lookup_fails(monkeypatch, lookup_elevation):
+    messages = []
+    monkeypatch.setattr(inputs_module, "open_elevation", lambda lat, long: lookup_elevation)
+    monkeypatch.setattr(inputs_module, "animate_toggle", lambda *args: None)
+    monkeypatch.setattr(inputs_module, "user_input", lambda *args, **kwargs: pytest.fail("Unexpected elevation prompt"))
+    monkeypatch.setattr(inputs_module, "log_info", lambda message, **kwargs: messages.append((message, kwargs)))
+
+    result = inputs_module.elevation("", -33.8, 151.2, hdr={}, non_interactive_run=True)
+
+    assert result == 0.0
+    assert any("Using 0 metres" in message and kwargs.get("warn") for message, kwargs in messages)
 
 
 def test_elevation_skips_invalid_header_alias_and_uses_later_valid_alias(monkeypatch):
@@ -652,7 +679,8 @@ def test_comp_params_reads_overexposure_rejection_options_from_optional_info(tmp
     assert inputs.info_dict["overexposure_threshold_fraction"] == pytest.approx(0.75)
 
 
-def test_complete_red_uses_fits_x_y_binning_when_pixel_bin_missing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("non_interactive_run, configured_elevation", [(False, 1000), (True, 1000), (True, None)])
+def test_complete_red_resolves_elevation_and_fits_binning(tmp_path, monkeypatch, non_interactive_run, configured_elevation):
     image_dir = tmp_path / "images"
     image_dir.mkdir()
     save_dir = tmp_path / "results"
@@ -672,7 +700,7 @@ def test_complete_red_uses_fits_x_y_binning_when_pixel_bin_missing(tmp_path, mon
             "Observation date": "2020-01-01",
             "Obs. Latitude": "+32.0",
             "Obs. Longitude": "-110.0",
-            "Obs. Elevation (meters)": 1000,
+            "Obs. Elevation (meters)": configured_elevation,
             "Camera Type (CCD or DSLR)": "CCD",
             "Observing Notes": "na",
             "Plate Solution? (y/n)": "n",
@@ -690,12 +718,15 @@ def test_complete_red_uses_fits_x_y_binning_when_pixel_bin_missing(tmp_path, mon
         raise AssertionError(f"Unexpected prompt: {prompt}")
 
     monkeypatch.setattr(inputs_module, "user_input", fail_on_prompt)
+    monkeypatch.setattr(inputs_module, "open_elevation", lambda *args: False)
+    monkeypatch.setattr(inputs_module, "animate_toggle", lambda *args: None)
 
     inputs = Inputs(init_opt="y")
     inputs.comp_params(init_file, {})
-    info_dict, _ = inputs.complete_red("HAT-P-32 b")
+    info_dict, _ = inputs.complete_red("HAT-P-32 b", non_interactive_run=non_interactive_run)
 
     assert info_dict["pixel_bin"] == "2x3"
+    assert info_dict["elev"] == (0.0 if configured_elevation is None else configured_elevation)
 
 
 def test_comp_params_defaults_ignore_header_wcs_to_no(tmp_path):
@@ -1251,6 +1282,18 @@ def test_comp_params_reads_ultranest_live_points_from_optional_info(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["ultranest_min_num_live_points"] == 275
+
+
+@pytest.mark.parametrize('limit', [None, 'auto', 1, 50000, 300000])
+def test_comp_params_reads_ultranest_call_budget(tmp_path, limit):
+    init_file = tmp_path / 'inits.json'
+    init_file.write_text(json.dumps({
+        'user_info': {}, 'planetary_parameters': {},
+        'optional_info': {'ultranest_max_ncalls': limit},
+    }))
+    inputs = Inputs(init_opt='y')
+    inputs.comp_params(init_file, {})
+    assert inputs.info_dict['ultranest_max_ncalls'] == limit
 
 
 @pytest.mark.parametrize('settings', [
@@ -1835,7 +1878,8 @@ def test_prereduced_mode_forces_aavso_comp_to_no(tmp_path):
     assert info_dict["aavso_comp"] == "n"
 
 
-def test_prereduced_allows_blank_observatory_location_for_bjd_tdb(tmp_path):
+@pytest.mark.parametrize("non_interactive_run", [False, True])
+def test_prereduced_allows_blank_observatory_location_for_bjd_tdb(tmp_path, monkeypatch, non_interactive_run):
     pre_reduced_file = tmp_path / "prereduced.txt"
     pre_reduced_file.write_text("time flux uncertainty\n")
 
@@ -1859,11 +1903,13 @@ def test_prereduced_allows_blank_observatory_location_for_bjd_tdb(tmp_path):
         "phot_comp_star": None,
     })
 
-    info_dict, _ = inputs.prereduced("HAT-P-32 b")
+    monkeypatch.setattr(inputs_module, "user_input", lambda *args, **kwargs: pytest.fail("Unexpected prompt"))
+
+    info_dict, _ = inputs.prereduced("HAT-P-32 b", non_interactive_run=non_interactive_run)
 
     assert info_dict["lat"] is None
     assert info_dict["long"] is None
-    assert info_dict["elev"] is None
+    assert info_dict["elev"] == (0.0 if non_interactive_run else None)
 
 
 def test_comp_params_accepts_blank_if_none_phot_comp_star_key(tmp_path):

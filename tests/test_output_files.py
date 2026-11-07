@@ -1184,6 +1184,63 @@ def test_aid_output_floors_reported_magnitude_errors(tmp_path):
     assert "HAT-P-32,2450000.12345,12.3400,0.0010,V,NO,STD" in output_text
 
 
+@pytest.mark.parametrize("writer_method", ["aavso", "combined_aavso"])
+@pytest.mark.parametrize("cname", ["Comp", "ENSEMBLE (5 stars)"])
+@pytest.mark.parametrize(
+    "mag_errors, expected_indices",
+    [
+        ([1.2734, 0.02, 0.5, 0.50001, 0.9, 1.0, 0.49999, 0.0, "0.5", "0.50001"],
+         [1, 2, 6, 7, 8]),
+        ([1.2734, 0.50001], []),
+    ],
+)
+def test_aid_output_filters_merr_above_half_magnitude(
+    tmp_path, writer_method, cname, mag_errors, expected_indices
+):
+    fit = DummyFit()
+    p_dict = {"pName": "Target b", "sName": "Target"}
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2021-11-26",
+        "aavso_num": "RTZ",
+        "camera": "CCD",
+        "filter": "CV",
+    }
+    vsp_params = [{
+        "time": 2459544.70467 + index * 0.001,
+        "_aid_name": f"Variable {index}",
+        "mag": 17.6723,
+        "mag_err": mag_err,
+        "differential_mag": 4.2099,
+        "differential_mag_err": 1.2732,
+        "airmass": 1.9702944,
+        "cname": cname,
+        "cmag": 12.1,
+    } for index, mag_err in enumerate(mag_errors)]
+    writer = AIDOutputFiles(
+        fit, p_dict, i_dict, auid="000-BLQ-898", chart_id="X43364RUI",
+        vsp_params=vsp_params,
+    )
+
+    output_file = getattr(writer, writer_method)()
+
+    output_text = output_file.read_text(encoding="utf-8")
+    rows = [line.split(",") for line in output_text.splitlines() if not line.startswith("#")]
+    assert "#NAME,DATE,MAG,MERR," in output_text
+    assert [float(row[1]) for row in rows] == [
+        round(vsp_params[index]["time"], 5) for index in expected_indices
+    ]
+    assert [float(row[3]) for row in rows] == [
+        max(0.001, round(float(mag_errors[index]), 4)) for index in expected_indices
+    ]
+    assert [row[0] for row in rows] == [
+        f"Variable {index}" if writer_method == "combined_aavso" else "000-BLQ-898"
+        for index in expected_indices
+    ]
+    assert all(row[-1] == "DIFFMAG=4.2099;DIFFERR=1.2732" for row in rows)
+    assert [row["mag_err"] for row in vsp_params] == mag_errors
+
+
 def test_aid_output_skips_over_30_magnitude_rows(tmp_path):
     fit = DummyFit()
     p_dict = {

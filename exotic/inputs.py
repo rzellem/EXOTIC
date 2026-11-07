@@ -328,6 +328,7 @@ class Inputs:
             'skip_low_comparison_coverage_rejection': 'n',
             'fit_lightcurve_to_every_comparison_candidate': 'n',
             'ultranest_min_num_live_points': 200,
+            'ultranest_max_ncalls': None,
             'ultranest_cpu_gate': None,
             'ultranest_cpu_threshold': None,
             'use_lm_boundary_scout_before_ultranest': 'y',
@@ -349,7 +350,7 @@ class Inputs:
             'tar_coords': target_star_coords, 'comp_stars': comparison_star_coords
         }
 
-    def complete_red(self, planet):
+    def complete_red(self, planet, non_interactive_run=False):
         self.info_dict['images'] = self.params['images'](self.info_dict['images'])
 
         extension = 0
@@ -361,7 +362,8 @@ class Inputs:
         for key, value in list(self.params.items()):
             if key == 'elev':
                 self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
-                                                       self.info_dict['long'], hdr=hdr)
+                                                       self.info_dict['long'], hdr=hdr,
+                                                       non_interactive_run=non_interactive_run)
             elif key == 'tar_coords':
                 self.info_dict[key] = self.params[key](self.info_dict[key], planet)
             elif key == 'comp_stars':
@@ -401,7 +403,7 @@ class Inputs:
 
         return self.info_dict, planet
 
-    def prereduced(self, planet):
+    def prereduced(self, planet, non_interactive_run=False):
         rem_list = ['images', 'plate_opt', 'aavso_comp', 'tar_coords', 'comp_stars']
         [self.params.pop(key) for key in rem_list]
         self.info_dict['aavso_comp'] = 'n'
@@ -428,7 +430,8 @@ class Inputs:
         for key, value in list(self.params.items()):
             if key == 'elev':
                 self.info_dict[key] = self.params[key](self.info_dict[key], self.info_dict['lat'],
-                                                       self.info_dict['long'], required=False)
+                                                       self.info_dict['long'], required=False,
+                                                       non_interactive_run=non_interactive_run)
             elif key == 'lat':
                 self.info_dict[key] = self.params[key](self.info_dict[key], required=False)
             elif key == 'long':
@@ -836,6 +839,7 @@ class Inputs:
                 'run_fast_ultranest_before_final_run',
             ),
             'ultranest_cpu_gate': ('ultranest_cpu_gate',),
+            'ultranest_max_ncalls': ('ultranest_max_ncalls',),
             'ultranest_cpu_threshold': ('ultranest_cpu_threshold',),
             'use_lm_boundary_scout_before_ultranest': (
                 'use_lm_boundary_scout_before_ultranest',
@@ -1261,7 +1265,7 @@ def longitude(long, hdr=None, required=True):
         long = None
 
 
-def elevation(elev, lat, long, hdr=None, required=True):
+def elevation(elev, lat, long, hdr=None, required=True, non_interactive_run=False):
     while True:
         try:
             if is_blank_value(elev):
@@ -1278,6 +1282,10 @@ def elevation(elev, lat, long, hdr=None, required=True):
                         if header_elevation is not None:
                             return header_elevation
                 if not required:
+                    if non_interactive_run:
+                        log_info("\nWarning: No elevation available. Using 0 metres for this non-interactive run.",
+                                 warn=True)
+                        return 0.0
                     return None
                 log_info("\nEXOTIC is retrieving elevation based on entered "
                          "latitude and longitude from Open Elevation.")
@@ -1287,6 +1295,10 @@ def elevation(elev, lat, long, hdr=None, required=True):
                 finally:
                     animate_toggle()
                 if elev is False or coerce_finite_float(elev) is None:
+                    if non_interactive_run:
+                        log_info("\nWarning: EXOTIC could not retrieve elevation. "
+                                 "Using 0 metres for this non-interactive run.", warn=True)
+                        return 0.0
                     log_info("\nWarning: EXOTIC could not retrieve elevation.", warn=True)
                     elev = user_input("Enter the elevation (in meters) of where you observed: ", type_=float)
                 else:

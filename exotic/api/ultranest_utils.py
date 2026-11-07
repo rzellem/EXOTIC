@@ -8,6 +8,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 
 import numpy as np
 import psutil
@@ -30,6 +32,11 @@ MIN_LIVE_POINTS_ENV_KEYS = (
     "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS",
     "EXOTIC_ULTRANEST_MIN_LIVE_POINTS",
 )
+ULTRANEST_MAX_NCALLS_ENV = "EXOTIC_ULTRANEST_MAX_NCALLS"
+# Computational heuristics, not scientific acceptance thresholds. Calibrate
+# once, then project the remaining work from the sampler's measured results.
+AUTO_PILOT_CALLS_PER_LIVE_POINT_AND_DIMENSION = 32
+AUTO_PROJECTION_HEADROOM = 2.0
 MPI_SIZE_ENV_KEYS = (
     "OMPI_COMM_WORLD_SIZE",
     "PMI_SIZE",
@@ -62,6 +69,7 @@ AUTO_POINTS_PER_WORKER_MULTIPLIER = 2
 AUTO_DRAW_RAM_FRACTION = 0.005
 MIN_AUTO_DRAW_RAM_BUDGET_BYTES = 64 * 1024 ** 2
 _PROCESS_LOGLIKE = None
+_EVALUATION_BUDGET = ContextVar('exotic_ultranest_evaluation_budget', default=None)
 _TK_CLEANUP_CLASSES = ("Image", "Variable")
 
 
@@ -520,7 +528,239 @@ def _apply_default_run_kwargs(run_kwargs):
     kwargs = dict(DEFAULT_RUN_KWARGS)
     kwargs["min_num_live_points"] = _configured_min_num_live_points()
     kwargs.update({} if run_kwargs is None else dict(run_kwargs))
+    call_limit = configured_ultranest_max_ncalls()
+    if call_limit is not None:
+        requested_limit = kwargs.get("max_ncalls")
+        kwargs["max_ncalls"] = min(call_limit, requested_limit) if requested_limit is not None else call_limit
     return kwargs
+
+
+def configure_ultranest_max_ncalls(value=None):
+    """Use automatic effort estimation unless an explicit ceiling is supplied."""
+    if isinstance(value, str) and value.strip().lower() == 'auto':
+        os.environ[ULTRANEST_MAX_NCALLS_ENV] = 'auto'
+        return None
+    if value is not None:
+        try:
+            numeric = float(value)
+            limit = int(numeric)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("ultranest_max_ncalls must be 'auto' or a positive integer.") from exc
+        if isinstance(value, bool) or not math.isfinite(numeric) or limit != numeric or limit <= 0:
+            raise ValueError("ultranest_max_ncalls must be 'auto' or a positive integer.")
+        os.environ[ULTRANEST_MAX_NCALLS_ENV] = str(limit)
+    return configured_ultranest_max_ncalls()
+
+
+def configured_ultranest_max_ncalls():
+    value = os.environ.get(ULTRANEST_MAX_NCALLS_ENV)
+    if value is None or not value.strip() or value.strip().lower() == 'auto':
+        return None
+    try:
+        numeric = float(value)
+        limit = int(numeric)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{ULTRANEST_MAX_NCALLS_ENV} must be 'auto' or a positive integer.") from exc
+    if not math.isfinite(numeric) or limit != numeric or limit <= 0:
+        raise ValueError(f"{ULTRANEST_MAX_NCALLS_ENV} must be 'auto' or a positive integer.")
+    return limit
+
+
+class _EvaluationBudgetExhausted(BaseException):
+    """Internal stop signal; numerical-fit recovery must not restart sampling."""
+
+
+def ultranest_budget_exhausted():
+    budget = _EVALUATION_BUDGET.get()
+    return budget is not None and budget['limit'] is not None and budget['used'] >= budget['limit']
+
+
+@contextmanager
+def _evaluation_budget_context(resume_summary=None):
+    budget = _EVALUATION_BUDGET.get()
+    token = None
+    if budget is None:
+        limit = configured_ultranest_max_ncalls()
+        budget = {'limit': limit, 'used': 0, 'last_fit': None, 'automatic': limit is None}
+        if isinstance(resume_summary, dict) and resume_summary.get('max_ncalls') is not None:
+            budget.update({
+                'limit': resume_summary['max_ncalls'], 'used': resume_summary['ncall'],
+                'automatic': resume_summary.get('mode') == 'automatic',
+                'estimate': dict(resume_summary.get('estimate', {})),
+            })
+        token = _EVALUATION_BUDGET.set(budget)
+    try:
+        yield budget
+    finally:
+        if token is not None:
+            _EVALUATION_BUDGET.reset(token)
+
+
+def _budget_summary(budget):
+    summary = {
+        'max_ncalls': budget['limit'], 'ncall': budget['used'],
+        'reached': budget['limit'] is not None and budget['used'] >= budget['limit'],
+    }
+    if budget['automatic']:
+        summary['mode'] = 'automatic'
+        summary['estimate'] = dict(budget.get('estimate', {}))
+    return summary
+
+
+def _initialize_automatic_budget(sampler, kwargs, budget, stream=None):
+    if not budget['automatic'] or budget['limit'] is not None:
+        return
+    dimensions = _coerce_positive_int(getattr(sampler, 'x_dim', None), default=None)
+    if dimensions is None:
+        dimensions = max(len(getattr(sampler, 'paramnames', ())), 1)
+    live_points = int(kwargs['min_num_live_points'])
+    target_ess = int(kwargs['min_ess'])
+    pilot = AUTO_PILOT_CALLS_PER_LIVE_POINT_AND_DIMENSION * max(live_points, target_ess) * (dimensions + 1)
+    # Respect the existing API ceiling. APIs without one get a finite ceiling
+    # scaled to their own pilot, rather than an unlimited series of extensions.
+    ceiling = kwargs.get('max_ncalls')
+    ceiling = int(ceiling) if ceiling is not None else 4 * pilot
+    budget['limit'] = min(pilot, ceiling)
+    budget['estimate'] = {
+        'dimensions': dimensions, 'min_num_live_points': live_points,
+        'min_ess': target_ess, 'pilot_max_ncalls': budget['limit'],
+        'ceiling': ceiling, 'projected': False,
+        'dlogz': kwargs['dlogz'], 'dKL': kwargs['dKL'], 'frac_remain': kwargs['frac_remain'],
+    }
+    if stream is not None:
+        print(
+            f"[ultranest] Automatic evaluation budget: {budget['limit']} calls initially "
+            f"({dimensions} dimensions, {live_points} live points); remaining work will "
+            "be estimated from sampling results.", file=stream, flush=True,
+        )
+
+
+def _project_automatic_budget(result, kwargs, budget, stream=None):
+    """Project once from a pilot; retries cannot repeatedly renew the allowance.
+
+    Tail integration costs approximately N_live * log(tail / target) further
+    nested iterations. ESS grows roughly with work; evidence error falls with
+    its square root. Use the largest of those estimates and double it for
+    headroom. This is an effort estimate, never a convergence certificate.
+    """
+    estimate = budget.get('estimate', {})
+    if not budget['automatic'] or estimate.get('projected') or not isinstance(result, dict):
+        return False
+    estimate['projected'] = True
+    ncall = _read_int(result, 'ncall')
+    niter = _read_int(result, 'niter')
+    ess = _read_float(result, 'ess')
+    error = _read_float(result, 'logzerr')
+    tail_error = _read_float(result, 'logzerr_tail')
+    values = (ess, error, tail_error)
+    if ncall is None or niter is None or any(v is None or not math.isfinite(v) for v in values):
+        estimate['reason'] = 'Sampling diagnostics unavailable; retaining the initial allowance.'
+        return False
+    if ess <= 0 or error < 0 or tail_error < 0:
+        estimate['reason'] = 'Sampling diagnostics do not support a remaining-work estimate.'
+        return False
+    live_points = int(kwargs['min_num_live_points'])
+    calls_per_iteration = ncall / max(niter - live_points, 1)
+    # UltraNest reports logzerr_tail = log(1 + posterior mass in the live tail).
+    tail_fraction = math.expm1(min(tail_error, math.log(2.0)))
+    ceiling = estimate['ceiling']
+    tail_work = ceiling if kwargs['frac_remain'] == 0 else min(
+        ceiling, calls_per_iteration * live_points * max(0.0, math.log(max(tail_fraction, 1e-300) / kwargs['frac_remain'])),
+    )
+    if tail_fraction == 0:
+        tail_work = 0.0
+    ess_work = min(ceiling, ncall * max(0.0, kwargs['min_ess'] / ess - 1.0))
+    # Zero tolerances request exact integration: keep the existing ceiling,
+    # without rejecting the request or dividing by zero in the estimator.
+    error_ratio = min(error / kwargs['dlogz'], math.sqrt(1 + ceiling / max(ncall, 1))) if kwargs['dlogz'] else math.inf
+    evidence_work = ceiling if not math.isfinite(error_ratio) else ncall * max(0.0, error_ratio ** 2 - 1.0)
+    if error == 0:
+        evidence_work = 0.0
+    additional = math.ceil(AUTO_PROJECTION_HEADROOM * max(tail_work, ess_work, evidence_work))
+    previous_limit = budget['limit']
+    budget['limit'] = max(previous_limit, min(estimate['ceiling'], budget['used'] + additional))
+    estimate.update({
+        'pilot_ncall': ncall, 'pilot_niter': niter, 'pilot_ess': ess,
+        'pilot_logzerr': error, 'pilot_tail_fraction': tail_fraction,
+        'calls_per_nested_iteration': calls_per_iteration,
+        'projected_tail_calls': tail_work, 'projected_ess_calls': ess_work,
+        'projected_evidence_calls': evidence_work,
+        'projection_headroom': AUTO_PROJECTION_HEADROOM,
+        'projected_additional_calls': additional,
+        'reason': 'Remaining work projected once; the allowance is shared by all candidate refinements.',
+    })
+    if stream is not None:
+        print(
+            f"[ultranest] Automatic evaluation budget estimated at {budget['limit']} total calls "
+            f"from pilot cost and remaining evidence/sampling targets (tail {tail_fraction:.3g}, "
+            f"ESS {ess:.0f}, evidence error {error:.3g}).",
+            file=stream, flush=True,
+        )
+    return budget['limit'] > previous_limit and budget['used'] < budget['limit']
+
+
+def record_ultranest_fit(fit):
+    budget = _EVALUATION_BUDGET.get()
+    if budget is not None:
+        budget['last_fit'] = fit
+
+
+def ultranest_budget_scope(function=None, *, retain_fit=False, resume_fit=False):
+    """Share an automatically estimated allowance across a candidate's refinements.
+
+    Nested scopes reuse the allowance. A logical fit can retain its last
+    sampled result when further parameter retries exhaust that allowance.
+    """
+    if function is None:
+        return lambda target: ultranest_budget_scope(target, retain_fit=retain_fit, resume_fit=resume_fit)
+
+    @wraps(function)
+    def bounded(*args, **kwargs):
+        fit = (args[0] if args else kwargs.get('fit')) if resume_fit else None
+        summary = getattr(fit, 'ultranest_evaluation_budget', None)
+        if summary is None and isinstance(getattr(fit, 'results', None), dict):
+            summary = fit.results.get('exotic_call_limit', {}).get('automatic_budget')
+        with _evaluation_budget_context(resume_summary=summary) as budget:
+            return run_bounded(budget, args, kwargs)
+
+    def run_bounded(budget, args, kwargs):
+        previous_fit = budget['last_fit']
+        if retain_fit:
+            budget['last_fit'] = None
+        try:
+            try:
+                result = function(*args, **kwargs)
+            except _EvaluationBudgetExhausted:
+                if not retain_fit or budget['last_fit'] is None:
+                    raise RuntimeError(
+                        f"UltraNest evaluation budget exhausted ({budget['used']} calls; "
+                        f"limit {budget['limit']}) before a usable fit was available."
+                    ) from None
+                result = budget['last_fit']
+                print(
+                    f"[ultranest] Shared evaluation budget exhausted ({budget['used']} calls; "
+                    f"limit {budget['limit']}). Retaining the available fit and stopping "
+                    "further posterior retries.", flush=True,
+                )
+            if budget['limit'] is None:
+                # Quick Look and failed preparation may never sample at all.
+                return result
+            summary = _budget_summary(budget)
+            if isinstance(result, dict):
+                result['ultranest_evaluation_budget'] = summary
+                fit = result.get('fit')
+            elif isinstance(result, tuple):
+                fit = result[0] if result else None
+            else:
+                fit = result
+            if fit is not None:
+                fit.ultranest_evaluation_budget = summary
+            return result
+        finally:
+            if retain_fit:
+                budget['last_fit'] = previous_fit
+
+    return bounded
 
 
 def supports_ultranest_live_status(stream=None):
@@ -626,14 +866,42 @@ def _is_ultranest_degenerate_region_error(exc):
 
 
 def _run_sampler_with_degenerate_region_guard(sampler, kwargs):
+    budget = _EVALUATION_BUDGET.get()
+    before = int(getattr(sampler, 'ncall', 0) or 0)
+    result = None
     try:
-        return sampler.run(**kwargs)
+        result = sampler.run(**kwargs)
+        return result
     except (AssertionError, ValueError) as exc:
         if not _is_ultranest_degenerate_region_error(exc):
             raise
         raise np.linalg.LinAlgError(
             "UltraNest failed while building a degenerate sampling region."
         ) from exc
+    finally:
+        if budget is not None:
+            after = getattr(sampler, 'ncall', None)
+            result_ncall = _read_int(result, 'ncall') if isinstance(result, dict) else None
+            if result_ncall is not None:
+                after = max(int(after or 0), result_ncall)
+            if after is not None:
+                budget['used'] += max(0, int(after) - before)
+
+
+def _run_sampler_with_automatic_budget(sampler, kwargs, stream=None, sampler_ceiling=None):
+    budget = _EVALUATION_BUDGET.get()
+    result = _run_sampler_with_degenerate_region_guard(sampler, kwargs)
+    ncall = _read_int(result, 'ncall') if isinstance(result, dict) else None
+    if ncall is not None and ncall >= kwargs['max_ncalls'] and ultranest_budget_exhausted():
+        if _project_automatic_budget(result, kwargs, budget, stream=stream):
+            # Continue the same sampler and its existing tree, keeping all
+            # samples and the original priors and convergence settings.
+            remaining = budget['limit'] - budget['used']
+            ceiling = int(getattr(sampler, 'ncall', ncall)) + remaining
+            kwargs['max_ncalls'] = min(ceiling, sampler_ceiling) if sampler_ceiling is not None else ceiling
+            if ncall < kwargs['max_ncalls']:
+                result = _run_sampler_with_degenerate_region_guard(sampler, kwargs)
+    return result
 
 
 def _read_float(mapping, *keys):
@@ -721,14 +989,14 @@ class _UltraNestSimpleProgress:
             return f"{hours:d}:{minutes:02d}:{seconds:02d}"
         return f"{minutes:02d}:{seconds:02d}"
 
-    def _line(self, done=False):
+    def _line(self, done=False, state=None):
         fraction = 1.0 if done else min(max(self.progress, 0.0), 1.0)
         filled = int(round(fraction * self.bar_width))
         bar = "#" * filled + "-" * (self.bar_width - filled)
         pct = f"{100.0 * fraction:6.2f}%"
         iteration = "?" if self.iteration is None else str(self.iteration)
         evaluations = "?" if self.evaluations is None else str(self.evaluations)
-        state = "done" if done else "running"
+        state = state or ("done" if done else "running")
         return (
             f"[ultranest] {state} {pct} [{bar}] "
             f"it={iteration} evals={evaluations} elapsed={self._elapsed()}"
@@ -762,8 +1030,31 @@ class _UltraNestSimpleProgress:
         self.last_emit = now
         self._write(self._line(done=False))
 
-    def finish(self):
-        self._write(self._line(done=True))
+    def finish(self, state="done"):
+        self._write(self._line(done=(state == "done"), state=state))
+
+
+def _record_sampling_call_limit(result, kwargs, stream=None):
+    if not isinstance(result, dict):
+        return False
+    ncall = _read_int(result, "ncall")
+    limit = kwargs.get("max_ncalls")
+    if ncall is None or limit is None:
+        return False
+    reached = ncall >= limit
+    result['exotic_call_limit'] = {'max_ncalls': int(limit), 'ncall': ncall, 'reached': reached}
+    budget = _EVALUATION_BUDGET.get()
+    if budget is not None and budget['automatic']:
+        result['exotic_call_limit']['automatic_budget'] = _budget_summary(budget)
+    if reached and stream is not None:
+        spent = budget['used'] if budget is not None else ncall
+        shared_limit = budget['limit'] if budget is not None else int(limit)
+        print(
+            f"[ultranest] Evaluation budget reached ({spent} total calls; shared limit {shared_limit}). "
+            "Retaining the sampled result; posterior convergence may be incomplete.",
+            file=stream, flush=True,
+        )
+    return reached
 
 
 def run_reactive_sampler(
@@ -780,9 +1071,31 @@ def run_reactive_sampler(
     Use verbose=False to silence all progress updates.
     CPU admission defaults to on at 50%; disable with EXOTIC_ULTRANEST_CPU_GATE=0.
     """
+    with _evaluation_budget_context() as budget:
+        return _run_reactive_sampler(
+            sampler, run_kwargs, verbose, stream, interval_seconds, budget,
+        )
+
+
+def _run_reactive_sampler(sampler, run_kwargs, verbose, stream, interval_seconds, budget):
     kwargs = _apply_default_run_kwargs(run_kwargs)
+    if getattr(sampler, 'x_dim', None) == 1 and 'region_class' not in kwargs:
+        from .ultranest_regions import OneDimensionalRegion
+
+        # Tmid-only partial-transit fits still require a sampled posterior.
+        # Use scalar interval geometry: native ellipsoid routines can fail
+        # on scalar covariance or zero-distance bootstrap rounds. Apply this
+        # on every run, including extensions of an existing sampler.
+        kwargs['region_class'] = OneDimensionalRegion
     mode = "silent" if is_mpi_worker_process() else _progress_mode(verbose=verbose, stream=stream)
     output_stream = stream if stream is not None else sys.stdout
+    _initialize_automatic_budget(sampler, kwargs, budget, stream=output_stream if mode != 'silent' else None)
+    remaining = budget['limit'] - budget['used']
+    if remaining <= 0:
+        raise _EvaluationBudgetExhausted()
+    ceiling = int(getattr(sampler, 'ncall', 0) or 0) + remaining
+    requested_limit = kwargs.get('max_ncalls')
+    kwargs['max_ncalls'] = min(ceiling, requested_limit) if requested_limit is not None else ceiling
 
     _wait_for_sampler_cpu_capacity(sampler, verbose=(mode != "silent"), stream=output_stream)
     with (
@@ -813,11 +1126,15 @@ def run_reactive_sampler(
             kwargs["show_status"] = False
             kwargs["viz_callback"] = False
             with _mute_ultranest_logging(sampler):
-                return _run_sampler_with_degenerate_region_guard(sampler, kwargs)
+                result = _run_sampler_with_automatic_budget(sampler, kwargs, sampler_ceiling=requested_limit)
+            _record_sampling_call_limit(result, kwargs)
+            return result
 
         if mode == "rich":
             kwargs.setdefault("show_status", True)
-            return _run_sampler_with_degenerate_region_guard(sampler, kwargs)
+            result = _run_sampler_with_automatic_budget(sampler, kwargs, stream=output_stream, sampler_ceiling=requested_limit)
+            _record_sampling_call_limit(result, kwargs, stream=output_stream)
+            return result
 
         progress = _UltraNestSimpleProgress(stream=stream, interval_seconds=interval_seconds)
         upstream_callback = kwargs.get("viz_callback")
@@ -832,9 +1149,14 @@ def run_reactive_sampler(
         kwargs["viz_callback"] = callback
 
         progress.start()
+        state = "failed"
         try:
             with _mute_ultranest_logging(sampler):
-                result = _run_sampler_with_degenerate_region_guard(sampler, kwargs)
+                result = _run_sampler_with_automatic_budget(sampler, kwargs, stream=output_stream, sampler_ceiling=requested_limit)
+            reached = _record_sampling_call_limit(result, kwargs, stream=output_stream)
+            if isinstance(result, dict):
+                progress.update(info={"ncall": result.get("ncall", progress.evaluations)})
+            state = "stopped" if reached else "done"
         finally:
-            progress.finish()
+            progress.finish(state=state)
         return result

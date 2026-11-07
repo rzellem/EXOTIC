@@ -167,6 +167,7 @@
         "deviation_from_expected_transit_in_qc_sigma": 5.0,
         "use_impactparameter_rather_than_inclination_to_fit": true,
         "minimum number of live points for ultranest": 200,
+        "ultranest_max_ncalls": "auto",
         "run fast ultranest before final run": true,
         "use_sparse_posterior_live_point_retry": true,
         "do_heavy_final_ultranest_fit": false,

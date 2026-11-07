@@ -4067,3 +4067,75 @@ def test_stellar_variability_selector_opt_out_restores_single_comp_selection():
 
     assert result['selection_metric'] == 'stellar_variability_scatter'
     assert result['selected_result']['comp_index'] == 0
+
+
+@pytest.mark.parametrize("allow_partial, usable_members", [(True, 2), (True, 1), (True, 0), (False, 2), (False, 1)])
+def test_supplied_ensemble_continues_with_remaining_measurable_members(allow_partial, usable_members):
+    frame_count = 12
+    times = np.linspace(10.2, 10.3, frame_count)
+    keep = np.ones(frame_count, dtype=bool)
+    summaries = [
+        {
+            'key': f'comp{i}', 'comp_index': i - 1, 'label': f'Comp {i}',
+            'position': [i * 30, i * 30], 'aggregate_score': np.inf,
+            'psf_quality_keep_mask': keep, 'ensemble_frame_keep_mask': keep,
+        }
+        for i in (1, 2)
+    ]
+    calibration = {
+        'method': 'aperture', 'method_label': 'Aperture photometry',
+        'a': 0, 'an': 0, 'field_score': np.inf,
+        'field_image_keep_mask': keep, 'comp_summaries': summaries,
+    }
+    target = np.linspace(990, 1010, frame_count)
+    aperture = {'target': target[:, None, None], 'target_unc': np.ones((frame_count, 1, 1))}
+    for i in (1, 2):
+        aperture[f'comp{i}'] = np.full((frame_count, 1, 1), 500.0 if i <= usable_members else np.nan)
+        aperture[f'comp{i}_unc'] = np.ones((frame_count, 1, 1))
+    result = exotic_module.select_stellar_variability_only_photometry(
+        times, times, np.linspace(1.0, 1.5, frame_count),
+        _stellar_variability_only_planet_dict(), calibration, {}, aperture, target,
+        use_ensemble_photometry=True, calibration_stars={}, observed_filter='V',
+        require_apparent_magnitudes=False, use_exactly_the_comps_provided=True,
+        allow_partial_comparison_ensemble=allow_partial,
+    )
+    selected = result['selected_result']
+    if usable_members == 0 or (usable_members < 2 and not allow_partial):
+        assert selected is None
+        return
+    assert selected['ensemble_member_keys'] == [f'comp{i}' for i in range(1, usable_members + 1)]
+    membership = selected['ensemble_membership']
+    assert membership['requested_count'] == 2
+    assert membership['used_count'] == usable_members
+    assert len(selected['fit'].time) == frame_count
+    if usable_members == 1:
+        assert membership['partial'] is True
+        assert membership['omitted_members'][0]['label'] == 'Comp 2'
+        assert '0 usable flux measurements' in membership['warning']
+
+
+def test_partial_ensemble_keeps_frames_with_any_remaining_member_and_reports_participation():
+    fluxes = {
+        'comp1': np.r_[np.full(6, 100.0), np.full(6, np.nan)],
+        'comp2': np.r_[np.full(6, np.nan), np.full(6, 200.0)],
+        'comp3': np.full(12, np.nan),
+    }
+    partial = exotic_module.build_relative_comparison_ensemble_series(
+        np.full(12, 1000.0), np.ones(12), fluxes, {}, list(fluxes),
+        allow_partial_comparison_ensemble=True,
+    )
+    assert partial['applied'] is True
+    assert partial['member_keys'] == ['comp1', 'comp2']
+    assert np.all(partial['valid_mask'])
+    np.testing.assert_array_equal(partial['valid_member_count'], np.ones(12, dtype=int))
+    assert np.all(np.isfinite(partial['relative_flux_error']))
+    strict = exotic_module.build_relative_comparison_ensemble_series(
+        np.full(12, 1000.0), np.ones(12), fluxes, {}, list(fluxes),
+    )
+    assert strict['applied'] is False
+    membership = exotic_module.comparison_ensemble_membership_summary(
+        [{'key': key, 'label': key} for key in fluxes], partial['member_keys'], fluxes,
+    )
+    assert membership['frames_with_partial_members'] == 12
+    assert membership['omitted_members'][0]['key'] == 'comp3'
+    assert '12 input frame(s)' in membership['warning']

@@ -69,6 +69,11 @@ import re
 from skimage.transform import downscale_local_mean
 # import subprocess
 
+try:
+  from .filters import MICROOBSERVATORY_COLOR_TELESCOPES, normalize_microobservatory_filter
+except ImportError:
+  from filters import MICROOBSERVATORY_COLOR_TELESCOPES, normalize_microobservatory_filter
+
 
 def display_image(filename):
     #print(f"{filename}")
@@ -239,6 +244,20 @@ def find (hdr, ks, obs):
 
   if "OBSERVAT" in hdr.keys() and hdr["OBSERVAT"] == 'Whipple Observatory':
     obs = "MObs"
+
+  telescope = get_val(hdr, ["TELESCOP"])
+  is_color_telescope = str(telescope).strip().casefold() in MICROOBSERVATORY_COLOR_TELESCOPES
+  if ks[0] == "FILTER" and (obs == "MObs" or is_color_telescope):
+    # Read the observation's filter, including alternate cards when the
+    # primary card is blank. Ben and Donald use standard color codes;
+    # a missing filter on either telescope defaults to Cousins R.
+    for filter_key in ks:
+      filter_value = get_val(hdr, [filter_key])
+      if filter_value is not None and str(filter_value).strip():
+        filter_value = normalize_microobservatory_filter(telescope, filter_value)
+        return "CV" if str(filter_value).strip().casefold() == "clear" else filter_value
+    if is_color_telescope:
+      return "R"
 
   if obs == "MObs":
     mobs_val = get_val(mobs, ks)

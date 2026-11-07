@@ -624,6 +624,16 @@ def test_save_selected_photometry_debug_series_writes_stage_masks(tmp_path):
     assert rows[:, 9].astype(int).tolist() == [1, 0, 0]
 
 
+def test_compact_comparison_summary_preserves_sampling_budget_status():
+    import exotic.exotic as exotic_module
+
+    budget = {'max_ncalls': 50000, 'ncall': 50148, 'reached': True}
+    fit = types.SimpleNamespace(ultranest_evaluation_budget=budget)
+    result = exotic_module.compact_comparison_attempt_for_output({'fit': fit, 'comp_index': 1})
+    assert result['ultranest_evaluation_budget'] == budget
+    assert 'fit' not in result
+
+
 def test_finalize_comparison_candidate_clips_whole_series_lm_residuals_before_nested_fit(monkeypatch):
     captured = {}
 
@@ -721,7 +731,8 @@ def test_finalize_comparison_candidate_clips_whole_series_lm_residuals_before_ne
     ].tolist() == [index != 3 for index in range(60)]
 
 
-def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypatch):
+@pytest.mark.parametrize('budget_exhausted', [False, True])
+def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypatch, budget_exhausted):
     captured = {"residual_clip_called": False}
 
     def fake_lc_fitter(times, flux, unc, airmass, prior, bounds, jd_times=None, mode=None, **kwargs):
@@ -754,6 +765,7 @@ def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypat
 
     monkeypatch.setattr("exotic.exotic.lc_fitter", fake_lc_fitter)
     monkeypatch.setattr("exotic.exotic.final_residual_rejection_keep_mask", unexpected_residual_clip)
+    monkeypatch.setattr("exotic.exotic.ultranest_budget_exhausted", lambda: budget_exhausted)
     monkeypatch.setattr("exotic.exotic.fit_final_lightcurve_with_oot_baseline_detrending", fake_final_fit)
     monkeypatch.setattr(
         "exotic.exotic.sigma_clip",
@@ -781,13 +793,15 @@ def test_finalize_comparison_candidate_can_disable_phase_residual_clip(monkeypat
         },
         jd_times=2460000.0 + times,
         run_final_fit_phase_residual_clip=False,
-        run_final_residual_rejection=False,
+        run_final_residual_rejection=budget_exhausted,
     )
 
     assert result["applied"] is True
     assert captured["residual_clip_called"] is False
     assert captured["times"].tolist() == pytest.approx(times.tolist())
     assert result["source_indices"].tolist() == list(range(10))
+    if budget_exhausted:
+        assert 'evaluation budget' in result['fit'].final_residual_rejection_note
     assert not any(
         diagnostic["stage"] == "Final-fit LM residual clip"
         and diagnostic["dropped_point_count"] > 0
@@ -4073,7 +4087,8 @@ def test_detrend_flux_on_out_of_transit_baseline_removes_linear_slope():
     assert result["reference_time_bjd_tdb"] == pytest.approx(0.0)
 
 
-def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened_flux(monkeypatch):
+@pytest.mark.parametrize('budget_exhausted', [False, True])
+def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened_flux(monkeypatch, budget_exhausted):
     import exotic.exotic as exotic_module
 
     times = np.array([-2.0, -1.0, -0.25, 0.0, 0.25, 1.0, 2.0])
@@ -4106,6 +4121,7 @@ def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened
         )
 
     monkeypatch.setattr(exotic_module, "lc_fitter", fake_lc_fitter)
+    monkeypatch.setattr(exotic_module, "ultranest_budget_exhausted", lambda: budget_exhausted)
 
     fit, refit_flux, refit_unc = fit_final_lightcurve_with_oot_baseline_detrending(
         times,
@@ -4119,6 +4135,14 @@ def test_fit_final_lightcurve_with_oot_baseline_detrending_refits_with_flattened
         detrend_on_outoftransit_baseline=True,
         oot_baseline_min_points_per_side=2,
     )
+
+    if budget_exhausted:
+        assert len(captured['calls']) == 1
+        np.testing.assert_array_equal(refit_flux, flux)
+        np.testing.assert_array_equal(refit_unc, fluxerr)
+        assert fit.oot_baseline_detrending_applied is False
+        assert 'evaluation budget' in fit.oot_baseline_detrending_note
+        return
 
     assert len(captured["calls"]) == 2
     assert np.allclose(captured["calls"][0], flux)
@@ -5678,8 +5702,21 @@ def test_expected_value_rprs_deviation_uses_model_data_fit_uncertainty():
     assert "data/red-noise uncertainty=" in contribution["detail"]
 
 
-def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch):
+@pytest.mark.parametrize('budget_spent', [False, True])
+def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch, budget_spent):
     import exotic.exotic as exotic_module
+
+    monkeypatch.setattr(exotic_module, 'ultranest_budget_exhausted', lambda: budget_spent)
+    # Keep this QC/budget test independent of the real LM fit to the synthetic transit.
+    monkeypatch.setattr(
+        exotic_module,
+        'run_pre_ultranest_lm_residual_rejection',
+        lambda times, *args, **kwargs: {
+            'applied': False,
+            'keep_mask': np.ones(np.asarray(times).shape, dtype=bool),
+            'cycles': [],
+        },
+    )
 
     times = np.linspace(0.0, 1.0, 21)
     transit_model = np.ones(times.shape[0], dtype=float)
@@ -5774,6 +5811,10 @@ def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch
     )
 
     expected_comparison_unc = np.sqrt(0.0046 ** 2 + 0.0001 ** 2 + (0.05 * 0.1589) ** 2)
+    if budget_spent:
+        assert 'evaluation budget was exhausted' in refit.final_residual_rejection['note']
+        assert refit.final_residual_rejection['rejected_point_count'] == 0
+        np.testing.assert_array_equal(refit.time, times)
     assert refit.transit_qc_rprs_deviation_fit_unc == pytest.approx(0.0046)
     assert refit.transit_qc_rprs_deviation_expected_unc == pytest.approx(0.0001)
     assert refit.transit_qc_rprs_deviation_systematic_floor == pytest.approx(0.05 * 0.1589)
@@ -7402,8 +7443,25 @@ def test_fit_lightcurve_skips_nested_tmid_refinement_for_one_sided_lm_fit(monkey
     assert "one side of the modeled transit" in myfit.nested_tmid_refinement_note
 
 
-def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_aperture(monkeypatch):
+@pytest.mark.parametrize('worker_count', [None, 1, 3])
+def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_aperture(monkeypatch, worker_count):
     evaluated = []
+    pool_workers = []
+
+    class FakeExecutor:
+        def __init__(self, max_workers, initializer):
+            pool_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def map(self, function, tasks):
+            return map(function, tasks)
+
+    monkeypatch.setattr('exotic.exotic.ProcessPoolExecutor', FakeExecutor)
 
     class DummyFit:
         def __init__(self, residual_level, delta_bic, ktmf_metric):
@@ -7488,8 +7546,10 @@ def test_run_target_driven_photometry_search_selects_best_method_across_psf_and_
         require_comp_star=True,
         use_psf_photometry=True,
         use_aperture_photometry=True,
+        multiprocess_lightcurve_fits=worker_count,
     )
 
+    assert pool_workers == ([] if worker_count is None else [worker_count])
     assert len(evaluated) == 2
     assert {tuple(np.unique(values)) for values in evaluated} == {(20.0,), (40.0,)}
     assert result["selection_metric"] == "ktmf"
@@ -8246,6 +8306,32 @@ def test_noise_budget_config_defaults_microobservatory_gain(creator):
     assert budget['source'] == pytest.approx(10.0)
 
 
+@pytest.mark.parametrize('second_obs', ['', 'OTHER', 'MOBS', 'OTHER,MOBS'])
+@pytest.mark.parametrize('telescope', ['Ben', 'Donald'])
+@pytest.mark.parametrize('observed_filter', ['Red', 'Green', 'Blue', 'R', 'CV', 'Custom filter'])
+def test_microobservatory_startup_preserves_selected_filter(second_obs, telescope, observed_filter):
+    from exotic.exotic import apply_microobservatory_metadata
+
+    info = {
+        'second_obs': second_obs, 'filter': observed_filter,
+        'wl_min': 600.0, 'wl_max': 750.0,
+    }
+    apply_microobservatory_metadata(info, {
+        'CREATOR': 'MicroObservatory2010-11-04', 'TELESCOP': telescope, 'FILTER': 'Red',
+    })
+
+    assert info['filter'] == {'Red': 'R', 'Green': 'V', 'Blue': 'B'}.get(observed_filter, observed_filter)
+    assert info['wl_min'] == 600.0
+    assert info['wl_max'] == 750.0
+    assert info['microobservatory_dataset'] is True
+    assert info['second_obs'].split(',').count('MOBS') == 1
+    if 'MOBS' not in second_obs:
+        assert info['elev'] == 1268
+        assert info['lat'] == 31.675467
+        assert info['long'] == -110.951376
+        assert info['pixel_bin'] == '2x2'
+
+
 def test_noise_budget_config_retains_microobservatory_gain_without_header():
     config = noise_budget_config_from_info({'microobservatory_dataset': True})
 
@@ -8754,7 +8840,8 @@ def _run_main_until_vertical_flux_bound(
         def search_init(self, init_path, planet_dict):
             return init_path, dict(user_pdict)
 
-        def prereduced(self, planet):
+        def prereduced(self, planet, non_interactive_run=False):
+            assert non_interactive_run is True
             return dict(exotic_info), planet or user_pdict["pName"]
 
     captured = {}
@@ -9179,3 +9266,51 @@ def test_main_suppresses_all_internal_logging_error_tracebacks(monkeypatch, caps
     finally:
         environment_logger.handlers = []
         logging.raiseExceptions = original_raise_exceptions
+
+
+@pytest.mark.parametrize('allow_partial', [False, True])
+@pytest.mark.parametrize('usable_members', [1, 2])
+def test_transit_ensemble_partial_option_controls_construction_without_replacements(monkeypatch, allow_partial, usable_members):
+    frame_count = 12
+    keep = np.ones(frame_count, dtype=bool)
+    calibration = {
+        'method': 'aperture', 'a': 0, 'an': 0, 'aper': 5.0, 'annulus': 12.0,
+        'comp_summaries': [
+            {'key': f'comp{i}', 'comp_index': i - 1, 'label': f'Comp {i}',
+             'aggregate_score': np.inf, 'psf_quality_keep_mask': keep,
+             'ensemble_frame_keep_mask': keep}
+            for i in (1, 2, 3)
+        ],
+    }
+    aperture = {
+        'target': np.full((frame_count, 1, 1), 1000.0),
+        'comp1': np.full((frame_count, 1, 1), np.nan),
+        'comp2': np.full((frame_count, 1, 1), 200.0),
+        'comp3': np.full((frame_count, 1, 1), 300.0 if usable_members == 2 else np.nan),
+    }
+    captured = {}
+    def capture_preflight(times, jd_times, airmass, ld, p_dict, target_flux, comp_flux, **kwargs):
+        captured['comp_flux'] = comp_flux
+        captured['time'] = times
+        raise RuntimeError('remaining ensemble reached transit preflight')
+    monkeypatch.setattr('exotic.exotic.build_comparison_candidate_preflight', capture_preflight)
+    def run():
+        return fit_ranked_comparison_calibration_candidates(
+            np.linspace(0, 0.05, frame_count), np.linspace(2460000, 2460000.05, frame_count),
+            np.linspace(1, 1.2, frame_count), [0.1] * 4, {}, calibration, {}, aperture,
+            np.ones(frame_count), use_ensemble_photometry_rather_than_single_comp=True,
+            use_exactly_the_comps_provided=True, allow_partial_comparison_ensemble=allow_partial,
+            restrict_baseline_to_an_hour=False,
+        )
+    if allow_partial:
+        with pytest.raises(RuntimeError, match='remaining ensemble reached transit preflight'):
+            run()
+        assert len(captured['time']) == frame_count
+        assert np.all(np.isfinite(captured['comp_flux']))
+    else:
+        assert run()['selected_result'] is None
+        assert captured == {}
+    membership = calibration['ensemble_membership']
+    assert membership['used_count'] == usable_members
+    assert [row['key'] for row in membership['omitted_members']] == (['comp1'] if usable_members == 2 else ['comp1', 'comp3'])
+    assert [row['key'] for row in membership['used_members']] == (['comp2', 'comp3'] if usable_members == 2 else ['comp2'])

@@ -135,3 +135,15 @@ fwhm_names_nonspecific = {
         'TG': "DSLR Green",
         'TR': "DSLR Red",
 }
+
+
+MICROOBSERVATORY_COLOR_TELESCOPES = ('ben', 'donald')
+
+
+def normalize_microobservatory_filter(telescope, observed_filter):
+    """Map Ben/Donald color labels to Cousins R and Bessell V/B codes."""
+    if str(telescope).strip().casefold() in MICROOBSERVATORY_COLOR_TELESCOPES:
+        return {'red': 'R', 'green': 'V', 'blue': 'B'}.get(
+            str(observed_filter).strip().casefold(), observed_filter,
+        )
+    return observed_filter

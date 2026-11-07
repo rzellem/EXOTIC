@@ -191,6 +191,7 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
             "use_ensemble_photometry_for_stellar_variability": true,
             "require_apparent_magnitudes": true,
             "use_exactly_the_comps_provided": false,
+            "allow_partial_comparison_ensemble": false,
             "maximum_number_of_ensemble_comparisons_for_transit": 5,
             "maximum_number_of_ensemble_comparisons_for_stellar_variability": 5,
             "photometer_fortuitous_variables": true,
@@ -241,6 +242,8 @@ The two ensemble limits are independent. `"maximum_number_of_ensemble_comparison
 
 Ensemble settings retain a single-comparison fallback when EXOTIC cannot build a usable ensemble, except when `"use_exactly_the_comps_provided"` is true. Exact-comparison mode fails explicitly if the supplied reference cannot be measured; it never silently substitutes or drops a supplied comparison. This makes the same reference star or ensemble reproducible across multiple runs.
 
+Set `"allow_partial_comparison_ensemble": true` to continue with measurable ensemble members when some supplied comparisons have no usable flux series, including in exact-comparison mode. One remaining measurable member is sufficient to attempt the reduction. Exact mode still prevents additions and substitutions; this option explicitly permits omissions. Available members also contribute in frames where other members have rejected measurements. Every omission, its reason, the retained members, their usable-frame counts, and incomplete frame coverage are recorded in `ComparisonEnsemble.json`, the run log, final-parameter results and transit report metadata. The default is `false` in EXOTIC. Updated TransitLab enables it by default through **Advanced → Continue with available ensemble members**, and displays the warning on the Results tab. Turn it off to require the full supplied reference set. Ordinary measurement and fitting failures still report their actual cause.
+
 Differential-magnitude CSV and plot products are always attempted independently of catalogue calibration. Set `"require_apparent_magnitudes": false` when catalogue-calibrated apparent magnitudes are not required; EXOTIC still writes apparent-magnitude products when calibration is available. Stellar-variability apparent and differential magnitudes use the raw target/reference flux ratio and are explicitly not airmass-corrected, because a real time-dependent stellar signal can be correlated with airmass. Airmass remains in the output as metadata.
 
 Flux-bearing result files retain both magnitude representations. Final-lightcurve and differential-magnitude CSV rows explicitly include the raw, uncorrected differential magnitude and uncertainty alongside the corrected differential magnitude and uncertainty, plus apparent magnitude and uncertainty where applicable (or `na` when no catalogue calibration is available). Transit AAVSO files retain their standard exoplanet columns and add one preserved `#MAGNITUDE-XC` record per data row containing both raw and corrected differential values and the applied correction factor. When weighted linear out-of-transit baseline detrending is applied, `#OUT_OF_TRANSIT_BASELINE-XC` records the formula, BJD_TDB reference time, intercept, and slope; the standard `DIFF` and `ERR` rows are restored to their pre-detrending values and `DETREND_2` carries the correction function, making the operation reversible from the AAVSO file. AID rows retain the standard 15-column Extended format, use original geocentric JD values in `#DATE=JD`, and store raw differential values as plain `NOTES` text in the form `DIFFMAG=...;DIFFERR=...` while `MAG` and `MERR` remain the apparent magnitude measurement. Transit AAVSO files continue to use `#DATE_TYPE=BJD_TDB`. All transit and AID AAVSO files are written in an `AAVSO_Files` subfolder of their corresponding output directory. That folder also receives copies of the final-lightcurve PNG, PDF, and CSV; every FOV finder-chart PNG and PDF; the normal, final, and zoomed triangle plots; the KTMF QC PNG and PDF; and the prior-versus-posterior comparison PNG and PDF. Finder charts label every selected comparison member, including ensembles and comparisons sourced outside AAVSO. This preserves the target-minus-reference measurement needed to apply a revised apparent-magnitude calibration later. Each reduction writes its run log from startup through shutdown to a unique `Diagnostics/EXOTIC_RunLog_<timestamp>_pid<PID>.log`, so separate or midnight-spanning runs do not overwrite or split one another.
@@ -279,6 +282,46 @@ Configure the gate in your init JSON:
 Set `ultranest_cpu_gate` to `false` to disable it. Command-line overrides are `--ultranest-cpu-gate`, `--no-ultranest-cpu-gate`, and `--ultranest-cpu-threshold 50`. For server jobs or direct Python fitting APIs, set `EXOTIC_ULTRANEST_CPU_GATE=0` (off) or `1` (on), and `EXOTIC_ULTRANEST_CPU_THRESHOLD=50`. Precedence is command line, explicit init-file value, environment, then defaults. Thresholds may be any finite percentage from 0 through 100; setting 100 permits startup at any measured load.
 
 The gate runs before likelihood worker pools are created and covers all EXOTIC UltraNest fitters, including subsequent fit attempts and extensions. It checks current load independently in each process, so simultaneous jobs can pass together, and load can rise above the threshold after startup. This is a start gate, not a cap on running CPU usage or a fixed concurrency limit. MPI fitting APIs coordinate the decision across ranks using rank zero's host CPU usage.
+
+### Bounding UltraNest fitting effort
+
+EXOTIC automatically estimates a likelihood-evaluation budget for each comparison
+candidate. No user setting is required. The initial sampling allowance scales
+with the number of sampled dimensions, live points and requested effective
+samples: `32 * max(live_points, min_ess) * (dimensions + 1)` calls. If sampling
+uses that allowance, EXOTIC uses its measured cost per nested iteration, remaining
+live-tail mass, effective sample count and evidence uncertainty to estimate the
+remaining work. It doubles that estimate for headroom, within the existing API
+ceiling (normally 200,000 calls). APIs without a ceiling use four times their
+initial allowance as the ceiling. This is a computational heuristic; it cannot
+predict whether a transit is detectable or guarantee posterior convergence.
+
+That projection is made once per candidate. Posterior retries, baseline refits
+and residual-rejection refits share the resulting allowance, so repeatedly
+changing bounds cannot continually renew it. Natural completion can finish
+earlier. Priors, detection criteria and comparison-star selection are unchanged.
+Deferred live-point extensions carry forward the fit's remaining allowance.
+A required final fit on full-resolution data after a binned search estimates
+its own allowance, shared by all of that final fit's refinements.
+UltraNest can finish its current proposal batch before stopping, so the actual
+count can exceed the ceiling.
+
+At the ceiling EXOTIC retains the sampled result and reports that posterior
+convergence may be incomplete; its progress line says `stopped`. Fit results
+also record `exotic_call_limit` with the requested and actual counts. This is
+an effort limit. Once the shared allowance is spent, EXOTIC stops further posterior
+and residual-rejection refinements and keeps the last sampled fit with its
+matching measurements. Each comparison candidate gets its own allowance.
+Budget summaries are saved as `ultranest_evaluation_budget` in fit/report
+metadata, including the automatic calculation and pilot diagnostics. Standalone
+nested-fit searches also share the allowance across their posterior retries;
+direct `run_reactive_sampler` calls estimate the allowance for that invocation.
+
+Advanced callers can override automatic estimation with a positive integer in
+`optional_info.ultranest_max_ncalls` or `EXOTIC_ULTRANEST_MAX_NCALLS`. An explicit
+init value takes precedence over the environment. Omission or `null` inherits the
+environment and otherwise uses automatic estimation; `"auto"` explicitly selects
+automatic estimation. A smaller API ceiling still applies.
 
 ## Third-Party GUI Launchers
 

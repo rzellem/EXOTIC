@@ -38,6 +38,7 @@ def posterior_reporting_metadata(fit, orbital_budget=None):
         'posterior_distribution_estimates': estimates,
         'timing_estimator_differences_seconds': timing_comparison,
         'tmid_bound_diagnostics': getattr(fit, 'tmid_bound_diagnostics', {}) or {},
+        'ultranest_evaluation_budget': getattr(fit, 'ultranest_evaluation_budget', None),
         'model_values': dict(getattr(fit, 'parameters', {}) or {}),
         'model_errors': dict(getattr(fit, 'errors', {}) or {}),
         'local_fit_uncertainty_approximations': getattr(fit, 'ultranest_error_fallbacks', {}) or {},
@@ -1858,6 +1859,7 @@ def build_ktmf_decision_metadata(fit, photometry_info=None):
             'metric': photometry_info.get('selection_metric'),
             'field_score': photometry_info.get('calibration_field_score'),
             'selected': selected_payload,
+            'ensemble_membership': photometry_info.get('ensemble_membership'),
         }
 
         attempt_summary = compact_comparison_attempt_decisions(
@@ -2044,6 +2046,14 @@ def format_ktmf_decision_final_params(fit, photometry_info=None):
         return params
 
     basis = photometry_info.get('selection_basis')
+    membership = photometry_info.get('ensemble_membership') or {}
+    if membership:
+        params['Comparison ensemble members used'] = (
+            f"{membership.get('used_count', 0)} of {membership.get('requested_count', 0)}: "
+            + ', '.join(row['label'] for row in membership.get('used_members', []))
+        )
+        if membership.get('warning'):
+            params['Comparison ensemble WARNING'] = membership['warning']
     metric = photometry_info.get('selection_metric')
     if basis or metric:
         params["KTMF comparison selection mode"] = (
@@ -2331,6 +2341,7 @@ def build_aavso_photometry_metadata(photometry_info):
         'noise_budget_summary': photometry_info.get('noise_budget_summary'),
         'noise_budget_terms': photometry_info.get('noise_budget_terms'),
         'comparison_selection_basis': photometry_info.get('selection_basis'),
+        'ensemble_membership': photometry_info.get('ensemble_membership'),
         'comparison_selection_metric': photometry_info.get('selection_metric'),
         'comparison_field_score': photometry_info.get('calibration_field_score'),
         'comparison_field_score_percent': (
@@ -2910,6 +2921,7 @@ class OutputFiles:
                         params_num["Optimal Aperture"] = f"{abs(min_aper)}"
                         params_num["Optimal Annulus"] = f"{min_annul}"
 
+            params_num.update(format_ktmf_decision_final_params(self.fit, photometry_info))
             final_params = {'FINAL STELLAR VARIABILITY PARAMETERS': params_num}
             with params_file.open('w') as f:
                 dump(final_params, f, indent=4)
@@ -3741,6 +3753,9 @@ class AIDOutputFiles:
                 "AMASS,GROUP,CHART,NOTES\n"
             )
             for vsp_p in self.vsp_params:
+                # Apply the AID MERR cutoff before rounding for serialization.
+                if finite_float(vsp_p.get('mag_err')) > 0.5:
+                    continue
                 variable_name = default_variable_name
                 if use_row_names:
                     variable_name = vsp_p.get('_aid_name') or variable_name

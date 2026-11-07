@@ -3,6 +3,7 @@ import sys
 import types
 import importlib.util
 import threading
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -231,7 +232,8 @@ def test_repair_bad_pixels_in_frame_replaces_known_bad_pixel_with_neighbor_media
     assert repaired[2, 2] == pytest.approx(12.0)
 
 
-def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch):
+@pytest.mark.parametrize("fast_mode", [False, True])
+def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch, fast_mode):
     image = _gaussian_image()
     low_flux_warnings = []
 
@@ -245,20 +247,48 @@ def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch):
         lambda star_index, xc, yc: low_flux_warnings.append((star_index, xc, yc)),
     )
 
-    result = exotic_module.fit_centroid(image, [40.0, 35.0], 0)
+    result = exotic_module.fit_centroid(image, [40.0, 35.0], 0, fast_mode=fast_mode)
 
     assert np.isfinite(result[0])
     assert np.isfinite(result[1])
     assert abs(result[0] - 40.0) < 1.0
     assert abs(result[1] - 35.0) < 1.0
+    assert np.all(np.isnan(result[3:6]))
     assert low_flux_warnings == []
+
+
+@pytest.mark.parametrize("fast_mode, sigma", [(False, 1.3), (True, 1.3), (False, 4.5), (True, 2.5)])
+def test_fit_centroid_sizes_noisy_offset_star_from_fitted_profile(fast_mode, sigma):
+    rng = np.random.default_rng(123)
+    image = _gaussian_image(
+        center=(38.3, 36.2), amplitude=250.0, sigma=sigma, background=203.0,
+    )
+    image += rng.normal(0.0, 9.0, size=image.shape)
+    seed = [40.0, 35.0]
+    xv, yv = exotic_module.mesh_box(seed, 15, maxx=image.shape[1], maxy=image.shape[0])
+    moments = exotic_module._fit_centroid_moments(image[yv, xv], xv, yv, seed, 15)
+
+    result = exotic_module.fit_centroid(image, seed, 0, fast_mode=fast_mode)
+
+    assert exotic_module.psf_sigma_from_fit(result) == pytest.approx(sigma, rel=0.12)
+    if sigma == 1.3:
+        assert exotic_module.psf_sigma_from_fit(moments) > 3.0 * sigma
+    if fast_mode:
+        np.testing.assert_array_equal(result[:2], moments[:2])
 
 
 def test_fit_centroid_reports_consistent_background_between_fast_and_full_modes():
     image = _gaussian_image(center=(40.3, 35.7), amplitude=5000.0, sigma=2.0, background=123.4)
 
-    fast_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=True)
-    full_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', RuntimeWarning)
+        fast_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=True)
+        full_result = exotic_module.fit_centroid(image, [40.0, 36.0], 0, fast_mode=False)
+
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+    np.testing.assert_allclose(full_result[:2], [40.3, 35.7], atol=1e-5)
+    np.testing.assert_allclose(fast_result[3:5], [2.0, 2.0], atol=1e-5)
+    np.testing.assert_allclose(full_result[3:5], [2.0, 2.0], atol=1e-5)
 
     assert np.isfinite(fast_result[6])
     assert np.isfinite(full_result[6])
@@ -594,6 +624,27 @@ def test_log_alignment_progress_only_says_pixel_aligning_when_enabled(monkeypatc
     )
 
     assert stdout.getvalue() == "Pixel-aligning frame 1 of 2 : frame_1.fits\n"
+
+
+@pytest.mark.parametrize('offset', [(3.0, -2.0), (-4.0, 1.0)])
+def test_cpu_fft_transformation_maps_reference_star_to_current_position(monkeypatch, offset):
+    center = np.array([40.0, 35.0])
+    current_center = center + offset
+    reference = _gaussian_image(center=center, background=0.0)
+    current = _gaussian_image(center=current_center, background=0.0)
+
+    def cpu_registration(current_image, reference_image, **kwargs):
+        return exotic_module._skimage_phase_cross_correlation(
+            current_image, reference_image, normalization=None, **kwargs,
+        )
+
+    monkeypatch.setattr(exotic_module, 'phase_cross_correlation', cpu_registration)
+
+    transform = exotic_module.transformation(
+        current, 'synthetic.fits', reference_image=reference, report_failure=False,
+    )
+
+    np.testing.assert_allclose(transform([center])[0], current_center, atol=1e-6)
 
 
 def test_collect_transform_frame_pointings_logs_alignment_progress(monkeypatch):

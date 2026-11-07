@@ -29,6 +29,7 @@ def _cpu_gate_without_host_load(monkeypatch):
     monkeypatch.delenv(ultranest_utils.ULTRANEST_CPU_GATE_ENV, raising=False)
     monkeypatch.delenv(ultranest_utils.ULTRANEST_CPU_THRESHOLD_ENV, raising=False)
     monkeypatch.setattr(ultranest_utils.psutil, 'cpu_percent', lambda **kwargs: 0.0)
+    monkeypatch.delenv(ultranest_utils.ULTRANEST_MAX_NCALLS_ENV, raising=False)
 
 
 class _FakeStream(io.StringIO):
@@ -122,6 +123,30 @@ def test_run_reactive_sampler_silent_mode(monkeypatch):
     assert sampler.kwargs["show_status"] is False
     assert sampler.kwargs["viz_callback"] is False
     assert stream.getvalue() == ""
+
+
+@pytest.mark.parametrize('dimension,explicit_region', [(1, None), (2, None), (1, object())])
+def test_sampler_region_preserves_multidimensional_and_explicit_choices(
+    monkeypatch, dimension, explicit_region,
+):
+    from exotic.api.ultranest_regions import OneDimensionalRegion
+
+    _reset_ultranest_env(monkeypatch)
+
+    class FakeSampler:
+        x_dim = dimension
+
+        def run(self, **kwargs):
+            if explicit_region is not None:
+                assert kwargs['region_class'] is explicit_region
+            elif dimension == 1:
+                assert kwargs['region_class'] is OneDimensionalRegion
+            else:
+                assert 'region_class' not in kwargs
+            return {'status': 'ok'}
+
+    kwargs = {} if explicit_region is None else {'region_class': explicit_region}
+    assert run_reactive_sampler(FakeSampler(), run_kwargs=kwargs, verbose=False) == {'status': 'ok'}
 
 
 def test_run_reactive_sampler_translates_ultranest_degenerate_region_value_error(monkeypatch):
@@ -328,6 +353,39 @@ def test_configured_ultranest_workers_preserves_numeric_override(monkeypatch):
     monkeypatch.setattr(ultranest_utils.os, "process_cpu_count", lambda: 12, raising=False)
 
     assert ultranest_utils._configured_ultranest_workers() == 3
+
+
+@pytest.mark.parametrize('platform', ['linux', 'win32', 'darwin'])
+def test_sampler_keeps_single_likelihood_batch_without_explicit_backend(monkeypatch, platform):
+    _reset_ultranest_env(monkeypatch)
+    monkeypatch.setattr(ultranest_utils.sys, 'platform', platform)
+    monkeypatch.setattr(ultranest_utils, '_available_cpu_count', lambda: 12)
+    monkeypatch.setattr(ultranest_utils, 'get_mpi_status', lambda: {'size': 1})
+
+    def unexpected_pool(*args, **kwargs):
+        raise AssertionError('A worker backend must be explicitly configured')
+
+    monkeypatch.setattr(ultranest_utils.multiprocessing, 'get_context', unexpected_pool)
+    monkeypatch.setattr(ultranest_utils, 'ThreadPoolExecutor', unexpected_pool)
+
+    class FakeSampler:
+        def __init__(self):
+            self.chunk_sizes = []
+
+            def loglike(points):
+                self.chunk_sizes.append(len(points))
+                return points[:, 0]
+
+            self.loglike = loglike
+
+        def run(self, **kwargs):
+            return {'values': self.loglike(np.arange(16, dtype=float).reshape(8, 2))}
+
+    sampler = FakeSampler()
+    result = run_reactive_sampler(sampler, verbose=False)
+
+    assert result['values'].tolist() == [0, 2, 4, 6, 8, 10, 12, 14]
+    assert sampler.chunk_sizes == [8]
 
 
 def test_run_reactive_sampler_parallelizes_vectorized_loglike_batches(monkeypatch):
@@ -618,7 +676,8 @@ def test_run_reactive_sampler_rich_override_uses_native_status(monkeypatch):
     assert result == {"status": "ok"}
     assert sampler.kwargs["show_status"] is True
     assert "viz_callback" not in sampler.kwargs
-    assert stream.getvalue() == ""
+    assert 'Automatic evaluation budget' in stream.getvalue()
+    assert '[ultranest] running' not in stream.getvalue()
 
 
 def test_run_reactive_sampler_silent_mode_mutes_ultranest_logger(monkeypatch):

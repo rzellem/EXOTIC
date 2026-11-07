@@ -1,7 +1,39 @@
+import json
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
 from astropy.io import fits
 
 import exotic.exotic as exotic_module
+
+
+@pytest.mark.parametrize("sigma", [1.3, 6.0])
+def test_fixed_aperture_scale_uses_sample_median_including_broad_stars(sigma):
+    rows = np.zeros((5, 7), dtype=float)
+    rows[:, 3:5] = np.array([4.8918, sigma, sigma, sigma, np.nan])[:, None]
+    psf_data = {"target": rows}
+
+    scale = exotic_module.representative_aperture_sigma_from_psf_data(psf_data, range(5))
+
+    assert scale == pytest.approx(sigma)
+    assert exotic_module.ANNULUS_SIGMA_MAX * scale == pytest.approx(15.0 * sigma)
+
+
+def test_fixed_aperture_scale_respects_comparison_only_estimation():
+    target = np.zeros((3, 7), dtype=float)
+    comp1 = target.copy()
+    comp2 = target.copy()
+    target[:, 3:5] = 7.0
+    comp1[:, 3:5] = np.array([1.0, 1.2, 1.4])[:, None]
+    comp2[:, 3:5] = np.array([1.2, 1.4, 1.6])[:, None]
+
+    scale = exotic_module.representative_aperture_sigma_from_psf_data(
+        {"target": target, "comp1": comp1, "comp2": comp2},
+        range(3), comparison_indices=(0, 1),
+    )
+
+    assert scale == pytest.approx(1.3)
 
 
 def test_evenly_spaced_aperture_tuning_indices_span_full_sequence():
@@ -151,6 +183,38 @@ def test_aperture_tuning_cutout_grid_matches_direct_local_measurement():
 
     np.testing.assert_allclose(result["comp1"][0], expected_flux)
     np.testing.assert_allclose(result["comp1_bg"][0], expected_bg)
+
+
+@pytest.mark.parametrize(
+    'cli_workers,env_workers,config_workers,expected',
+    [(None, None, None, None), (2, None, None, 2), (None, '3', None, 3),
+     (None, None, 4, 4), (2, '3', 4, 2), (None, '3', 4, 3)],
+)
+def test_alignment_workers_use_explicit_configuration(
+    monkeypatch, tmp_path, cli_workers, env_workers, config_workers, expected,
+):
+    config_path = tmp_path / 'transitlab.json'
+    if config_workers is not None:
+        config_path.write_text(json.dumps({'MultiprocessTransformations': config_workers}), encoding='utf-8')
+    args = SimpleNamespace(
+        multiprocess_transformations=cli_workers,
+        multiprocess_lightcurve_fits=None,
+        preflight='inits.json',
+    )
+    monkeypatch.setattr(exotic_module, 'parse_args', lambda: args)
+    monkeypatch.setattr(exotic_module.sys, 'platform', 'linux')
+    monkeypatch.setattr(exotic_module.os.path, 'expanduser', lambda path: str(config_path))
+    monkeypatch.delenv('EXOTIC_MULTIPROCESS_TRANSFORMATIONS', raising=False)
+    if env_workers is not None:
+        monkeypatch.setenv('EXOTIC_MULTIPROCESS_TRANSFORMATIONS', env_workers)
+    monkeypatch.setattr(exotic_module, 'configure_windows_multiprocessing_main_spec', lambda: None)
+    monkeypatch.setattr(
+        exotic_module, 'run_inits_preflight',
+        lambda *args, **kwargs: 'preflight completed',
+    )
+
+    assert exotic_module._main_impl() == 'preflight completed'
+    assert args.multiprocess_transformations == expected
 
 
 def test_image_process_pool_uses_spawn_context_on_windows(monkeypatch):

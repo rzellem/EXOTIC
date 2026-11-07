@@ -1184,6 +1184,63 @@ def test_aid_output_floors_reported_magnitude_errors(tmp_path):
     assert "HAT-P-32,2450000.12345,12.3400,0.0010,V,NO,STD" in output_text
 
 
+@pytest.mark.parametrize("writer_method", ["aavso", "combined_aavso"])
+@pytest.mark.parametrize("cname", ["Comp", "ENSEMBLE (5 stars)"])
+@pytest.mark.parametrize(
+    "mag_errors, expected_indices",
+    [
+        ([1.2734, 0.02, 0.5, 0.50001, 0.9, 1.0, 0.49999, 0.0, "0.5", "0.50001"],
+         [1, 2, 6, 7, 8]),
+        ([1.2734, 0.50001], []),
+    ],
+)
+def test_aid_output_filters_merr_above_half_magnitude(
+    tmp_path, writer_method, cname, mag_errors, expected_indices
+):
+    fit = DummyFit()
+    p_dict = {"pName": "Target b", "sName": "Target"}
+    i_dict = {
+        "save": str(tmp_path),
+        "date": "2021-11-26",
+        "aavso_num": "RTZ",
+        "camera": "CCD",
+        "filter": "CV",
+    }
+    vsp_params = [{
+        "time": 2459544.70467 + index * 0.001,
+        "_aid_name": f"Variable {index}",
+        "mag": 17.6723,
+        "mag_err": mag_err,
+        "differential_mag": 4.2099,
+        "differential_mag_err": 1.2732,
+        "airmass": 1.9702944,
+        "cname": cname,
+        "cmag": 12.1,
+    } for index, mag_err in enumerate(mag_errors)]
+    writer = AIDOutputFiles(
+        fit, p_dict, i_dict, auid="000-BLQ-898", chart_id="X43364RUI",
+        vsp_params=vsp_params,
+    )
+
+    output_file = getattr(writer, writer_method)()
+
+    output_text = output_file.read_text(encoding="utf-8")
+    rows = [line.split(",") for line in output_text.splitlines() if not line.startswith("#")]
+    assert "#NAME,DATE,MAG,MERR," in output_text
+    assert [float(row[1]) for row in rows] == [
+        round(vsp_params[index]["time"], 5) for index in expected_indices
+    ]
+    assert [float(row[3]) for row in rows] == [
+        max(0.001, round(float(mag_errors[index]), 4)) for index in expected_indices
+    ]
+    assert [row[0] for row in rows] == [
+        f"Variable {index}" if writer_method == "combined_aavso" else "000-BLQ-898"
+        for index in expected_indices
+    ]
+    assert all(row[-1] == "DIFFMAG=4.2099;DIFFERR=1.2732" for row in rows)
+    assert [row["mag_err"] for row in vsp_params] == mag_errors
+
+
 def test_aid_output_skips_over_30_magnitude_rows(tmp_path):
     fit = DummyFit()
     p_dict = {
@@ -2434,6 +2491,12 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
             "annulus_max": 30.08,
         },
     }
+    photometry_info['ensemble_membership'] = {
+        'requested_count': 3, 'used_count': 2, 'partial': True,
+        'used_members': [{'label': 'Comp 2'}, {'label': 'Comp 3'}],
+        'omitted_members': [{'label': 'Comp 1', 'reason': 'overexposed in every frame'}],
+        'warning': 'Partial comparison ensemble: omitted Comp 1 (overexposed in every frame).',
+    }
     comp_star_header = {"ra": "10.1", "dec": "-20.2", "x": "493", "y": "202"}
 
     OutputFiles(fit, p_dict, i_dict, [0.1]).aavso(
@@ -2509,6 +2572,8 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     assert ktmf_decision["comparison_selection"]["candidates"][0]["selection_reason"].startswith("not selected: KTMF")
 
     photometry = aavso_json_header(output_text, "PHOTOMETRY-XC")
+    assert photometry['ensemble_membership'] == photometry_info['ensemble_membership']
+    assert 'omitted Comp 1' in photometry['ensemble_membership']['warning']
     assert photometry["selected_comparison_star"] == 2
     assert photometry["comparison_field_score_percent"] == pytest.approx(0.42)
     assert photometry["reused_selected_full_reduction_fit"] is True
@@ -2532,3 +2597,30 @@ def test_aavso_output_includes_extended_diagnostic_comment_headers(tmp_path):
     assert bad_pixel["enabled"] is True
     assert bad_pixel["bad_pixel_count"] == 3
     assert bad_pixel["counts_path"] == "BadPixelDetectionCounts.fits"
+
+
+@pytest.mark.parametrize('variability_only', [False, True])
+def test_partial_ensemble_warning_and_members_are_saved_in_final_results(tmp_path, variability_only):
+    (tmp_path / 'working_artifacts').mkdir()
+    fit = (SimpleNamespace(stellar_variability_only=True, time=np.arange(6),
+                           stellar_variability_scatter=0.001,
+                           stellar_variability_transit_exclusion={})
+           if variability_only else DummyFit())
+    membership = {
+        'requested_count': 3, 'used_count': 2, 'partial': True,
+        'used_members': [{'label': 'Comp 2'}, {'label': 'Comp 3'}],
+        'omitted_members': [{'label': 'Comp 1', 'reason': '0 usable flux measurements'}],
+        'warning': 'Partial comparison ensemble: using 2 of 3; omitted Comp 1 (0 usable flux measurements).',
+    }
+    info = {'ensemble_membership': membership}
+    OutputFiles(fit, {'pName': 'Syntheticb'}, {'save': str(tmp_path), 'date': '2020-01-01'}, [0.1]).final_planetary_params(
+        phot_opt=True, vsp_params=[], comp_star='ensemble', min_aper=5, min_annul=12,
+        photometry_info=info, publish_to_root=True,
+    )
+    path = next(tmp_path.glob('FinalParams_*.json'))
+    payload = json.loads(path.read_text())
+    parameters = payload['FINAL STELLAR VARIABILITY PARAMETERS' if variability_only else 'FINAL PLANETARY PARAMETERS']
+    assert parameters['Comparison ensemble WARNING'] == membership['warning']
+    assert parameters['Comparison ensemble members used'] == '2 of 3: Comp 2, Comp 3'
+    from exotic.output_files import build_aavso_photometry_metadata
+    assert build_aavso_photometry_metadata(info)['ensemble_membership'] == membership

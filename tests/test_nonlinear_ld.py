@@ -3,6 +3,50 @@ import pytest
 import exotic.exotic as exotic_module
 
 
+@pytest.mark.parametrize('telescope', ['Ben', 'Donald', ' donald '])
+@pytest.mark.parametrize('style', ['original', 'lower', 'padded'])
+@pytest.mark.parametrize('observed_filter, code, band, wl_min, wl_max', [
+    ('Red', 'R', 'Cousins R', 561.7, 719.7),
+    ('Green', 'V', 'Johnson V', 502.8, 586.8),
+    ('Blue', 'B', 'Johnson B', 391.6, 480.6),
+    ('R', 'R', 'Cousins R', 561.7, 719.7),
+])
+def test_microobservatory_colors_resolve_to_standard_bands_without_prompt(
+        monkeypatch, telescope, style, observed_filter, code, band, wl_min, wl_max):
+    if style == 'lower':
+        observed_filter = observed_filter.lower()
+    elif style == 'padded':
+        observed_filter = f' {observed_filter} '
+    ld = exotic_module.LimbDarkening({})
+    monkeypatch.setattr(ld, 'calculate_ld', lambda: None)
+    monkeypatch.setattr(
+        exotic_module, 'user_input',
+        lambda *_args, **_kwargs: pytest.fail('Ben/Donald filters must resolve without a prompt'),
+    )
+    info = {
+        'filter': observed_filter, 'wl_min': None, 'wl_max': None,
+        'second_obs': 'MOBS',
+    }
+    exotic_module.apply_microobservatory_metadata(info, {
+        'CREATOR': 'MicroObservatory2010-11-04', 'TELESCOP': telescope, 'FILTER': observed_filter,
+    })
+    exotic_module.nonlinear_ld(ld, info, non_interactive_run=True)
+
+    assert info['filter'] == code
+    assert info['filter_desc'] == band
+    assert info['wl_min'] == wl_min
+    assert info['wl_max'] == wl_max
+
+
+@pytest.mark.parametrize('observed_filter', ['Red', 'Green', 'Blue'])
+def test_other_telescope_color_label_is_preserved(observed_filter):
+    info = {'filter': observed_filter, 'second_obs': 'MOBS'}
+    exotic_module.apply_microobservatory_metadata(info, {
+        'CREATOR': 'MicroObservatory2010-11-04', 'TELESCOP': 'Other', 'FILTER': observed_filter,
+    })
+    assert info['filter'] == observed_filter
+
+
 def test_nonlinear_ld_non_interactive_treats_g_as_photographic_g_without_prompt(monkeypatch):
     ld = exotic_module.LimbDarkening({})
     monkeypatch.setattr(ld, "calculate_ld", lambda: None)

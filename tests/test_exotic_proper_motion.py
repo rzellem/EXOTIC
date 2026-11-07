@@ -5707,6 +5707,16 @@ def test_selected_full_resolution_refit_keeps_expected_value_context(monkeypatch
     import exotic.exotic as exotic_module
 
     monkeypatch.setattr(exotic_module, 'ultranest_budget_exhausted', lambda: budget_spent)
+    # Keep this QC/budget test independent of the real LM fit to the synthetic transit.
+    monkeypatch.setattr(
+        exotic_module,
+        'run_pre_ultranest_lm_residual_rejection',
+        lambda times, *args, **kwargs: {
+            'applied': False,
+            'keep_mask': np.ones(np.asarray(times).shape, dtype=bool),
+            'cycles': [],
+        },
+    )
 
     times = np.linspace(0.0, 1.0, 21)
     transit_model = np.ones(times.shape[0], dtype=float)
@@ -8811,7 +8821,8 @@ def _run_main_until_vertical_flux_bound(
         def search_init(self, init_path, planet_dict):
             return init_path, dict(user_pdict)
 
-        def prereduced(self, planet):
+        def prereduced(self, planet, non_interactive_run=False):
+            assert non_interactive_run is True
             return dict(exotic_info), planet or user_pdict["pName"]
 
     captured = {}

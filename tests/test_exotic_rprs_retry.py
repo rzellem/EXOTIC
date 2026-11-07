@@ -1464,6 +1464,16 @@ def test_selected_fast_candidate_final_refit_estimates_missing_fixed_a2_error(mo
 def test_selected_fast_candidate_final_refit_reruns_after_residual_rejection(monkeypatch):
     import exotic.exotic as exotic_module
 
+    # Only the posterior residuals injected below should remove points in this test.
+    monkeypatch.setattr(
+        exotic_module,
+        "run_pre_ultranest_lm_residual_rejection",
+        lambda times, *args, **kwargs: {
+            "applied": False,
+            "keep_mask": np.ones(np.asarray(times).shape, dtype=bool),
+            "cycles": [],
+        },
+    )
     monkeypatch.setattr(exotic_module, "selected_final_live_point_target", lambda *args, **kwargs: (200, None))
     calls = []
 
@@ -1582,9 +1592,11 @@ def test_selected_fast_candidate_final_refit_reruns_after_residual_rejection(mon
     ]
 
 
-def test_selected_final_lm_preflight_avoids_high_live_point_residual_rerun(monkeypatch):
+@pytest.mark.parametrize("budget_spent", [False, True])
+def test_selected_final_lm_preflight_avoids_high_live_point_residual_rerun(monkeypatch, budget_spent):
     import exotic.exotic as exotic_module
 
+    monkeypatch.setattr(exotic_module, "ultranest_budget_exhausted", lambda: budget_spent)
     times = np.linspace(0.0, 1.0, 80)
     keep_mask = np.ones(80, dtype=bool)
     keep_mask[-1] = False
@@ -1715,6 +1727,8 @@ def test_selected_final_lm_preflight_avoids_high_live_point_residual_rerun(monke
     assert returned.final_residual_rejection_rejected_count == 1
     assert returned.final_residual_rejection["pre_ultranest_rejected_count"] == 1
     assert returned.final_residual_rejection["refit_iteration_count"] == 0
+    if budget_spent:
+        assert "evaluation budget was exhausted" in returned.final_residual_rejection["note"]
     assert selected_result["source_indices"][-1] == 78
     assert returned.frame_filter_diagnostics[-1]["stage"] == "Pre-UltraNest LM residual rejection"
 

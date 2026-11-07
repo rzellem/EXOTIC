@@ -12,8 +12,8 @@ if __name__ == "__main__":
         'ecc': 0.5,                                 # Eccentricity
         'omega': 120,                               # Arg of periastron
         'tmid': 0.75,                               # Time of mid transit [day],
-        'a1': 50,                                   # Airmass coefficients
-        'a2': 0.,                                   # trend = a1 * np.exp(a2 * airmass)
+        'a0': 50,                                   # Baseline flux normalization
+        'a2': 0.,                                   # trend = a0 * np.exp(a2 * airmass)
 
         'T*':5000,
         'FE/H': 0,
@@ -36,8 +36,8 @@ if __name__ == "__main__":
     airmass = np.zeros(time.shape[0])
 
     # GENERATE NOISY DATA
-    data = transit(time, prior)*prior['a1']*np.exp(prior['a2']*airmass)
-    data += np.random.normal(0, prior['a1']*250e-6, len(time))
+    data = transit(time, prior)*prior['a0']*np.exp(prior['a2']*airmass)
+    data += np.random.normal(0, prior['a0']*250e-6, len(time))
     dataerr = np.random.normal(300e-6, 50e-6, len(time)) + np.random.normal(300e-6, 50e-6, len(time))
 
     # add optimization bounds for free parameters only
@@ -45,14 +45,15 @@ if __name__ == "__main__":
         'rprs': [0, 0.1],
         'tmid': [prior['tmid']-0.01, prior['tmid']+0.01],
         'inc': [87,90],
+        #'a0': [0.95 * prior['a0'], 1.05 * prior['a0']], # optional explicit baseline offset
         #'a2': [0, 0.3] # uncomment if you want to fit for airmass
 
-        # a2 is used for individual airmass detrending using: a1*exp(airmass*a2)
-        # a1 is solved for automatically using mean(data/model) and does not need
+        # a2 is used for individual airmass detrending using: a0*exp(airmass*a2)
+        # a0 is optional. If omitted, the normalization is solved analytically.
+        # a1 is kept as a legacy alias for the resolved normalization.
         # to be included as a free parameter. A monte carlo process is used after
         # fitting to derive uncertainties on it. It acts like a normalization factor.
-        # never list 'a1' in bounds, it is perfectly correlated to exp(a2*airmass)
-        # and is solved for during the fit
+        # never list both 'a0' and 'a1' in bounds because they are the same scale term
     }
 
     # call the fitting routine

@@ -1,5 +1,9 @@
 # Radial Velocity Fitting for a Single Planet
 
+The optional Keck HIRES query requires your own `prv.cookies` file in the
+working directory, generated using `hiresprv` authentication. This local file
+is ignored by Git and is not distributed with the examples.
+
 ![](RV_bestfit.png)
 
 The software takes as input the stellar mass, planet mass, orbital period, eccentricity, argument of periastron, inclination, and stellar radius. It computes the planet's orbit over time using Kepler's equations, converting from orbital elements to Cartesian coordinates. The orbit is scaled by the planet/star mass ratio and stellar radius to estimate the star's motion. At each timestep, the velocity along the line of sight is computed by numerically differentiating the projected orbital position. This generates the radial velocity curve over time. The software can fit the computed radial velocity curve to observed measurements by optimizing the orbital parameters. Gaussian priors on stellar mass and radius can be incorporated. The joint modeling of transit photometry and radial velocities enables complete and self-consistent determination of the system parameters.

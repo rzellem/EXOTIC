@@ -46,7 +46,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 import rebound
-from exotic.api.plotting import corner
+from exotic.api.ultranest_utils import run_reactive_sampler
 from ultranest import ReactiveNestedSampler
 from astropy.io import fits
 from astropy import units as u
@@ -401,6 +401,12 @@ def TTV(epochs, tt):
 # directory path of file
 fpath = os.path.dirname(os.path.abspath(__file__))
 def estimate_prior( amplitude, periodicity, amp_lim=2, per_lim=4, file_name = os.path.join(fpath,"ttv_grid.fits"), show=True):
+    """Estimate a retrieval prior from a precomputed N-body simulation grid.
+
+    The grid FITS file is an external input and is not bundled with EXOTIC.
+    Pass its location through ``file_name``. The default looks for
+    ``ttv_grid.fits`` beside this module; this function does not generate it.
+    """
 
     with fits.open(file_name) as ttv_grid_list:
 
@@ -598,11 +604,12 @@ class nbody_fitter():
         def prior_transform(upars):
             return (boundarray[:,0] + bounddiff*upars)
 
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e5)
-        else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=1e5, show_status=self.verbose, 
-viz_callback=self.verbose)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs={"max_ncalls": int(1e5)},
+            verbose=self.verbose,
+        )
 
         self.errors = {}
         self.quantiles = {}

@@ -14832,6 +14832,15 @@ def reported_photometry_aperture_radii(photometry_info):
     return aperture, adaptive_summary['annulus_median']
 
 
+def fov_photometry_geometry(photometry_info, sigma_display):
+    """Use the validated display sigma for illustrative PSF finder-chart radii."""
+    if photometry_info['min_aperture'] == 0:
+        return 'PSF', float(5.0 * sigma_display), float(15.0 * sigma_display)
+
+    aperture, annulus = reported_photometry_aperture_radii(photometry_info)
+    return 'Aperture', float(aperture), float(annulus)
+
+
 def build_observing_background_series(psf_data, aper_data, photometry_info, comp_star_count):
     use_aperture_background = photometry_info.get('min_aperture') != 0
     a_idx = photometry_info.get('aperture_index')
@@ -40484,19 +40493,9 @@ def _main_impl():
             display_aperture, display_annulus = reported_photometry_aperture_radii(photometry_info)
 
 
-            if photometry_info['min_aperture'] == 0:
-                opt_method = "PSF"
-                # Calculate min_aper and min_annulus using the stdev
-                stdev_fov = (psf_data['target'][:, 3] + psf_data['target'][:, 4]) * 0.5
-                min_aper_fov = float(5 * stdev_fov.mean())
-                min_annulus_fov = float(15 * stdev_fov.mean())
-            else:
-                opt_method = "Aperture"
-                min_aper_fov = float(display_aperture)
-                min_annulus_fov = float(display_annulus)
-
-            fov_aperture = min_aper_fov if opt_method == "PSF" else float(display_aperture)
-            fov_annulus = min_annulus_fov if opt_method == "PSF" else float(display_annulus)
+            opt_method, fov_aperture, fov_annulus = fov_photometry_geometry(
+                photometry_info, sigma_display,
+            )
             fov_sky_geometry = resolve_sky_annulus_geometry(
                 fov_aperture,
                 fov_annulus,
@@ -40541,7 +40540,7 @@ def _main_impl():
                          finder_target_position[0], finder_target_position[1],
                          finder_positions[0][0], finder_positions[0][1],
                          firstImage, img_scale_str, pDict['pName'], exotic_infoDict['save'],
-                         exotic_infoDict['date'], opt_method, min_aper_fov, min_annulus_fov,
+                         exotic_infoDict['date'], opt_method, fov_aperture, fov_annulus,
                          sky_inner_radius=fov_sky_geometry['inner_radius'],
                          sky_outer_radius=fov_sky_geometry['outer_radius'],
                          comparison_positions=finder_positions,

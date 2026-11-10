@@ -180,6 +180,7 @@ from exotic.exotic import (
     rank_comparison_candidate_preflight_plans,
     refit_selected_fast_comparison_on_full_lightcurve,
     representative_psf_sigma,
+    fov_photometry_geometry,
     ranked_comparison_calibration_summaries,
     resolve_sky_annulus_geometry,
     run_target_driven_photometry_search,
@@ -2694,6 +2695,77 @@ def test_representative_psf_sigma_uses_valid_frames_and_fallback():
 
     assert np.isclose(representative_psf_sigma(psf_rows, fallback_sigma=1.0), 2.0)
     assert np.isclose(representative_psf_sigma(np.full((0, 7), np.nan), fallback_sigma=1.25), 1.25)
+
+
+@pytest.mark.parametrize('widths, expected_sigma', [
+    ([2.0, 2.0, 2.0], 2.0),
+    ([2.0, np.nan, 2.0], 2.0),
+    ([2.0, np.inf, 0.0, -1.0], 2.0),
+    ([np.nan, np.nan, np.nan], 1.25),
+])
+def test_psf_fov_keeps_target_and_comparison_markers_with_unavailable_widths(
+        widths, expected_sigma, tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.colors import to_rgb
+    from exotic.plots import plot_fov
+
+    psf_rows = np.zeros((len(widths), 7), dtype=float)
+    psf_rows[:, :2] = [50.0, 60.0]
+    psf_rows[:, 3:5] = np.asarray(widths)[:, None]
+    sigma_display = representative_psf_sigma(psf_rows, fallback_sigma=1.25)
+    method, aperture, annulus = fov_photometry_geometry(
+        {'min_aperture': 0, 'min_annulus': 0}, sigma_display,
+    )
+    assert method == 'PSF'
+    assert aperture == pytest.approx(5.0 * expected_sigma)
+    assert annulus == pytest.approx(15.0 * expected_sigma)
+    sky_geometry = resolve_sky_annulus_geometry(aperture, annulus, psf_sigma=sigma_display)
+    figures = {}
+
+    def capture_figure(*args, **kwargs):
+        figure = plt.gcf()
+        if id(figure) not in figures:
+            canvas = FigureCanvasAgg(figure)
+            canvas.draw()
+            figures[id(figure)] = (figure, canvas)
+
+    monkeypatch.setattr(plt, 'savefig', capture_figure)
+    plot_fov(
+        aperture, annulus, sigma_display,
+        50.0, 60.0, 130.0, 140.0, np.ones((220, 240)),
+        'Image scale in arcsec/pixel: 5.16', 'TrES-3 b', tmp_path, '2026-11-11',
+        method, aperture, annulus,
+        sky_inner_radius=sky_geometry['inner_radius'],
+        sky_outer_radius=sky_geometry['outer_radius'],
+    )
+
+    assert len(figures) == 4
+    for figure, canvas in figures.values():
+        ax = figure.axes[0]
+        assert len(ax.patches) == 6
+        assert all(np.isfinite(patch.radius) and patch.radius > 0 for patch in ax.patches)
+        assert {text.get_text() for text in ax.texts} == {'Target: TrES-3 b', 'Comp Star'}
+        assert all(np.all(np.isfinite(text.get_position())) for text in ax.texts)
+        pixels = np.asarray(canvas.buffer_rgba())[:, :, :3]
+        for color in ('cyan', 'lime'):
+            rgb = np.asarray(to_rgb(color)) * 255
+            assert np.any(np.all(pixels == rgb, axis=2))
+
+
+@pytest.mark.parametrize('aperture', [8.0, -8.0])
+def test_fov_aperture_geometry_preserves_selected_radii(aperture):
+    assert fov_photometry_geometry(
+        {'min_aperture': aperture, 'min_annulus': 20.0}, 2.0,
+    ) == ('Aperture', aperture, 20.0)
+
+
+def test_fov_aperture_geometry_uses_adaptive_reported_radii():
+    assert fov_photometry_geometry({
+        'min_aperture': 8.0,
+        'min_annulus': 20.0,
+        'adaptive_summary': {'aperture_median': 9.0, 'annulus_median': 22.0},
+    }, 2.0) == ('Aperture', 9.0, 22.0)
 
 
 def test_summarize_adaptive_aperture_usage_reports_frame_scaled_stats():

@@ -568,11 +568,11 @@ def main():
             print("################################################\n\n")
             pass
     else:
-        fitsortext = tk.IntVar()
         input_data = {}  # for saving entries
         root=tk.Tk()
         root.protocol("WM_DELETE_WINDOW", exit)
         root.title(f"EXOTIC v{__version__}")
+        fitsortext = tk.IntVar()
 
         tk.Label(root,
                  text="""How do you want to run EXOTIC?""",

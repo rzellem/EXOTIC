@@ -182,6 +182,9 @@ def gui_reduction_command(reduction_choice, input_kind=1):
 
 
 def main():
+    # JSON spelling used by the inits dictionaries built below.
+    null = None
+
     if not (3, 12) <= sys.version_info < (4, 0):
         print("\nERROR: EXOTIC requires Python 3.12 or newer, below Python 4. ... EXITING!\n")
         print("Press the <ENTER> key to continue. ...")
@@ -1603,8 +1606,6 @@ def main():
                 "Formatting of null": "Due to the file being a .json, null is case sensitive and must be spelled as shown.",
                 "Decimal Format": "Leading zero must be included when appropriate (Ex: 0.32, .32 or 00.32 causes errors.)."
             }
-
-            null = None
 
             if fitsortext.get() == 1:
                 if obsinfo.get() == 'manual':

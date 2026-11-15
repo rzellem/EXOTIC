@@ -33913,6 +33913,7 @@ def process_fortuitous_variables(
                 stale_combined_aid.unlink()
     results = []
     combined_vsp_params = []
+    combined_auid_vsp_params = []
     logged_comparison_gap_rejections = set()
     for variable in variables:
         variable = dict(variable)
@@ -34294,10 +34295,13 @@ def process_fortuitous_variables(
                         vsp_params,
                     ).aavso()
                     aid_variable_name = variable.get('auid') or variable_name
-                    combined_vsp_params.extend([
+                    variable_aid_rows = [
                         {**vsp_param, '_aid_name': aid_variable_name}
                         for vsp_param in vsp_params
-                    ])
+                    ]
+                    combined_vsp_params.extend(variable_aid_rows)
+                    if variable.get('auid'):
+                        combined_auid_vsp_params.extend(variable_aid_rows)
                 except Exception as exc:
                     apparent_output_error = str(exc)
                     log_info(
@@ -34387,46 +34391,46 @@ def process_fortuitous_variables(
             )
 
     base_dir.mkdir(parents=True, exist_ok=True)
-    combined_aid_path = None
-    combined_aid_error = None
+    manifest_payload = {
+        'variables': results,
+        'combined_aid': None,
+        'combined_aid_auid_only': None,
+    }
     if combined_vsp_params:
-        try:
-            combined_info = dict(info_dict)
-            combined_info['save'] = str(base_dir)
-            combined_target = {
-                'sName': 'FortuitousVariables',
-                'pName': 'FortuitousVariables',
-            }
-            combined_aid_path = AIDOutputFiles(
-                None,
-                combined_target,
-                combined_info,
-                None,
-                None,
-                combined_vsp_params,
-            ).combined_aavso()
-            log_info(
-                f"Combined fortuitous-variable AID file written with "
-                f"{len(combined_vsp_params)} row(s): {combined_aid_path}."
-            )
-        except Exception as exc:
-            combined_aid_error = str(exc)
-            log_info(
-                f"Warning: could not create the combined fortuitous-variable AID file ({exc}).",
-                warn=True,
-            )
+        combined_info = dict(info_dict)
+        combined_info['save'] = str(base_dir)
+        for manifest_key, target_name, aid_rows, description in (
+            ('combined_aid', 'FortuitousVariables', combined_vsp_params,
+             'Combined fortuitous-variable AID file'),
+            ('combined_aid_auid_only', 'FortuitousVariables_AUIDOnly', combined_auid_vsp_params,
+             'AUID-only combined fortuitous-variable AID file'),
+        ):
+            try:
+                combined_target = {'sName': target_name, 'pName': target_name}
+                combined_aid_path = AIDOutputFiles(
+                    None,
+                    combined_target,
+                    combined_info,
+                    None,
+                    None,
+                    aid_rows,
+                ).combined_aavso()
+                manifest_payload[manifest_key] = str(combined_aid_path)
+                log_info(
+                    f"{description} written with {len(aid_rows)} row(s): {combined_aid_path}."
+                )
+            except Exception as exc:
+                manifest_payload[f'{manifest_key}_error'] = str(exc)
+                log_info(
+                    f"Warning: could not create the {description.lower()} ({exc}).",
+                    warn=True,
+                )
     manifest_path = base_dir / safe_output_filename(
         'FortuitousVariables',
         filename_date_token(info_dict.get('date')),
         extension='json',
     )
     with manifest_path.open('w', encoding='utf-8') as handle:
-        manifest_payload = {
-            'variables': results,
-            'combined_aid': str(combined_aid_path) if combined_aid_path else None,
-        }
-        if combined_aid_error:
-            manifest_payload['combined_aid_error'] = combined_aid_error
         json.dump(stellar_variability_json_safe(manifest_payload), handle, indent=2, sort_keys=True)
         handle.write('\n')
     return results

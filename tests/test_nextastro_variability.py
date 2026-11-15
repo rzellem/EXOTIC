@@ -3484,7 +3484,13 @@ def test_stellar_variability_ensemble_selection_json_lists_color_and_magnitude(m
     assert payload['ensemble']['members'][0]['magnitude_delta'] == pytest.approx(0.1)
 
 
-def test_process_fortuitous_variables_write_independent_and_combined_aid_products(monkeypatch, tmp_path):
+@pytest.mark.parametrize('auids', [
+    ('000-AAA-001', '000-AAA-002'),
+    ('000-AAA-001', None),
+    (None, ''),
+], ids=['all-auids', 'mixed-auids', 'no-auids'])
+def test_process_fortuitous_variables_write_independent_and_combined_aid_products(
+        monkeypatch, tmp_path, auids):
     monkeypatch.setattr(exotic_module, 'plot_stellar_variability', lambda *args, **kwargs: None)
     monkeypatch.setattr(
         exotic_module,
@@ -3559,7 +3565,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     }
     variable = {
         'name': 'Synthetic VSX',
-        'auid': '000-AAA-001',
+        'auid': auids[0],
         'variable_type': 'EA',
         'period_days': 5.0,
         'amplitude_mag': 0.5,
@@ -3581,7 +3587,7 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     second_variable = {
         **variable,
         'name': 'Synthetic VSX 2',
-        'auid': '000-AAA-002',
+        'auid': auids[1],
         'pos': [70, 80],
         'tracking_key': 'comp4',
         'aperture_flux_adu': 700.0,
@@ -3645,16 +3651,30 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert combined_aid_text.count('#TYPE=EXTENDED') == 1
     assert '#ENSEMBLE-COMPARISONS-XC=' not in combined_aid_text
     assert len(combined_aid_rows) == sum(result['point_count'] for result in results)
-    assert {row.split(',', 1)[0] for row in combined_aid_rows} == {
-        '000-AAA-001',
-        '000-AAA-002',
-    }
+    assert [row.split(',', 1)[0] for row in combined_aid_rows] == (
+        [auids[0] or variable['name']] * results[0]['point_count']
+        + [auids[1] or second_variable['name']] * results[1]['point_count']
+    )
+    auid_only_path = (
+        tmp_path / 'variables' / 'AAVSO_Files'
+        / 'AID_AAVSO_FortuitousVariables_AUIDOnly_2024-01-02.txt'
+    )
+    auid_only_text = auid_only_path.read_text(encoding='utf-8')
+    auid_only_rows = [
+        line for line in auid_only_text.splitlines()
+        if line and not line.startswith('#')
+    ]
+    assert auid_only_text.count('#TYPE=EXTENDED') == 1
+    assert auid_only_rows == [
+        row for row in combined_aid_rows if row.split(',', 1)[0] in auids
+    ]
     manifest = json.loads(
         next((tmp_path / 'variables').glob('FortuitousVariables_2024-01-02.json')).read_text(
             encoding='utf-8'
         )
     )
     assert manifest['combined_aid'] == str(combined_aid_path)
+    assert manifest['combined_aid_auid_only'] == str(auid_only_path)
     assert manifest['variables'][0]['ensemble_member_count'] == 2
     assert manifest['variables'][0]['comparison_gap_stability']['applied'] is False
     assert manifest['variables'][0]['comparison_gap_rejected_candidates'] == []
@@ -3751,6 +3771,11 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert single_aid_row.split(',')[7] == 'C2'
 
     failed_root = tmp_path / 'failed'
+    stale_auid_only_path = (
+        failed_root / 'variables' / 'AAVSO_Files' / auid_only_path.name
+    )
+    stale_auid_only_path.parent.mkdir(parents=True)
+    stale_auid_only_path.write_text(auid_only_text, encoding='utf-8')
     failed_results = exotic_module.process_fortuitous_variables(
         [variable],
         comparison_calibration,
@@ -3784,6 +3809,9 @@ def test_process_fortuitous_variables_write_independent_and_combined_aid_product
     assert failed_manifest['variables'][0]['status'] == 'completed'
     assert failed_manifest['variables'][0]['apparent_magnitude_point_count'] == 0
     assert failed_manifest['variables'][0]['differential_magnitude_csv']
+    assert failed_manifest['combined_aid'] is None
+    assert failed_manifest['combined_aid_auid_only'] is None
+    assert not stale_auid_only_path.exists()
 
 
 def test_stellar_variability_selector_uses_calibrated_ensemble_by_default(monkeypatch, tmp_path):

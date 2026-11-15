@@ -250,3 +250,14 @@ def test_calculated_tmid_difference_fits_both_series_without_changing_production
     assert fit.parameters == params
     np.testing.assert_array_equal(fit.orbital_likelihood_context['time'],date)
     assert result['production_fit_changed'] is False
+
+
+def test_reported_timestamp_summary_names_report_without_local_folder(tmp_path):
+    from exotic.timing import timing_reporting_metadata
+    report = tmp_path / 'TimestampSelection.json'
+    info = {'timestamp_selection_summary': {'report_path': str(report), 'frame_count': 6}}
+
+    timing = timing_reporting_metadata({}, info)
+
+    assert timing['image_timestamps'] == {'report_path': 'TimestampSelection.json', 'frame_count': 6}
+    assert info['timestamp_selection_summary']['report_path'] == str(report)

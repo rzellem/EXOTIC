@@ -5,6 +5,7 @@ clock calibration. Ambiguous legacy standards remain explicit diagnostics.
 """
 from datetime import timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 import re
 
 import dateutil.parser
@@ -448,15 +449,18 @@ def timing_reporting_metadata(parameters, info, fit=None):
     comparison = getattr(fit, 'timestamp_tmid_comparison', None) if fit is not None else None
     if fit is not None and comparison is None and info.get('timestamp_selection_summary'):
         import json
-        from pathlib import Path
         try:
             path = info['timestamp_selection_summary']['report_path']
             comparison = calculate_timestamp_tmid_difference(fit, json.loads(Path(path).read_text()))
         except Exception as exc:
             comparison = {'status':'failed', 'reason':f'{type(exc).__name__}: {exc}', 'production_fit_changed':False}
         fit.timestamp_tmid_comparison = comparison
+    image_timestamps = info.get('timestamp_selection_summary')
+    if isinstance(image_timestamps, dict) and image_timestamps.get('report_path'):
+        # Reports are shared and uploaded: keep the file name, not the local folder.
+        image_timestamps = {**image_timestamps, 'report_path': Path(str(image_timestamps['report_path'])).name}
     return {'model_time_standard': 'BJD_TDB',
             'ephemeris': parameters.get('ephemeris_timing'),
-            'image_timestamps': info.get('timestamp_selection_summary'),
+            'image_timestamps': image_timestamps,
             'calculated_mjd_obs_vs_date_obs_tmid': comparison,
             'prereduced_input_time_standard': info.get('file_time')}

@@ -1,5 +1,9 @@
 # Simultaneously Fit Radial Velocity and Transit Photometry Data
 
+Running `joint_fit.py` writes `grv_fit.pkl` with the fitted object. This
+generated result is ignored by Git; the input CSV files and example plots
+remain available here.
+
 ![](joint_rv_fit.png)
 
 Fitting transit photometry, radial velocities, and transit/eclipse timing (mid-points) in a joint analysis enables better estimates on the system parameters. The transit photometry constrains the inclination and impact parameter, while the radial velocities constrain the eccentricity and argument of periastron. The transit/eclipse timing constrains the orbital period and eccentricity. This method requires a combined likelihood function. The physical model for each dataset uses common system parameters to enforce consistency. The likelihood includes chi-square terms comparing the data to models for the transit light curve, RV curve, and linear ephemeris. Joint modeling leverages the complementary constraints from each technique - transit durations and impact parameter, Doppler shifts over the orbit, precise transit times - to fully determine the orbital and planetary properties. Inflated RV uncertainties via jitter terms prevent underestimation. The joint analysis enhances precision and accuracy over individual models, capturing the complete system dynamics.

@@ -1,14 +1,16 @@
 # N-body Retrievals 
 
-Coming soon to EXOTIC...
+EXOTIC provides an [N-body API](../../exotic/api/nbody.py) for simulation and retrieval development.
 
 ## Prior estimate
 
-The lomb-scargle periodogram from our ephemeris fitting code can be used to estimate a prior for an N-body retrieval. Transit timing variations (TTV) alone are not sufficient to uniquely constrain a single solution, instead multiple modes can exist which give the same amplitude/periodicity of perturbation. The distinguishing factor will rely on radial velocity measurements but none the less this approach can help limit the search space for potential planets. Below is a figure highlighting results from a grid of N-body simulations where we construct a mask based on the amplitude and periodicity found in the O-C diagram. The mask is used to constrain the N-body retrieval (i.e. search space) which significantly reduces the number of simulations needed to find a solution.
+The Lomb-Scargle periodogram from our ephemeris fitting code can help estimate a prior for an N-body retrieval. Transit timing variations (TTV) alone can admit multiple solutions with the same amplitude and periodicity. Radial velocity measurements can help distinguish those solutions.
 
-![](ttv_prior.png)
+The API's `estimate_prior()` function reads a precomputed simulation grid from a FITS file. Its default path is `exotic/api/ttv_grid.fits`, but that grid is not included in this repository. Supply an existing grid with `estimate_prior(..., file_name="/path/to/ttv_grid.fits")`; the function does not generate it.
 
-The example code has recently been refactored from [Nbody-AI](https://github.com/pearsonkyle/Nbody-ai) and is still in development. Some retrievals may not work entirely... please be paitent and report any issues to our slack.
+The [historical demo script](../../older_for_review/examples/nbody/example.py) and its [grid illustration](../../older_for_review/examples/nbody/grid_500_150.png) are preserved in `older_for_review/`. The demo depends on the missing grid, so its complete workflow cannot run from the bundled files alone. With the grid available, it saves a prior-estimate figure as `ttv_prior.png`.
+
+The demo was adapted from [Nbody-AI](https://github.com/pearsonkyle/Nbody-ai) and remains development material.
 
 If you make use of this code please cite:
 

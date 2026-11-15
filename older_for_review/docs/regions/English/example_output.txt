@@ -227,7 +227,7 @@ The Mean Squared Error is: 255638.858211
 
 
 *********************************************
-Best Comparison Star: #2
+Transit Fit Comparison Star: #2
 Minimum Residual Scatter: 0.5414%
 Optimal Aperture: 4
 Optimal Annulus: 5

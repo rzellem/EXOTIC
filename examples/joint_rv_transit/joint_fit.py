@@ -6,7 +6,7 @@ from astropy import constants as const
 import matplotlib.pyplot as plt
 from exotic.api.rv_fitter import rv_fitter
 from exotic.api.joint_fitter import joint_fitter
-from pylightcurve.models.exoplanet_lc import eclipse_mid_time
+from exotic.api.transit_reference import eclipse_mid_time
 
 Mjup = const.M_jup.to(u.kg).value
 Msun = const.M_sun.to(u.kg).value

@@ -7,173 +7,85 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_imports_eagerly_load_pylightcurve_without_noise():
+def test_normal_import_and_native_transit_do_not_initialize_pylightcurve():
     script = textwrap.dedent(
         """
-        import tempfile
+        import builtins
         import sys
-        import types
-        from pathlib import Path
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            package_dir = root / "pylightcurve"
-            model_dir = package_dir / "models"
-            model_dir.mkdir(parents=True)
-
-            (package_dir / "__init__.py").write_text("", encoding="utf-8")
-            (model_dir / "__init__.py").write_text("", encoding="utf-8")
-            (model_dir / "exoplanet_lc.py").write_text(
-                "import sys\\n"
-                "print('LOUD-STDOUT')\\n"
-                "print('LOUD-STDERR', file=sys.stderr)\\n"
-                "def transit(*args, **kwargs): return 'stub-transit'\\n"
-                "def eclipse_mid_time(*args, **kwargs): return 0.0\\n",
-                encoding="utf-8",
-            )
-
-            sys.path.insert(0, str(root))
-
-            for name in list(sys.modules):
-                if name == "exotic.api.elca" or name == "exotic.api.joint_fitter" or name.startswith("pylightcurve"):
-                    sys.modules.pop(name)
-
-            fake_ultranest = types.ModuleType("ultranest")
-            fake_ultranest.ReactiveNestedSampler = type("ReactiveNestedSampler", (), {})
-            sys.modules["ultranest"] = fake_ultranest
-            fake_plotting = types.ModuleType("plotting")
-            fake_plotting.corner = lambda *args, **kwargs: None
-            sys.modules["plotting"] = fake_plotting
-            sys.modules["exotic.api.plotting"] = fake_plotting
-            fake_ultranest_utils = types.ModuleType("ultranest_utils")
-            fake_ultranest_utils.run_reactive_sampler = lambda *args, **kwargs: None
-            sys.modules["ultranest_utils"] = fake_ultranest_utils
-            sys.modules["exotic.api.ultranest_utils"] = fake_ultranest_utils
-
-            import exotic.api.elca as elca
-            import exotic.api.joint_fitter as joint_fitter
-
-            assert "pylightcurve.models.exoplanet_lc" in sys.modules
-
-            minimal_values = {
-                "_claret_backend": "python",
-                "u0": 0.0,
-                "u1": 0.0,
-                "u2": 0.0,
-                "u3": 0.0,
-                "rprs": 0.1,
-                "per": 1.0,
-                "ars": 10.0,
-                "ecc": 0.0,
-                "inc": 89.0,
-                "omega": 90.0,
-                "tmid": 0.0,
-            }
-
-            assert elca.transit([0.0], minimal_values) == "stub-transit"
-            assert joint_fitter.pytransit([0.0, 0.0, 0.0, 0.0], 0.1, 1.0, 10.0, 0.0, 89.0, 90.0, 0.0, [0.0]) == "stub-transit"
-            print("imports-ok")
-        """
-    )
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert "imports-ok" in result.stdout
-    assert "Importing modules. Please wait......." not in result.stdout
-    assert "LOUD-STDOUT" not in result.stdout
-    assert "LOUD-STDERR" not in result.stderr
-
-
-def test_transit_supersamples_points_with_significant_exposure_smearing():
-    script = textwrap.dedent(
-        """
-        import sys
-        import tempfile
-        import types
-        from pathlib import Path
-
         import numpy as np
 
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            package_dir = root / "pylightcurve"
-            model_dir = package_dir / "models"
-            model_dir.mkdir(parents=True)
+        original_import = builtins.__import__
+        def forbid_catalogue_initialization(name, *args, **kwargs):
+            if name == 'pylightcurve' or name.startswith('pylightcurve.'):
+                raise AssertionError('C++ setup must not initialize PyLightcurve catalogues')
+            return original_import(name, *args, **kwargs)
+        builtins.__import__ = forbid_catalogue_initialization
 
-            (package_dir / "__init__.py").write_text("", encoding="utf-8")
-            (model_dir / "__init__.py").write_text("", encoding="utf-8")
-            (model_dir / "exoplanet_lc.py").write_text(
-                "import numpy as np\\n"
-                "def transit(*args, **kwargs):\\n"
-                "    times = np.asarray(args[-1], dtype=float)\\n"
-                "    return 1.0 + times ** 2\\n"
-                "def eclipse_mid_time(*args, **kwargs): return 0.0\\n",
-                encoding="utf-8",
-            )
-
-            sys.path.insert(0, str(root))
-            for name in list(sys.modules):
-                if name == "exotic.api.elca" or name.startswith("pylightcurve"):
-                    sys.modules.pop(name)
-
-            fake_ultranest = types.ModuleType("ultranest")
-            fake_ultranest.ReactiveNestedSampler = type("ReactiveNestedSampler", (), {})
-            sys.modules["ultranest"] = fake_ultranest
-            fake_plotting = types.ModuleType("plotting")
-            fake_plotting.corner = lambda *args, **kwargs: None
-            sys.modules["plotting"] = fake_plotting
-            sys.modules["exotic.api.plotting"] = fake_plotting
-            fake_ultranest_utils = types.ModuleType("ultranest_utils")
-            fake_ultranest_utils.run_reactive_sampler = lambda *args, **kwargs: None
-            sys.modules["ultranest_utils"] = fake_ultranest_utils
-            sys.modules["exotic.api.ultranest_utils"] = fake_ultranest_utils
-
-            import exotic.api.elca as elca
-
-            values = {
-                "_claret_backend": "python",
-                "u0": 0.0,
-                "u1": 0.0,
-                "u2": 0.0,
-                "u3": 0.0,
-                "rprs": 0.1,
-                "per": 1.0,
-                "ars": 10.0,
-                "ecc": 0.0,
-                "inc": 90.0,
-                "omega": 90.0,
-                "tmid": 0.0,
-                elca.EXPOSURE_SMEARING_EXPOSURE_TIME_KEY: np.array([3600.0 / 86400.0]),
-                elca.EXPOSURE_SMEARING_SUPERSAMPLE_KEY: 5,
-                elca.EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY: 0.0,
-            }
-
-            result = elca.transit(np.array([0.0]), values)
-            offsets = (np.arange(5, dtype=float) + 0.5) / 5.0 - 0.5
-            expected = np.mean(1.0 + ((3600.0 / 86400.0) * offsets) ** 2)
-            assert np.allclose(result, [expected])
-            assert result[0] > 1.0
-            print("smearing-ok")
+        import exotic.exotic
+        import exotic.api.elca as elca
+        values = dict(rprs=.1, per=3., ars=10., ecc=0., inc=89., omega=90.,
+                      tmid=0., u0=.3, u1=.2, u2=.1, u3=.05)
+        flux = elca.transit(np.array([0., .01]), values)
+        assert flux.shape == (2,) and np.isfinite(flux).all()
+        assert 'pylightcurve' not in sys.modules
+        print('native-startup-ok')
         """
     )
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
+    result = subprocess.run([sys.executable, '-c', script], cwd=REPO_ROOT,
+                            capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr or result.stdout
-    assert "smearing-ok" in result.stdout
+    assert 'native-startup-ok' in result.stdout
+
+
+def test_python_and_joint_models_need_no_pylightcurve_or_catalogues():
+    script = textwrap.dedent(
+        """
+        import builtins
+        import sys
+        import numpy as np
+        original_import = builtins.__import__
+        def forbid_external_package(name, *args, **kwargs):
+            if name == 'pylightcurve' or name.startswith('pylightcurve.'):
+                raise AssertionError('Python reference must be data-free')
+            return original_import(name, *args, **kwargs)
+        builtins.__import__ = forbid_external_package
+        from exotic.api import elca, joint_fitter
+        times = np.linspace(-.1, .1, 31)
+        values = dict(_claret_backend='python', rprs=.1, per=3., ars=10.,
+                      ecc=.15, inc=89., omega=65., tmid=0.,
+                      u0=.3, u1=.2, u2=.1, u3=.05)
+        reference = elca.transit(times, values)
+        np.testing.assert_array_equal(reference, joint_fitter.transit(times, values))
+        assert np.isfinite(reference).all() and reference.min() < 1.
+        assert joint_fitter.eclipse_mid_time(3.,10.,0.,89.,90.,0.) == 1.5
+        assert not any(n == 'pylightcurve' or n.startswith('pylightcurve.') for n in sys.modules)
+        print('local-models-ok')
+        """
+    )
+    result = subprocess.run([sys.executable, '-c', script], cwd=REPO_ROOT,
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert 'local-models-ok' in result.stdout
+
+
+def test_transit_supersamples_points_with_significant_exposure_smearing(monkeypatch):
+    import numpy as np
+    from exotic.api import elca
+
+    def quadratic_transit(*args, **kwargs):
+        return 1.0 + np.asarray(args[-1], dtype=float) ** 2
+
+    monkeypatch.setattr(elca, 'pytransit', quadratic_transit)
+    values = dict(_claret_backend='python', rprs=.1, per=1., ars=10.,
+                  ecc=0., inc=90., omega=90., tmid=0., u0=0., u1=0., u2=0., u3=0.)
+    values.update({elca.EXPOSURE_SMEARING_EXPOSURE_TIME_KEY: np.array([3600. / 86400.]),
+                   elca.EXPOSURE_SMEARING_SUPERSAMPLE_KEY: 5,
+                   elca.EXPOSURE_SMEARING_CHANGE_TOLERANCE_KEY: 0.})
+    result = elca.transit(np.array([0.]), values)
+    offsets = (np.arange(5, dtype=float) + .5) / 5. - .5
+    expected = np.mean(1. + ((3600. / 86400.) * offsets) ** 2)
+    np.testing.assert_allclose(result, [expected])
+    assert result[0] > 1.
 
 
 def test_import_exotic_avoids_unused_astroquery_modules():

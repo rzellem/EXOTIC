@@ -14,29 +14,12 @@ import pytest
 def load_elca_with_stubs(monkeypatch, tmp_path):
     import exotic.api as exotic_api
 
-    root = tmp_path / "stubdeps"
-    package_dir = root / "pylightcurve"
-    model_dir = package_dir / "models"
-    model_dir.mkdir(parents=True)
-
-    (package_dir / "__init__.py").write_text("", encoding="utf-8")
-    (model_dir / "__init__.py").write_text("", encoding="utf-8")
-    (model_dir / "exoplanet_lc.py").write_text(
-        "import numpy as np\n"
-        "def transit(ld, rprs, per, ars, ecc, inc, omega, tmid, times, method=None, precision=None):\n"
-        "    times = np.asarray(times, dtype=float)\n"
-        "    return 1.0 - (rprs ** 2) * np.exp(-0.5 * ((times - tmid) / 0.01) ** 2)\n",
-        encoding="utf-8",
-    )
-
-    monkeypatch.syspath_prepend(str(root))
-
-    # Track both import caches with monkeypatch so the real ELCA/PyLightCurve
-    # modules are restored after each test.  A raw sys.modules.pop() leaves the
+    # Track both import caches so the real ELCA module is restored after each
+    # test. A raw sys.modules.pop() leaves the
     # stubbed ELCA module behind and contaminates tests collected after this file.
     monkeypatch.delattr(exotic_api, "elca", raising=False)
     for name in list(sys.modules):
-        if name == "exotic.api.elca" or name.startswith("pylightcurve"):
+        if name == "exotic.api.elca":
             monkeypatch.delitem(sys.modules, name, raising=False)
 
     fake_ultranest = types.ModuleType("ultranest")
@@ -54,12 +37,19 @@ def load_elca_with_stubs(monkeypatch, tmp_path):
 
     import exotic.api.elca as elca
 
-    return importlib.reload(elca)
+    elca = importlib.reload(elca)
+
+    def gaussian_transit(ld, rprs, per, ars, ecc, inc, omega, tmid, times, method=None, precision=None):
+        times = np.asarray(times, dtype=float)
+        return 1.0 - rprs ** 2 * np.exp(-0.5 * ((times - tmid) / 0.01) ** 2)
+
+    monkeypatch.setattr(elca, "pytransit", gaussian_transit)
+    return elca
 
 
 def make_prior():
     return {
-        # These tests deliberately use the Gaussian PyLightcurve test double.
+        # These baseline tests deliberately use a Gaussian transit test double.
         "_claret_backend": "python",
         "rprs": 0.1,
         "ars": 12.0,

@@ -38,9 +38,6 @@
 from astropy import constants as const
 from astropy import units as u
 from copy import deepcopy
-from contextlib import redirect_stderr, redirect_stdout
-import faulthandler
-import io
 from itertools import cycle
 import os
 import sys
@@ -59,42 +56,10 @@ try:
 except ImportError:
     from .ultranest_utils import run_reactive_sampler
 
-def _pylightcurve_import_watchdog_seconds():
-    try:
-        return float(os.environ.get("EXOTIC_IMPORT_WATCHDOG_SECONDS", "120"))
-    except (TypeError, ValueError):
-        return 120.0
-
-
-def _start_import_watchdog():
-    timeout = _pylightcurve_import_watchdog_seconds()
-    if timeout <= 0:
-        return False
-
-    try:
-        if not faulthandler.is_enabled():
-            faulthandler.enable(file=sys.__stdout__, all_threads=True)
-        faulthandler.dump_traceback_later(timeout, repeat=True, file=sys.__stdout__)
-        return True
-    except Exception:
-        return False
-
-
-def _load_pylightcurve_symbols():
-    watchdog_started = _start_import_watchdog()
-    try:
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit
-        return eclipse_mid_time, transit
-    finally:
-        if watchdog_started:
-            try:
-                faulthandler.cancel_dump_traceback_later()
-            except Exception:
-                pass
-
-
-eclipse_mid_time, _pylightcurve_transit = _load_pylightcurve_symbols()
+try:
+    from .transit_reference import eclipse_mid_time, transit as _reference_transit
+except ImportError:
+    from transit_reference import eclipse_mid_time, transit as _reference_transit
 
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value
@@ -151,7 +116,7 @@ def planet_orbit(period, sma_over_rs, eccentricity, inclination, periastron, mid
 
 def pytransit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity, inclination, periastron,
             mid_time, time_array, method='claret', precision=3):
-    return _pylightcurve_transit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity,
+    return _reference_transit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity,
                                  inclination, periastron, mid_time, time_array, method=method, precision=precision)
 
 def transit(times, values):

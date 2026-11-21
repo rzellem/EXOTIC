@@ -1,4 +1,4 @@
-"""Native precision=3 Claret model against the installed reference evaluator."""
+"""Native precision=3 Claret model against the local Python reference."""
 import numpy as np
 import pytest
 

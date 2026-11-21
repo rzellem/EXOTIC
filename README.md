@@ -59,6 +59,14 @@ tabulated nodes and contact cases; its MIT license is included in
 all draws for each orbit into one native call, including the original baseline
 solver, duration prior and conditional impact-parameter prior normalization.
 Grid selection, importance weights and uncertainty summaries remain in Python.
+The independent Python reference now lives in `exotic.api.transit_reference`.
+It retains PyLightcurve 4.0.4's orbital equations, transit/eclipse integration,
+quadrature tables and eclipse-time solver without importing PyLightcurve or
+loading its catalogues. Joint transit/RV/ephemeris fits use these local routines.
+Normal EXOTIC fitting and Colab setup no longer require PyLightcurve. Stellar
+atmosphere profiles still use the existing LDTK/PHOENIX path. Examples that
+explicitly call ExoTETHYS can install the optional `exotethys` dependency extra
+(`pip install 'exotic[exotethys]'`); that separate feature retains PyLightcurve.
 Gaussian PSF fitting and aperture extraction also use this automatically built
 library. The PSF kernel runs the bounded trust-region solver, Gaussian residuals
 and numerical derivatives in C++; its SVD uses the existing SciPy/LAPACK runtime.

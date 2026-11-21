@@ -122,3 +122,18 @@ def test_bundled_exotic_accepts_colabs_numpy_version():
                              if Requirement(value).name == 'numpy')
     assert '2.4.6' in numpy_requirement.specifier
     assert metadata['Version'] in '\n'.join(manifest['requirements'])
+
+
+def test_bundled_reference_needs_no_external_pylightcurve():
+    manifest = json.loads((WHEELHOUSE / 'index.json').read_text(encoding='utf-8'))
+    wheel = next(name for name in manifest['wheels'] if name.startswith('exotic-'))
+    with ZipFile(WHEELHOUSE / wheel) as archive:
+        assert 'exotic/api/transit_reference.py' in archive.namelist()
+        assert 'exotic/api/_reference_quadrature.py' in archive.namelist()
+        metadata = BytesParser().parsebytes(archive.read(next(
+            name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))))
+    requirement = next(Requirement(value) for value in metadata.get_all('Requires-Dist')
+                       if Requirement(value).name == 'pylightcurve')
+    assert requirement.marker is not None
+    assert not requirement.marker.evaluate({'extra': ''})
+    assert requirement.marker.evaluate({'extra': 'exotethys'})

@@ -13,6 +13,20 @@ wheel; only dependency metadata and the matching version label changed. The
 installer constrains NumPy to the runtime's existing installed version, so a
 normal Colab setup keeps its preloaded NumPy instead of upgrading it.
 
+The `.localmath` revision includes EXOTIC's local Python reference calculations
+for orbital geometry, transit/eclipse integration and eclipse timing. Native
+fits, Python comparisons and joint fits no longer import PyLightcurve or load
+its catalogues. The original PyLightcurve 4.0.4 quadrature tables and numerical
+rules are retained under its included MIT license. Only the optional
+`exotethys` extra retains that external dependency for examples that call it.
+Normal LDTK/PHOENIX stellar profiles are unchanged.
+
+This revision repackages the tested Linux wheel with the revised `elca.py` and
+`joint_fitter.py`, two local reference modules, dependency metadata and matching
+version label. The compiled library, native sources and the other 60 package
+files are byte-identical to the previous wheel. Wheel RECORD entries are
+regenerated for software-distribution integrity; no science data is hashed.
+
 The installer downloads the manifest's wheels and uses pip's binary-only
 selection for these three packages. Its JSON manifest works with GitHub's raw
 file MIME types, without requiring an HTML package-index service.

@@ -41,9 +41,6 @@
 # ########################################################################### #
 from astropy.time import Time
 import copy
-from contextlib import redirect_stderr, redirect_stdout
-import faulthandler
-import io
 from itertools import cycle, product
 import math
 import os
@@ -144,42 +141,10 @@ def _add_differential_hours_axis(ax, period_days):
     return time_axis
 
 
-def _pylightcurve_import_watchdog_seconds():
-    try:
-        return float(os.environ.get("EXOTIC_IMPORT_WATCHDOG_SECONDS", "120"))
-    except (TypeError, ValueError):
-        return 120.0
-
-
-def _start_import_watchdog():
-    timeout = _pylightcurve_import_watchdog_seconds()
-    if timeout <= 0:
-        return False
-
-    try:
-        if not faulthandler.is_enabled():
-            faulthandler.enable(file=sys.__stdout__, all_threads=True)
-        faulthandler.dump_traceback_later(timeout, repeat=True, file=sys.__stdout__)
-        return True
-    except Exception:
-        return False
-
-
-def _load_pylightcurve_transit():
-    watchdog_started = _start_import_watchdog()
-    try:
-        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            from pylightcurve.models.exoplanet_lc import transit
-        return transit
-    finally:
-        if watchdog_started:
-            try:
-                faulthandler.cancel_dump_traceback_later()
-            except Exception:
-                pass
-
-
-pytransit = _load_pylightcurve_transit()
+try:
+    from .transit_reference import planet_orbit, transit as pytransit
+except ImportError:
+    from transit_reference import planet_orbit, transit as pytransit
 
 
 def weightedflux(flux, gw, nearest):
@@ -206,7 +171,6 @@ def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):
 def _instantaneous_transit(times, values):
     law = values.get('_limb_darkening_law', 'claret')
     if law == 'hybrid4':
-        from pylightcurve.models.exoplanet_lc import planet_orbit
         position = planet_orbit(
             values['per'], values['ars'], values['ecc'], values['inc'],
             values['omega'], values['tmid'], np.asarray(times, dtype=float),

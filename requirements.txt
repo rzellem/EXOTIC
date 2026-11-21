@@ -15,7 +15,6 @@ pandas>=2.2.3
 bokeh>=3.9.2
 photutils>=3.0.0
 psutil>=5.9.6
-pylightcurve>=4.0.4
 python-dateutil>=2.9.0.post0
 pyvo>=1.9.1
 rebound>=5.1.1

@@ -7,12 +7,20 @@ and has no Python C ABI dependency; UltraNest's extension uses CPython 3.13.
 The package versions and wheel filenames are recorded in `requirements.txt`
 and `index.json`. The original wheel license files are preserved.
 
+The `.numpy24` EXOTIC wheel revises the declared NumPy minimum to 2.4.6.
+Its compiled library and native sources are identical to the previous tested
+wheel; only dependency metadata and the matching version label changed. The
+installer constrains NumPy to the runtime's existing installed version, so a
+normal Colab setup keeps its preloaded NumPy instead of upgrading it.
+
 The installer downloads the manifest's wheels and uses pip's binary-only
 selection for these three packages. Its JSON manifest works with GitHub's raw
 file MIME types, without requiring an HTML package-index service.
 Ordinary dependencies continue to resolve through the normal package index.
 If a future Colab Python ABI or platform needs another UltraNest wheel, pip
 reports the incompatibility instead of silently compiling it from source.
+Likewise, if another dependency cannot use the retained NumPy version, pip
+reports that dependency conflict instead of replacing NumPy.
 
 From an existing checkout, the wheelhouse can already be used locally:
 

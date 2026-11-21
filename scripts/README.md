@@ -85,6 +85,10 @@ wheelhouse. It uses pip's standard wheel selection and
 for EXOTIC, UltraNest and the notebook helper. Dependencies continue to use
 normal pip resolution. Missing downloads and incompatible native wheels are
 reported directly; the installer does not retry with a Git or source build.
+When NumPy is already installed, the installer passes its exact version as a
+pip constraint. This preserves Colab's preloaded version. EXOTIC's declared
+minimum is NumPy 2.4.6; the prepared `.numpy24` wheel has the same corrected
+dependency metadata and preserves the original native library.
 
 The prepared wheels, version requirements and download manifest are in
 [`wheelhouse/colab`](../wheelhouse/colab/README.md). The default download URLs

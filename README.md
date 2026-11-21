@@ -94,6 +94,8 @@ Python version. The tested Colab wheels are prepared in
 and a download manifest. The shared installer can fetch them automatically
 once those repository files are published; no per-notebook ZIP is needed.
 Commit and push the prepared files before switching the notebook's setup cell.
+The shared installer keeps the runtime's existing NumPy using a pip constraint;
+the source requirements and revised Colab wheel support NumPy 2.4.6.
 Installing those wheels avoids rebuilding either native component. Installing EXOTIC from a Git
 URL is a source install and still compiles the backend. See
 [the wheel-building instructions](scripts/README.md#prebuilt-colab-wheels).

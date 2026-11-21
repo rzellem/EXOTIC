@@ -1,11 +1,11 @@
 {
   "requirements": [
-    "exotic==4.3.2.dev204+g94ec4bc6b.d20261121",
+    "exotic==4.3.2.dev204+g94ec4bc6b.d20261121.numpy24",
     "exoticcolab==0.1.dev71+gef0aa1741",
     "ultranest==4.6.3"
   ],
   "wheels": [
-    "exotic-4.3.2.dev204+g94ec4bc6b.d20261121-py3-none-manylinux_2_38_x86_64.whl",
+    "exotic-4.3.2.dev204+g94ec4bc6b.d20261121.numpy24-py3-none-manylinux_2_38_x86_64.whl",
     "exoticcolab-0.1.dev71+gef0aa1741-py3-none-any.whl",
     "ultranest-4.6.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
   ]

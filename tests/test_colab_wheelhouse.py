@@ -1,12 +1,16 @@
 """Resolve the real Colab wheels through pip without installing into this host."""
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from email.parser import BytesParser
 import json
 from pathlib import Path
 import runpy
 import subprocess
 from threading import Thread
 from urllib.error import HTTPError
+from zipfile import ZipFile
+
+from packaging.requirements import Requirement
 
 import pytest
 
@@ -106,3 +110,15 @@ def test_new_build_index_does_not_advertise_previous_builds(tmp_path):
     assert 'exotic==99.0' not in requirements
     assert all(wheel.name in index for wheel in current)
     assert 'ultranest==4.6.3' in requirements
+
+
+def test_bundled_exotic_accepts_colabs_numpy_version():
+    manifest = json.loads((WHEELHOUSE / 'index.json').read_text(encoding='utf-8'))
+    wheel = next(name for name in manifest['wheels'] if name.startswith('exotic-'))
+    with ZipFile(WHEELHOUSE / wheel) as archive:
+        metadata_path = next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))
+        metadata = BytesParser().parsebytes(archive.read(metadata_path))
+    numpy_requirement = next(Requirement(value) for value in metadata.get_all('Requires-Dist')
+                             if Requirement(value).name == 'numpy')
+    assert '2.4.6' in numpy_requirement.specifier
+    assert metadata['Version'] in '\n'.join(manifest['requirements'])

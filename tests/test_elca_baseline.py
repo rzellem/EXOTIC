@@ -59,6 +59,8 @@ def load_elca_with_stubs(monkeypatch, tmp_path):
 
 def make_prior():
     return {
+        # These tests deliberately use the Gaussian PyLightcurve test double.
+        "_claret_backend": "python",
         "rprs": 0.1,
         "ars": 12.0,
         "per": 3.0,
@@ -1203,6 +1205,77 @@ def test_posterior_model_uncertainty_recenters_on_best_fit_model(monkeypatch, tm
 
     np.testing.assert_allclose(center, elca.transit(time, fit.parameters), atol=5e-5)
     assert np.nanmedian(center[:3]) < 1.001
+
+
+@pytest.mark.parametrize('method', ['transit_model_uncertainty', 'baseline_model_uncertainty'])
+def test_posterior_envelope_combined_quantiles_match_separate_calls(monkeypatch, tmp_path, method):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+    fit = elca.lc_fitter(
+        time, elca.transit(time, prior), np.full_like(time, 1e-3),
+        np.linspace(1., 2., time.size), prior,
+        {'rprs': [0.08, 0.12], 'a0': [0.99, 1.01], 'a2': [-0.1, 0.1]},
+        mode=None, verbose=False,
+    )
+    fit.parameters = prior.copy()
+    fit.errors = {'rprs': 0.002, 'a0': 0.001, 'a2': 0.01}
+    fit.ns_type = 'ultranest'
+    samples = np.linspace(-1., 1., 41)
+    fit.results = {'weighted_samples': {
+        'points': np.column_stack([0.1 + 0.003 * samples, 1. + 0.002 * samples, 0.02 * samples]),
+        'weights': np.arange(41, dtype=float) % 7,
+        'logl': np.zeros(41),
+    }}
+    combined = getattr(fit, method)(time)
+    assert combined is not None
+    original = fit._weighted_quantiles
+    def separate(values, quantiles, weights=None):
+        return np.array([original(values, [q], weights=weights)[0] for q in quantiles])
+    monkeypatch.setattr(fit, '_weighted_quantiles', separate)
+    reference = getattr(fit, method)(time)
+    np.testing.assert_array_equal(combined, reference)
+
+
+def test_final_lightcurve_reuses_bands_across_views_and_refreshes_next_export(monkeypatch, tmp_path):
+    elca = load_elca_with_stubs(monkeypatch, tmp_path)
+    import exotic.plots as plots
+    prior = make_prior()
+    time = np.linspace(-0.03, 0.03, 51)
+    fit = elca.lc_fitter(
+        time, elca.transit(time, prior), np.full_like(time, 1e-3),
+        np.linspace(1., 2., time.size), prior,
+        {'rprs': [0.08, 0.12], 'tmid': [-0.005, 0.005]}, mode='lm', verbose=False,
+    )
+    fit.restricted_baseline_points = {'point_count': 1}
+    calls = {'transit': 0, 'baseline': 0}
+    def transit(times):
+        calls['transit'] += 1
+        return fit.transit_upsample - fit.width, fit.transit_upsample + fit.width
+    def baseline(times):
+        calls['baseline'] += 1
+        return np.ones_like(times) - fit.width, np.ones_like(times) + fit.width
+    monkeypatch.setattr(fit, 'transit_model_uncertainty', transit)
+    monkeypatch.setattr(fit, 'baseline_model_uncertainty', baseline)
+    monkeypatch.setattr(plots, 'fit_empirical_transit_uncertainty', lambda fit: {
+        'available': True, 'depth_uncertainty_fraction': 0.02,
+    })
+    figures = []
+    def record(fig, path, **kwargs):
+        if 'LightCurve' in str(path):
+            figures.append(fig)
+    monkeypatch.setattr(plots, 'save_figure_formats', record)
+    for export_index, width in enumerate((0.001, 0.003), start=1):
+        fit.width = width
+        plots.plot_final_lightcurve(fit, fit.transit_upsample, 'Target', tmp_path, '2026-11-21')
+        assert calls == {'transit': export_index, 'baseline': export_index}
+        assert len(figures) == 2 * export_index
+        for fig in figures[-2:]:
+            red_edges = [line.get_ydata() for line in fig.axes[0].lines
+                         if line.get_color() == 'red' and line.get_linestyle() == '--']
+            assert len(red_edges) == 2
+            np.testing.assert_array_equal(red_edges[0], fit.transit_upsample - width)
+            np.testing.assert_array_equal(red_edges[1], fit.transit_upsample + width)
 
 
 def test_glc_plot_bestfit_median_limits_use_full_phase_span(monkeypatch, tmp_path):

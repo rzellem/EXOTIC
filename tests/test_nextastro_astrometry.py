@@ -8,6 +8,8 @@ from types import ModuleType
 import numpy as np
 from astropy.io.fits import getheader, writeto, setval
 import pytest
+import requests
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError, ReadTimeoutError
 
 from exotic.api.plate_solution import NextAstroPlateSolution, PlateSolution
 from exotic.api.plate_solution import _NEXTASTRO_CLIENT_API_KEY
@@ -104,6 +106,112 @@ def test_custom_astrometry_endpoint_does_not_switch_to_standard_servers(monkeypa
 
     assert solver.plate_solution() is False
     assert attempts == ['https://custom.example/astrometry']
+
+
+@pytest.mark.parametrize('poll_result', ['queued', 'running', 'timeout', 'bad_gateway', 'invalid_json'])
+def test_accepted_dalton_job_is_not_duplicated_on_shadow_after_poll_failure(
+        tmp_path, monkeypatch, poll_result):
+    module = sys.modules[NextAstroPlateSolution.__module__]
+    path = _create_test_fits(tmp_path)
+    messages, posts, gets = [], [], []
+    solver = NextAstroPlateSolution(file=path, directory=tmp_path,
+                                   suppress_fail_warning=True, message_logger=messages.append)
+    monkeypatch.setattr(solver, '_generate_source_list', lambda: {'x': [1], 'y': [2], 'flux': [10]})
+    monkeypatch.setattr(module, '_NEXTASTRO_STATUS_MAX_POLLS', 2)
+    monkeypatch.setattr(module.time, 'sleep', lambda _: None)
+
+    def post(url, **kwargs):
+        posts.append(url)
+        return DummyResponse({'status': 'queued', 'request_id': 'accepted-on-dalton'})
+
+    def get(url, **kwargs):
+        gets.append(url)
+        if poll_result == 'timeout':
+            raise module.requests.ReadTimeout('poll timed out')
+        if poll_result == 'bad_gateway':
+            return DummyResponse({'detail': 'Bad gateway'}, status_code=502)
+        if poll_result == 'invalid_json':
+            return DummyResponse(json_error=ValueError('incomplete response'))
+        return DummyResponse({'status': poll_result})
+
+    monkeypatch.setattr(module.requests, 'post', post)
+    monkeypatch.setattr(module.requests, 'get', get)
+    assert solver.plate_solution() is False
+    assert posts == ['https://astrometry.daltonnextastro.org/solve']
+    assert all(url == 'https://astrometry.daltonnextastro.org/status/accepted-on-dalton' for url in gets)
+    assert solver.last_request_id == 'accepted-on-dalton'
+    assert any('request accepted-on-dalton' in message for message in messages)
+
+
+def test_confirmed_failed_dalton_solve_is_not_repeated_on_shadow(tmp_path, monkeypatch):
+    module = sys.modules[NextAstroPlateSolution.__module__]
+    path = _create_test_fits(tmp_path)
+    (tmp_path / 'working_artifacts').mkdir()
+    solver = NextAstroPlateSolution(file=path, directory=tmp_path, suppress_fail_warning=True)
+    monkeypatch.setattr(solver, '_generate_source_list', lambda: {'x': [1], 'y': [2], 'flux': [10]})
+    posts, gets = [], []
+
+    def post(url, **kwargs):
+        posts.append(url)
+        return DummyResponse({'status': 'queued', 'request_id': 'accepted'})
+
+    def get(url, **kwargs):
+        gets.append(url)
+        if url.startswith('https://astrometry.daltonnextastro.org/'):
+            return DummyResponse({'status': 'failed', 'error': 'no solution'})
+        return DummyResponse({'status': 'solved', 'solution': {'wcs_header': {'CTYPE1': 'RA---TAN'}}})
+
+    monkeypatch.setattr(module.requests, 'post', post)
+    monkeypatch.setattr(module.requests, 'get', get)
+    assert solver.plate_solution() is False
+    assert posts == [module._NEXTASTRO_API_URLS[0] + '/solve']
+    assert gets == [module._NEXTASTRO_API_URLS[0] + '/status/accepted']
+
+
+@pytest.mark.parametrize('failure', [
+    requests.ConnectTimeout('connect timed out'),
+    requests.ReadTimeout('read timed out'),
+    requests.Timeout('request timed out'),
+    requests.ConnectionError(ReadTimeoutError(None, '/solve', 'body timed out')),
+    requests.ConnectionError(MaxRetryError(None, '/solve', ConnectTimeoutError('connect timed out'))),
+    DummyResponse({}, status_code=502),
+    DummyResponse({}, status_code=503),
+    DummyResponse(json_error=ValueError('invalid JSON')),
+])
+def test_submission_timeout_or_server_response_does_not_try_shadow(tmp_path, monkeypatch, failure):
+    module = sys.modules[NextAstroPlateSolution.__module__]
+    solver = NextAstroPlateSolution(file=_create_test_fits(tmp_path), directory=tmp_path,
+                                   suppress_fail_warning=True)
+    monkeypatch.setattr(solver, '_generate_source_list', lambda: {'x': [1], 'y': [2], 'flux': [10]})
+    posts = []
+    def post(url, **kwargs):
+        posts.append(url)
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+    monkeypatch.setattr(module.requests, 'post', post)
+    assert solver.plate_solution() is False
+    assert posts == ['https://astrometry.daltonnextastro.org/solve']
+
+
+def test_poll_literal_connection_error_can_try_shadow(tmp_path, monkeypatch):
+    module = sys.modules[NextAstroPlateSolution.__module__]
+    (tmp_path / 'working_artifacts').mkdir()
+    solver = NextAstroPlateSolution(file=_create_test_fits(tmp_path), directory=tmp_path,
+                                   suppress_fail_warning=True)
+    monkeypatch.setattr(solver, '_generate_source_list', lambda: {'x': [1], 'y': [2], 'flux': [10]})
+    posts = []
+    def post(url, **kwargs):
+        posts.append(url)
+        return DummyResponse({'status': 'queued', 'request_id': 'accepted'})
+    def get(url, **kwargs):
+        if url.startswith(module._NEXTASTRO_API_URLS[0]):
+            raise requests.ConnectionError('connection refused')
+        return DummyResponse({'status': 'solved', 'solution': {'wcs_header': {'CTYPE1': 'RA---TAN'}}})
+    monkeypatch.setattr(module.requests, 'post', post)
+    monkeypatch.setattr(module.requests, 'get', get)
+    assert solver.plate_solution().exists()
+    assert posts == [base + '/solve' for base in module._NEXTASTRO_API_URLS]
 
 
 def test_generate_source_list(tmp_path):

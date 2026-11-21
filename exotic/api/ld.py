@@ -256,6 +256,8 @@ class LimbDarkening:
 
     def calculate_ld(self):
         ld_params = createldgrid(np.array([self.wl_min / 1000.]), np.array([self.wl_max / 1000.]), self.priors)
+        profiles = ld_params.get('HYBRID4_PROFILES', [])
+        self.hybrid4 = profiles[0] if profiles else None
         self.set_ld((ld_params['LD'][0][0], ld_params['ERR'][0][0]),
                     (ld_params['LD'][1][0], ld_params['ERR'][1][0]),
                     (ld_params['LD'][2][0], ld_params['ERR'][2][0]),

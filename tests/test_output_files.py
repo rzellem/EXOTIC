@@ -2001,6 +2001,25 @@ def test_final_planetary_params_can_publish_accepted_copy_to_root(tmp_path):
     assert json.loads(root_file.read_text())['FINAL PLANETARY PARAMETERS']['Calculated Tmid change (DATE-OBS minus MJD-OBS)'].startswith('-3.5000 s')
 
 
+def test_selected_final_params_include_both_models_without_running_candidate_comparisons(tmp_path, monkeypatch):
+    from exotic.api import hybrid_comparison
+    calls = []
+    comparison = {'status': 'completed', 'claret': {'posterior': {'rprs': {'median': 0.12}}},
+                  'hybrid4': {'posterior': {'rprs': {'median': 0.121}}}}
+    def compare(fit, info, planet_name, date):
+        calls.append((planet_name, date))
+        return comparison
+    monkeypatch.setattr(hybrid_comparison, 'comparison_for_output', compare)
+    (tmp_path / 'working_artifacts').mkdir()
+    writer = OutputFiles(DummyFit(), {'pName': 'Test b'}, {'save': str(tmp_path), 'date': '2026-11-20'}, [0.1])
+    writer.final_planetary_params(phot_opt=False, vsp_params=[])
+    assert calls == []
+    writer.final_planetary_params(phot_opt=False, vsp_params=[], publish_to_root=True)
+    assert calls == [('Test b', '2026-11-20')]
+    report = json.loads((tmp_path/'FinalParams_Testb_2026-11-20.json').read_text())
+    assert report['LIMB DARKENING MODEL COMPARISON'] == comparison
+
+
 def test_final_planetary_params_reports_adaptive_aperture_summary(tmp_path):
     fit = DummyFit()
     (tmp_path / "working_artifacts").mkdir()

@@ -135,3 +135,10 @@ pl_names.json
 # Generated example results and local archive authentication
 /examples/joint_rv_transit/grv_fit.pkl
 prv.cookies
+
+# Explicit, local hybrid4 C++ build products
+/exotic/api/native/build/
+/exotic/api/native/*.dll
+/exotic/api/native/*.so
+/exotic/api/native/*.dylib
+/exotic/api/native/build_info.json

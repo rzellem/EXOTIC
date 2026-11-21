@@ -25,6 +25,8 @@ args = original_args[1:] if original_args[:1] == ['-P'] else original_args
 kind = 'unknown'
 if args[:2] == ['-m', 'pip']:
     kind = 'pip_check' if args[2:] == ['--version'] else 'install'
+elif args[:2] == ['-m', 'exotic.api.native_build']:
+    kind = 'native_build'
 elif args[:2] == ['-m', 'ensurepip']:
     kind = 'ensurepip'
 elif args[:1] == ['-c']:
@@ -34,7 +36,7 @@ elif args[:1] == ['-c']:
         kind = 'gui'
 
 with open(os.environ['LAUNCHER_TEST_TRACE'], 'a', encoding='utf-8') as stream:
-    stream.write(json.dumps({'kind': kind, 'args': original_args, 'python': sys.executable}) + '\\n')
+    stream.write(json.dumps({'kind': kind, 'args': original_args, 'python': sys.executable, 'cwd': os.getcwd()}) + '\\n')
 
 if kind == 'version_check':
     sys.version_info = tuple(map(int, os.environ['LAUNCHER_TEST_VERSION'].split('.')))
@@ -74,6 +76,7 @@ def run_launcher(request, tmp_path):
         'LAUNCHER_TEST_INSTALL': '0',
         'LAUNCHER_TEST_ENSUREPIP': '0',
         'LAUNCHER_TEST_GUI': '0',
+        'LAUNCHER_TEST_NATIVE_BUILD': '0',
     })
     if os.name == 'nt':
         # Exclude Windows Store aliases and unrelated interpreters from discovery.
@@ -107,40 +110,19 @@ def run_launcher(request, tmp_path):
 
 
 @pytest.mark.parametrize('version', ['3.12.0', '3.13.0', '3.14.0'])
-def test_supported_python_installs_and_launches_with_same_interpreter(run_launcher, version):
-    result, calls, launcher = run_launcher(version=version)
+def test_supported_python_builds_and_launches_checkout_with_same_interpreter(run_launcher, version):
+    result, calls, _ = run_launcher(version=version)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert [call['kind'] for call in calls] == ['version_check', 'pip_check', 'install', 'gui']
+    assert [call['kind'] for call in calls] == ['version_check', 'native_build', 'gui']
     assert {Path(call['python']).resolve() for call in calls} == {Path(sys.executable).resolve()}
-    install = calls[2]['args']
-    assert install[:4] == ['-m', 'pip', 'install', '--upgrade']
-    assert install[-1] == 'exotic'
-    assert calls[-1]['args'][0] == '-P'
-    if launcher.suffix == '.bat':
-        assert Path(install[install.index('--find-links') + 1]) == ROOT / 'wheelhouse'
-        assert install[install.index('--only-binary') + 1] == 'ultranest'
-        assert 'ultranest>=4.5.0' in install
+    assert all(Path(call['cwd']).resolve() == ROOT for call in calls[1:])
+    assert calls[-1]['args'] == ['-c', 'from exotic.exotic_gui import main; main()']
 
 
-def test_failed_install_stops_before_gui(run_launcher):
-    result, calls, _ = run_launcher(install=23)
+def test_failed_native_build_stops_before_gui(run_launcher):
+    result, calls, _ = run_launcher(native_build=23)
     assert result.returncode == 23
-    assert [call['kind'] for call in calls] == ['version_check', 'pip_check', 'install']
-
-
-def test_missing_pip_bootstraps_selected_interpreter(run_launcher):
-    result, calls, _ = run_launcher(pip_check=1)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert [call['kind'] for call in calls] == [
-        'version_check', 'pip_check', 'ensurepip', 'install', 'gui',
-    ]
-    assert {Path(call['python']).resolve() for call in calls} == {Path(sys.executable).resolve()}
-
-
-def test_failed_pip_bootstrap_stops_installation(run_launcher):
-    result, calls, _ = run_launcher(pip_check=1, ensurepip=17)
-    assert result.returncode == 17
-    assert [call['kind'] for call in calls] == ['version_check', 'pip_check', 'ensurepip']
+    assert [call['kind'] for call in calls] == ['version_check', 'native_build']
 
 
 def test_gui_failure_is_reported(run_launcher):

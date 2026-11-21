@@ -16,6 +16,159 @@ A Python 3 package for reducing and analyzing photometric data of exoplanetary t
 ![Light Curve Graph displaying brightness versus time. (NASA Ames)](https://github.com/rzellem/EXOTIC/raw/main/docs/images/transitsimple.jpg)
 (NASA Ames)
 
+## Claret and hybrid4 comparison
+
+Full transit reductions now run an additional hybrid4/UltraNest fit after the
+final comparison-star photometry has been selected. The standard Claret result
+remains the primary result. Both limb-darkening laws are fitted to the same
+LDTk PHOENIX intensity profiles, profile uncertainties, wavelength band and
+existing `mu > 0.1` selection, generated in one atmosphere call.
+
+The secondary fit uses the exact final time, flux, flux-error, airmass and
+exposure arrays, final parameter bounds, duration prior and baseline treatment.
+It does not repeat photometry selection, clipping or detrending. The existing
+exposure integration also applies to hybrid4. Limb-darkening coefficients are
+fixed during both transit fits; the atmosphere coefficient covariance is
+reported separately. The existing Claret atmosphere fit's coefficient-sum
+constraint is retained and recorded, rather than changing the primary model.
+
+Selected full reductions write `LimbDarkeningComparison_<planet>_<date>.json`,
+`.csv` and `.png` beside the normal outputs. The JSON and the new
+`LIMB DARKENING MODEL COMPARISON` section in `FinalParams` report both parameter
+sets, weighted posterior intervals, raw sampled uncertainties, reporting
+adjustments, residual scatter, conditional log evidence and their differences.
+The CSV contains the shared photometry and both models. Quick Look and stellar
+variability modes retain their existing fitting behavior. If the primary fit
+used manually supplied Claret coefficients without atmosphere profiles, the
+comparison explicitly reports that the shared profiles are unavailable. Actual
+secondary fitting failures are logged and reported without substituting another
+model or changing the original result.
+
+The spherical flux kernel is included locally under its MIT license from
+[David Kipping's limbdarkfast](https://github.com/davidkipping/limbdarkfast),
+revision `120caecc7d6d1d60c10cf0ed4ec27e4dede952db`; see
+`exotic/api/limbdarkfast_LICENSE.txt`. No sibling repository or additional
+third-party package is required. See [the replay script](scripts/README.md#claret-and-hybrid4-on-saved-light-curves)
+to compare saved photometry independently of image extraction.
+
+Both the primary Claret model and automatic hybrid4 comparison compute orbital
+geometry, occulted flux and exposure integration in one C++ call per evaluation.
+The Claret kernel retains PyLightcurve 4.0.4's precision-3 radial quadrature,
+tabulated nodes and contact cases; its MIT license is included in
+`exotic/api/pylightcurve_LICENSE.txt`. Saved-posterior orbital sensitivity batches
+all draws for each orbit into one native call, including the original baseline
+solver, duration prior and conditional impact-parameter prior normalization.
+Grid selection, importance weights and uncertainty summaries remain in Python.
+Gaussian PSF fitting and aperture extraction also use this automatically built
+library. The PSF kernel runs the bounded trust-region solver, Gaussian residuals
+and numerical derivatives in C++; its SVD uses the existing SciPy/LAPACK runtime.
+Centroid fits retain their existing starting points. Bounds, convergence
+settings and centroid/shape selection are unchanged. The modern PSF flux fit starts from the measured
+centroid shape: its former circular start left rotation unidentified and could
+converge to different angle-bound minima after small rounding changes. Both
+native and reference controls use this correction; explicit legacy flux mode
+retains its circular start. Custom PSF functions retain their requested Python
+model and the existing exceptional LM path remains available. Aperture grids
+batch exact circle/pixel overlaps, weighted sky percentiles and high-side sigma
+clipping in C++, converting only the local star cutout to native doubles.
+Noise-budget bookkeeping remains in Python. The Photutils and SciPy BSD notices
+are included alongside the native sources. For explicit numerical comparisons,
+`scripts/benchmark_photometry_full.py --backend python` selects the retained
+reference photometry; it is not an automatic fallback after a native failure.
+Both models preserve
+the existing circular/eccentric orbit convention, front/back treatment, exposure
+candidate window, change tolerance and midpoint sample rule. Source package
+installation builds this backend automatically;
+platform wheels include the compiled library. Checkout launchers also prepare it,
+and a direct CLI/API fit builds it on first use if it is missing or older than
+its sources. Subsequent runs reuse it. Concurrent bulk workers share a build
+lock, so they do not compile the same library simultaneously.
+
+Prebuilt wheels carry the library and its build metadata, so a matching Colab
+runtime can use it immediately. EXOTIC's library uses ctypes rather than the
+Python or NumPy C API: wheels use a `py3-none` tag together with the operating
+system and CPU tag, while package metadata retains the Python 3.12 minimum.
+UltraNest has its own Python extension and needs a wheel for the runtime's
+Python version. The tested Colab wheels are prepared in
+[`wheelhouse/colab`](wheelhouse/colab/README.md), with exact software versions
+and a download manifest. The shared installer can fetch them automatically
+once those repository files are published; no per-notebook ZIP is needed.
+Commit and push the prepared files before switching the notebook's setup cell.
+Installing those wheels avoids rebuilding either native component. Installing EXOTIC from a Git
+URL is a source install and still compiles the backend. See
+[the wheel-building instructions](scripts/README.md#prebuilt-colab-wheels).
+
+A C++ compiler is needed when building from source: MSVC **Desktop development
+with C++** on Windows, Xcode Command Line Tools on macOS, or `g++`/`clang++` on
+Linux. Linux/Colab builds use the available compiler; if none is installed,
+install your distribution's C++ build tools once before setup. No extra Python
+dependency or sibling checkout is required. Compiler failures are reported;
+there is no automatic NumPy substitution. Compilation time is separate from
+reported fit time. The kernel uses double precision without fast-math.
+Comparison JSON records this separately as `backend_setup_seconds` and identifies
+the backend for each law. For reference checks, the internal Claret setting
+`_claret_backend='python'` selects the original evaluator, and
+`fit._orbital_replay_backend='python'` selects the scalar replay loop. Neither is
+an automatic fallback from a native failure.
+
+The standard one-dimensional native transit fits also score complete UltraNest
+likelihood batches in C++: impact-parameter conversion, duration prior, exposure
+integration, airmass trend, fixed/free/profiled flux baseline and weighted
+residuals. `lc_fitter(..., likelihood_backend='python')` keeps the Python scoring
+loop for a matched control while retaining the selected transit evaluator.
+The default `likelihood_backend='auto'` uses native scoring for standard C++
+models and retains Python scoring for custom or Python transit models. An
+explicit `'cpp'` request requires the native model and matching 1D fit arrays;
+loading failures never select Python automatically. Comparison JSON records
+`likelihood_backend` for each fit. Sampling bounds and prior transforms are
+unchanged. Final plotting reuses uncertainty envelopes within each export and
+recomputes them on the next export, including after a sampler resume.
+
+Detector preparation also uses C++ for the standard two-dimensional frames:
+exact integer-ADU histogram counts replace a full pixel sort, and local defect
+medians use original good neighbours without padding a second full image.
+Unresolved clusters retain SciPy's existing nearest-pixel operation and tie
+handling. The low-tail rule, masks and float64 results are unchanged. Frame
+loaders reuse owned buffers where possible, and read required FITS HDUs lazily.
+Native errors propagate; general Python-only histogram argument types and
+non-2D compatibility cases retain their reference implementation. The full
+reduction benchmark's `--preparation-backend python` selects the previous
+preparation path while retaining the chosen photometry and likelihood backends.
+
+You can prepare or force a rebuild from the repository console:
+
+```powershell
+.\.venv\Scripts\python.exe -m exotic.api.native_build
+.\.venv\Scripts\python.exe -m exotic.api.native_build --force
+```
+
+On Linux/macOS use `python -m exotic.api.native_build` in the existing environment.
+The compatibility command `python scripts/build_hybrid4_cpp.py` does the same
+work. Build products stay under `exotic/api/native`. Repository GUI launchers
+run this checkout with the active Python environment and do not reinstall
+EXOTIC or its dependencies on every launch. Install missing dependencies
+separately using the installation instructions below.
+
+Comparison JSON references its CSV and PNG by relative filename, so copying or
+archiving the complete result directory preserves those links. Keep all
+`LimbDarkeningComparison_*.json`, `.csv` and `.png` files alongside `FinalParams`
+and the existing diagnostics. The JSON retains both posterior summaries,
+likelihood-call counts, fit durations, goodness of fit, shared settings and
+atmosphere profiles. These are conditional comparisons using fixed coefficients;
+the files do not contain complete posterior sample chains.
+
+Direct API comparisons can select the NumPy reference explicitly with
+`run_hybrid4_fit(reference, atmosphere, backend='numpy')`.
+The previous Python orbit/exposure path with C++ flux is retained explicitly as
+`backend='cpp_flux'`; the default `backend='cpp'` runs the complete native model.
+Native errors propagate without substituting an instantaneous model.
+
+See [the C++ benchmark](scripts/README.md#cpp-hybrid4-benchmark) for repeated
+paired fits using saved photometry and exactly the previously fitted atmosphere
+coefficients.
+See [the orbit/exposure benchmark](scripts/README.md#cpp-orbit-and-exposure-benchmark)
+to measure the added improvement over the previous C++ flux backend.
+
 ## Installation + Setup
 
 To install EXOTIC, use Python 3.12 or newer. Python 3.12, 3.13, and 3.14 are covered
@@ -63,6 +216,12 @@ python -c "import exotic"
 If EXOTIC is installed correctly, you should not see any error messages. You can now start using EXOTIC by following the [examples](https://github.com/rzellem/EXOTIC/tree/main/examples) provided in the repository or by using our [sample dataset](https://github.com/rzellem/EXOTIC_sampledata/releases/). **If you're a new user**, we recommend starting with the beginner tutorial in Google Colab and then following our installation instructions for your operating system.
 
 ## Google Colab Cloud
+
+The prepared automatic binary setup and its replacement Step 1 fragment are
+documented in [the Colab setup instructions](scripts/README.md#automatic-colab-setup).
+The current wheel set targets CPython 3.13 on Linux x86_64 with glibc 2.38 or
+newer. This is a tested software snapshot; source changes need a new EXOTIC
+wheel before they can be used by the binary setup.
 
 Google Colab is a free cloud service that allows you to run Python code in a Jupyter notebook environment without having to install any software on your computer. We have a series of tutorials that you can run in Google Colab to learn how to use EXOTIC. You can access these tutorials by clicking on the following links:
 - [Beginner Tutorial](https://colab.research.google.com/drive/1Xxx7XAwgRhtV7VmxpE1Jsb3SUumsZjWR) for getting started with [sample data](https://github.com/rzellem/EXOTIC_sampledata/releases/)
@@ -350,6 +509,11 @@ automatic estimation. A smaller API ceiling still applies.
   origin. They also send the image's observatory/site label when available, using
   FITS `OBSID`, `TELID`, `SITEID`, `OBSNAME`, then `OBSERVAT` in that order.
   Programmatic callers can set `NextAstroPlateSolution(..., site="eco1")` explicitly.
+  Dalton (`https://astrometry.daltonnextastro.org`) is the primary NextAstro
+  solver. Shadowserver (`https://astrometry.nextastro.org`) is tried only for
+  a connection failure, including when an old configuration names Shadowserver
+  first. Connection/read timeouts, HTTP errors, polling expiry and failed or
+  unsolved searches are reported without sending that job to Shadowserver.
   Images without this metadata can still be solved; the astrometry server's
   `/usage` report groups unnamed callers by software and source IP.
   EXOTIC embeds its own shared app key and sends `X-NextAstro-Client: exotic`.

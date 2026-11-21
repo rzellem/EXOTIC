@@ -5,6 +5,11 @@ include *.md
 
 # include license
 include LICENSE*
+include exotic/api/limbdarkfast_LICENSE.txt
+include exotic/api/pylightcurve_LICENSE.txt
+include exotic/api/photutils_LICENSE.txt
+include exotic/api/scipy_photometry_LICENSE.txt
+recursive-include exotic/api/native *.hpp *.cpp
 
 # include build-related files
 include *.toml requirements.txt setup.cfg

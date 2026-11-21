@@ -3388,6 +3388,16 @@ class OutputFiles:
             'ORBITAL RANDOM AND SYSTEMATIC UNCERTAINTY': orbital_components,
             'POSTERIOR UNCERTAINTY REPORTING': posterior_reporting_metadata(self.fit, self.orbital_budget),
         }
+        if publish_to_root:
+            try:
+                from .api.hybrid_comparison import comparison_for_output
+            except ImportError:
+                from api.hybrid_comparison import comparison_for_output
+            comparison = comparison_for_output(
+                self.fit, self.i_dict, self.p_dict['pName'], self.i_dict['date'],
+            )
+            if comparison is not None:
+                final_params['LIMB DARKENING MODEL COMPARISON'] = comparison
 
         with params_file.open('w') as f:
             dump(final_params, f, indent=4)

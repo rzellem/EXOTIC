@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
-# Use the same interpreter for installation and the GUI, including an active
-# virtual environment or Conda environment. The minimum matches setup.cfg.
+# Use the active environment and run this checkout directly.
 py_runner=""
 for app in python3 python; do
     if command -v "$app" >/dev/null 2>&1 && \
@@ -10,21 +9,11 @@ for app in python3 python; do
         break
     fi
 done
-
 if [[ -z "$py_runner" ]]; then
     echo "ERROR: Python 3.12 or newer is required. Activate your EXOTIC environment or install a supported Python."
     exit 65
 fi
-
-"$py_runner" --version
-if ! "$py_runner" -m pip --version; then
-    echo "INFO: Installing pip for the selected Python."
-    "$py_runner" -m ensurepip --upgrade || exit $?
-fi
-
-echo "INFO: Installing or updating EXOTIC."
-"$py_runner" -m pip install --upgrade exotic || exit $?
-
-echo "INFO: Launching EXOTIC user interface."
-# Use the installed package rather than a checkout in the current directory.
-exec "$py_runner" -P -c 'from exotic.exotic_gui import main; main()'
+cd -- "$(dirname -- "$0")" || exit $?
+"$py_runner" -m exotic.api.native_build || exit $?
+echo "INFO: Launching EXOTIC user interface from this checkout."
+exec "$py_runner" -c 'from exotic.exotic_gui import main; main()'

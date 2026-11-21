@@ -13,7 +13,8 @@ OBSERVABLE_DEPTH_LABEL = "Observable model transit depth"
 PRIOR_OBSERVABLE_DEPTH_LABEL = "Prior observable model transit depth"
 OBSERVABLE_DEPTH_DELTA_LABEL = "Observable model depth change from prior"
 
-_DEPTH_ERROR_KEYS = ("rprs", "ars", "inc", "ecc", "omega", "u0", "u1", "u2", "u3")
+_DEPTH_ERROR_KEYS = ("rprs", "ars", "inc", "ecc", "omega", "u0", "u1", "u2", "u3",
+                     "h0", "h1", "h2", "h3")
 _REQUIRED_TRANSIT_KEYS = ("rprs", "per", "ars", "inc", "ecc", "omega", "tmid", "u0", "u1", "u2", "u3")
 
 

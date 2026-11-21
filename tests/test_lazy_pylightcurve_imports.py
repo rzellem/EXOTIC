@@ -56,6 +56,7 @@ def test_imports_eagerly_load_pylightcurve_without_noise():
             assert "pylightcurve.models.exoplanet_lc" in sys.modules
 
             minimal_values = {
+                "_claret_backend": "python",
                 "u0": 0.0,
                 "u1": 0.0,
                 "u2": 0.0,
@@ -137,6 +138,7 @@ def test_transit_supersamples_points_with_significant_exposure_smearing():
             import exotic.api.elca as elca
 
             values = {
+                "_claret_backend": "python",
                 "u0": 0.0,
                 "u1": 0.0,
                 "u2": 0.0,

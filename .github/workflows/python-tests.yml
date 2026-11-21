@@ -57,4 +57,6 @@ jobs:
           python -c "import importlib.util; assert importlib.util.find_spec('mpi4py') is None"
           python -c "import ldtk; import exotic.exotic"
       - name: Run tests
-        run: python -m pytest -q -p no:cacheprovider
+        run: |
+          python scripts/build_hybrid4_cpp.py
+          python -m pytest -q -p no:cacheprovider

@@ -240,7 +240,7 @@ def test_fit_centroid_uses_moment_fallback_when_psf_fit_fails(monkeypatch, fast_
     def fail_least_squares(*args, **kwargs):
         raise ValueError("Residuals are not finite in the initial point.")
 
-    monkeypatch.setattr(exotic_module, "least_squares", fail_least_squares)
+    monkeypatch.setattr(exotic_module, "_fit_bounded_photometry_psf", fail_least_squares)
     monkeypatch.setattr(
         exotic_module.plateStatus,
         "lowFluxAmplitudeWarning",
@@ -389,6 +389,9 @@ def test_skybg_phot_returns_nan_when_annulus_box_is_empty(monkeypatch):
         def to_mask(self, *args, **kwargs):
             return [_EmptyAnnulusMask()]
 
+    # Exercise the retained Python reference's empty-mask handling. The native
+    # path's real out-of-frame behavior is covered by test_photometry_cpp.
+    monkeypatch.setattr(exotic_module, "_PHOTOMETRY_BACKEND", "python")
     monkeypatch.setattr(exotic_module, "CircularAnnulus", _EmptyCircularAnnulus)
     monkeypatch.setattr(
         exotic_module.plateStatus,

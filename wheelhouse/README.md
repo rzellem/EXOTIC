@@ -1,5 +1,8 @@
 # Local Windows wheels
 
+The separately prepared Linux Colab wheels and automatic setup are documented
+in [colab/README.md](colab/README.md).
+
 These wheels target standard Windows x64 CPython. UltraNest 4.5.0 is included
 for Python 3.12, 3.13, and 3.14:
 

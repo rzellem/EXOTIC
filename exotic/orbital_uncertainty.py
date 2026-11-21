@@ -15,6 +15,28 @@ except ImportError:
 
 
 def _conditional_orbit_draws(fit, ecc, omega, values, weights):
+    base = fit.orbital_likelihood_context['base_physical']
+    law = base.get('_limb_darkening_law', 'claret')
+    method = getattr(fit._transit_model, '__func__', None)
+    known_model = (getattr(method, '__qualname__', '') == 'lc_fitter._transit_model'
+                   and getattr(method, '__module__', '').split('.')[-1] == 'elca')
+    model_native = ((law == 'claret' and base.get('_claret_backend','cpp') == 'cpp')
+                    or (law == 'hybrid4' and base.get('_hybrid4_backend','numpy') == 'cpp'))
+    backend = getattr(fit, '_orbital_replay_backend', 'cpp' if known_model and model_native else 'python')
+    if backend == 'python':
+        return _conditional_orbit_draws_python(fit,ecc,omega,values,weights)
+    if backend != 'cpp':
+        raise ValueError(f'Unknown orbital replay backend: {backend!r}')
+    if not known_model or law not in ('claret','hybrid4'):
+        raise ValueError('Native orbital replay requires the EXOTIC Claret or hybrid4 model.')
+    try:
+        from .api.orbital_replay_cpp import conditional_orbit_draws
+    except ImportError:
+        from api.orbital_replay_cpp import conditional_orbit_draws
+    return conditional_orbit_draws(fit,ecc,omega,values,weights)
+
+
+def _conditional_orbit_draws_python(fit, ecc, omega, values, weights):
     """Evaluate likelihood/prior ratios on existing joint draws, without fitting.
 
     The normalisation of the existing geometry-dependent uniform b prior is

@@ -1,5 +1,13 @@
 # Install EXOTIC on Linux
 
+The native hybrid4 transit backend builds automatically during source
+installation and, when needed, on first use from a checkout. Install your distribution's C++ compiler once (for example, `sudo apt install build-essential` on Ubuntu/Debian).
+Platform wheels already include their native library. To prepare the backend
+before a bulk run, use `python -m exotic.api.native_build` in the active EXOTIC
+environment. Unchanged builds are reused; compiler failures are reported.
+Repository launchers run the checkout directly without reinstalling packages.
+
+
 EXOTIC requires Python 3.12 or newer. The commands below use Bash and Python
 3.14. Install the latest 3.14 maintenance release from your Python provider.
 For Python 3.12 or 3.13, substitute `python3.12` or `python3.13`; `python3` also

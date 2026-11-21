@@ -1,5 +1,13 @@
 # Install EXOTIC on Windows
 
+The native hybrid4 transit backend builds automatically during source
+installation and, when needed, on first use from a checkout. Install Visual Studio Build Tools with the **Desktop development with C++** workload and Windows SDK once.
+Platform wheels already include their native library. To prepare the backend
+before a bulk run, use `python -m exotic.api.native_build` in the active EXOTIC
+environment. Unchanged builds are reused; compiler failures are reported.
+Repository launchers run the checkout directly without reinstalling packages.
+
+
 EXOTIC requires **Python 3.12 or newer**. The repository includes Windows x64
 UltraNest wheels for CPython 3.12, 3.13, and 3.14, plus a SEP wheel for 3.14.
 The instructions below use the latest Python 3.14 maintenance release.

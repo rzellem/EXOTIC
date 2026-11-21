@@ -48,6 +48,7 @@ from itertools import cycle, product
 import math
 import os
 import sys
+from time import perf_counter
 import bottleneck as bn
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MultipleLocator
@@ -82,6 +83,7 @@ TRIANGLE_PLOT_FALLBACK_EXPANSION_BOUNDS = {
 }
 TRANSIT_MODEL_UNCERTAINTY_KEYS = (
     'rprs', 'tmid', 'inc', 'ars', 'per', 'ecc', 'omega', 'u0', 'u1', 'u2', 'u3',
+    'h0', 'h1', 'h2', 'h3',
 )
 BASELINE_MODEL_UNCERTAINTY_KEYS = ('a0', 'a1', 'a2')
 MODEL_UNCERTAINTY_POSTERIOR_SAMPLE_LIMIT = 2000
@@ -202,6 +204,33 @@ def gaussian_weights(X, w=1, neighbors=50, feature_scale=1000):
 
 
 def _instantaneous_transit(times, values):
+    law = values.get('_limb_darkening_law', 'claret')
+    if law == 'hybrid4':
+        from pylightcurve.models.exoplanet_lc import planet_orbit
+        position = planet_orbit(
+            values['per'], values['ars'], values['ecc'], values['inc'],
+            values['omega'], values['tmid'], np.asarray(times, dtype=float),
+        )
+        separation = np.hypot(position[1], position[2])
+        weights = [values[f'h{i}'] for i in range(4)]
+        backend = values.get('_hybrid4_backend', 'numpy')
+        if backend in ('cpp', 'cpp_flux'):
+            try:
+                from .limbdarkfast_cpp import hybrid4_flux
+            except ImportError:
+                from limbdarkfast_cpp import hybrid4_flux
+            flux = hybrid4_flux(separation, values['rprs'], weights)
+        elif backend == 'numpy':
+            try:
+                from .limbdarkfast import hybrid_flux
+            except ImportError:
+                from limbdarkfast import hybrid_flux
+            flux = hybrid_flux(separation, values['rprs'], weights, 'hybrid4')
+        else:
+            raise ValueError(f'Unknown hybrid4 backend: {backend!r}')
+        return np.where(position[0] < 0, 1.0, flux)
+    if law != 'claret':
+        raise ValueError(f'Unknown limb-darkening law: {law!r}')
     model = pytransit([values['u0'], values['u1'], values['u2'], values['u3']],
                       values['rprs'], values['per'], values['ars'],
                       values['ecc'], values['inc'], values['omega'],
@@ -299,6 +328,32 @@ def _exposure_smearing_candidate_mask(times, exposure_time_days, values):
 
 
 def transit(times, values):
+    if values.get('_limb_darkening_law','claret') == 'claret':
+        backend = values.get('_claret_backend','cpp')
+        if backend == 'cpp':
+            try:
+                from .limbdarkfast_cpp import claret_transit
+            except ImportError:
+                from limbdarkfast_cpp import claret_transit
+            return claret_transit(
+                times,values,samples=_exposure_smearing_supersample(values),
+                tolerance=_exposure_smearing_change_tolerance(values),
+                minimum_exposure_days=MIN_EXPOSURE_SMEARING_SECONDS/86400.,
+                padding=EXPOSURE_SMEARING_TRANSIT_WINDOW_PADDING_FACTOR,
+            )
+        if backend != 'python':
+            raise ValueError(f'Unknown Claret backend: {backend!r}')
+    if values.get('_limb_darkening_law') == 'hybrid4' and values.get('_hybrid4_backend') == 'cpp':
+        try:
+            from .limbdarkfast_cpp import hybrid4_transit
+        except ImportError:
+            from limbdarkfast_cpp import hybrid4_transit
+        return hybrid4_transit(
+            times, values, samples=_exposure_smearing_supersample(values),
+            tolerance=_exposure_smearing_change_tolerance(values),
+            minimum_exposure_days=MIN_EXPOSURE_SMEARING_SECONDS/86400.0,
+            padding=EXPOSURE_SMEARING_TRANSIT_WINDOW_PADDING_FACTOR,
+        )
     model = _instantaneous_transit(times, values)
     exposure_time_days = _exposure_time_days_for_times(values, np.asarray(times).shape)
     if exposure_time_days is None:
@@ -761,6 +816,9 @@ def normalize_exposure_times_seconds_to_days(exposure_times_seconds, reference_s
     return exposure_times_seconds / 86400.0
 
 
+_STANDARD_TRANSIT_MODEL = transit
+
+
 class lc_fitter(object):
 
     def __init__(
@@ -786,6 +844,7 @@ class lc_fitter(object):
         exposure_smearing_supersample=DEFAULT_EXPOSURE_SMEARING_SUPERSAMPLE,
         exposure_smearing_change_tolerance=DEFAULT_EXPOSURE_SMEARING_CHANGE_TOLERANCE,
         ultranest_warmstart_source=None,
+        likelihood_backend='auto',
     ):
         self.time = time
         self.data = data
@@ -800,6 +859,8 @@ class lc_fitter(object):
         self.verbose = verbose
         self.jd_times = jd_times
         self.mode = mode
+        self.likelihood_backend_requested = likelihood_backend
+        self.likelihood_backend = None
         self.neighbors = neighbors
         self.use_impactparameter_rather_than_inclination_to_fit = use_impactparameter_rather_than_inclination_to_fit
         self.duration_prior = copy.deepcopy(duration_prior) if isinstance(duration_prior, dict) else None
@@ -989,6 +1050,31 @@ class lc_fitter(object):
     def _transit_model(self, times, values):
         return transit(times, self._values_with_exposure_smearing(values, times))
 
+    _native_likelihood_transit_model = _transit_model
+
+    def _select_likelihood_backend(self):
+        requested = self.likelihood_backend_requested
+        if requested not in ('auto', 'cpp', 'python'):
+            raise ValueError(f'Unknown likelihood backend: {requested!r}')
+        law = self.prior.get('_limb_darkening_law', 'claret')
+        native_model = (
+            (law == 'claret' and self.prior.get('_claret_backend', 'cpp') == 'cpp')
+            or (law == 'hybrid4' and self.prior.get('_hybrid4_backend', 'numpy') == 'cpp')
+        )
+        standard_model = (
+            transit is _STANDARD_TRANSIT_MODEL
+            and getattr(self._transit_model, '__func__', None)
+            is self._native_likelihood_transit_model.__func__
+        )
+        shape = np.asarray(self.time).shape
+        native_arrays = len(shape) == 1 and all(
+            np.asarray(value).shape == shape for value in (self.data, self.dataerr, self.airmass)
+        )
+        supported = native_model and standard_model and native_arrays
+        if requested == 'cpp' and not supported:
+            raise ValueError('C++ likelihood requires the standard native transit model and matching 1D fit arrays.')
+        return 'cpp' if supported and requested != 'python' else 'python'
+
     def _update_plot_geometry(self):
         plot_time_range = self._get_plot_time_range()
         self.phase = get_plot_phase(self.time, self.parameters['per'], self.parameters['tmid'], plot_time_range)
@@ -1166,18 +1252,13 @@ class lc_fitter(object):
                 axis=0,
             )
         else:
-            lower = np.array([
-                self._weighted_quantiles(model_grid[:, i], [q_lower], weights=selected_weights)[0]
+            # Sort each posterior column once for all three quantiles.
+            lower, median, upper = np.array([
+                self._weighted_quantiles(
+                    model_grid[:, i], [q_lower, 0.5, q_upper], weights=selected_weights,
+                )
                 for i in range(model_grid.shape[1])
-            ])
-            median = np.array([
-                self._weighted_quantiles(model_grid[:, i], [0.5], weights=selected_weights)[0]
-                for i in range(model_grid.shape[1])
-            ])
-            upper = np.array([
-                self._weighted_quantiles(model_grid[:, i], [q_upper], weights=selected_weights)[0]
-                for i in range(model_grid.shape[1])
-            ])
+            ]).T
 
         try:
             best_model = self._normalized_model_for_plot_times(times, self.parameters)
@@ -1428,18 +1509,12 @@ class lc_fitter(object):
                 axis=0,
             )
         else:
-            lower = np.array([
-                self._weighted_quantiles(ratio_grid[:, i], [q_lower], weights=selected_weights)[0]
+            lower, median, upper = np.array([
+                self._weighted_quantiles(
+                    ratio_grid[:, i], [q_lower, 0.5, q_upper], weights=selected_weights,
+                )
                 for i in range(ratio_grid.shape[1])
-            ])
-            median = np.array([
-                self._weighted_quantiles(ratio_grid[:, i], [0.5], weights=selected_weights)[0]
-                for i in range(ratio_grid.shape[1])
-            ])
-            upper = np.array([
-                self._weighted_quantiles(ratio_grid[:, i], [q_upper], weights=selected_weights)[0]
-                for i in range(ratio_grid.shape[1])
-            ])
+            ]).T
 
         lower_width = median - lower
         upper_width = upper - median
@@ -1541,8 +1616,13 @@ class lc_fitter(object):
             (1.0 - baseline_uncertainty, 1.0 + baseline_uncertainty)
         )
 
-    def _plot_transit_model_uncertainty(self, ax, x_values, times, sort_index, label=None):
-        envelope = self.transit_model_uncertainty(times)
+    def _plot_transit_model_uncertainty(
+        self, ax, x_values, times, sort_index, label=None, uncertainty_evaluator=None,
+    ):
+        envelope = (
+            self.transit_model_uncertainty(times) if uncertainty_evaluator is None
+            else uncertainty_evaluator('transit_model_uncertainty', times)
+        )
         if envelope is None:
             return None
 
@@ -1582,8 +1662,13 @@ class lc_fitter(object):
         )
         return band
 
-    def _plot_baseline_model_uncertainty(self, ax, x_values, times, sort_index, label=None):
-        envelope = self.baseline_model_uncertainty(times)
+    def _plot_baseline_model_uncertainty(
+        self, ax, x_values, times, sort_index, label=None, uncertainty_evaluator=None,
+    ):
+        envelope = (
+            self.baseline_model_uncertainty(times) if uncertainty_evaluator is None
+            else uncertainty_evaluator('baseline_model_uncertainty', times)
+        )
         if envelope is None:
             return None
 
@@ -4010,7 +4095,23 @@ class lc_fitter(object):
             hspace=subplotpars.hspace,
         )
 
+    def _prepare_native_backend(self):
+        if ((self.prior.get('_limb_darkening_law', 'claret') == 'claret'
+             and self.prior.get('_claret_backend', 'cpp') == 'cpp')
+            or (self.prior.get('_limb_darkening_law') == 'hybrid4'
+                and self.prior.get('_hybrid4_backend', 'numpy') in ('cpp', 'cpp_flux'))):
+            # Fail before optimizers/samplers can turn loading errors into
+            # invalid likelihoods or an optimizer fallback.
+            started = perf_counter()
+            try:
+                from .limbdarkfast_cpp import _library
+            except ImportError:
+                from limbdarkfast_cpp import _library
+            _library()
+            self.backend_setup_seconds = perf_counter() - started
+
     def fit_LM(self):
+        self._prepare_native_backend()
         freekeys = list(self.bounds.keys())
         boundarray = np.array([self.bounds[k] for k in freekeys])
         initial_parameters = np.asarray([self.prior[k] for k in freekeys], dtype=float)
@@ -4279,6 +4380,11 @@ class lc_fitter(object):
         self.duration_expected = newdur
 
     def _finalize_ultranest_fit_results(self, bound_keys, sampled_keys, physical_from_sample_point):
+        # A later sampler extension needs a new comparison, not the previously
+        # reported secondary result. Invalidate by fit state, without hashing.
+        for attribute in ('hybrid4_comparison', 'hybrid4_fit'):
+            if hasattr(self, attribute):
+                delattr(self, attribute)
         self.sample_parameters = {}
         self.sample_errors = {}
         self.sample_quantiles = {}
@@ -4351,6 +4457,7 @@ class lc_fitter(object):
         self._apply_fixed_parameter_errors()
 
     def extend_ultranest_fit(self, min_num_live_points=None, max_ncalls=None):
+        started = perf_counter()
         context = getattr(self, '_ultranest_resume_context', None)
         if getattr(self, 'ns_type', None) != 'ultranest' or not isinstance(context, dict):
             return False
@@ -4384,13 +4491,18 @@ class lc_fitter(object):
             context['sampled_keys'],
             context['physical_from_sample_point'],
         )
+        if min_num_live_points is not None:
+            self.ultranest_min_num_live_points = int(min_num_live_points)
         self.create_fit_variables()
+        self.fit_runtime_seconds = getattr(self, 'fit_runtime_seconds', 0.0) + perf_counter() - started
         return True
 
     def clear_ultranest_resume_state(self):
         self._ultranest_resume_context = None
 
     def fit_nested(self):
+        self._prepare_native_backend()
+        started = perf_counter()
         bound_keys = list(self.bounds.keys())
         sampled_keys = self._get_sampled_keys(bound_keys)
         self._validate_flux_baseline_keys()
@@ -4584,6 +4696,14 @@ class lc_fitter(object):
                 )
             return single_loglike(pars_array)
 
+        self.likelihood_backend = self._select_likelihood_backend()
+        if self.likelihood_backend == 'cpp':
+            from .likelihood_cpp import NativeLogLikelihood
+            loglike = NativeLogLikelihood(
+                self, bound_keys, sampled_keys, impact_parameter_index,
+                observed_values_valid, fixed_airmass_scale,
+            )
+
         prior_boundarray = np.array([self.bounds[k] for k in bound_keys], dtype=float)
         prior_lower_bounds = prior_boundarray[:, 0]
         prior_bound_widths = prior_boundarray[:, 1] - prior_lower_bounds
@@ -4737,6 +4857,7 @@ class lc_fitter(object):
 
         # final model
         self.create_fit_variables()
+        self.fit_runtime_seconds = perf_counter() - started
 
     def _plot_restricted_baseline_points(
         self,
@@ -4862,6 +4983,7 @@ class lc_fitter(object):
         show_restricted_baseline_points=True,
         show_rejected_points=True,
         show_binned_points=True,
+        _uncertainty_evaluator=None,
     ):
         f = plt.figure(figsize=(9, 6))
         f.subplots_adjust(top=0.92, bottom=0.09, left=0.14, right=0.98, hspace=0)
@@ -5020,6 +5142,7 @@ class lc_fitter(object):
                     self.time_upsample,
                     sii,
                     label='_nolegend_',
+                    uncertainty_evaluator=_uncertainty_evaluator,
                 )
             if show_model_uncertainty:
                 self._plot_transit_model_uncertainty(
@@ -5028,6 +5151,7 @@ class lc_fitter(object):
                     self.time_upsample,
                     sii,
                     label='_nolegend_',
+                    uncertainty_evaluator=_uncertainty_evaluator,
                 )
             axs[0].plot(self.phase_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.phase_upsample), max(self.phase_upsample)])
@@ -5053,6 +5177,7 @@ class lc_fitter(object):
                     self.time_upsample,
                     sii,
                     label='_nolegend_',
+                    uncertainty_evaluator=_uncertainty_evaluator,
                 )
             if show_model_uncertainty:
                 self._plot_transit_model_uncertainty(
@@ -5061,6 +5186,7 @@ class lc_fitter(object):
                     self.time_upsample,
                     sii,
                     label='_nolegend_',
+                    uncertainty_evaluator=_uncertainty_evaluator,
                 )
             axs[0].plot(self.time_upsample[sii], self.transit_upsample[sii], 'r-', zorder=3, label=lclabel)
             axs[0].set_xlim([min(self.time_upsample), max(self.time_upsample)])

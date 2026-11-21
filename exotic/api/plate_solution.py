@@ -310,6 +310,28 @@ class _SourceListExtractor:
         }
 
 
+def is_astrometry_connection_error(error):
+    """A connection failure permits failover; any nested timeout does not."""
+    from requests.exceptions import ConnectionError as RequestConnectionError, Timeout
+    from urllib3.exceptions import TimeoutError as TransportTimeout
+
+    if not isinstance(error, (ConnectionError, RequestConnectionError)):
+        return False
+    pending, seen = [error], set()
+    while pending:
+        cause = pending.pop()
+        if id(cause) in seen:
+            continue
+        seen.add(id(cause))
+        if isinstance(cause, (TimeoutError, Timeout, TransportTimeout)):
+            return False
+        pending.extend(arg for arg in cause.args if isinstance(arg, BaseException))
+        pending.extend(child for child in (
+            getattr(cause, 'reason', None), cause.__cause__, cause.__context__
+        ) if isinstance(child, BaseException))
+    return True
+
+
 class NextAstroPlateSolution(_SourceListExtractor):
 
     def __init__(self, file=None, directory=None, api_url='https://astrometry.daltonnextastro.org/', ra=None, dec=None,
@@ -336,10 +358,14 @@ class NextAstroPlateSolution(_SourceListExtractor):
         self.origin = origin if origin is not None else ("exotic-colab" if colab_client else "exotic")
         self.last_error_type = None
         self.last_http_status = None
+        self.last_request_id = None
+        self.last_solve_status = None
 
     def plate_solution(self):
         self.last_error_type = None
         self.last_http_status = None
+        self.last_request_id = None
+        self.last_solve_status = None
         self._emit_debug(f"Using NextAstro astrometry server at {self.api_url} for plate solving.")
         self._submission_request = None
         source_list = self._generate_source_list()
@@ -355,20 +381,32 @@ class NextAstroPlateSolution(_SourceListExtractor):
         wcs_header = None
         for index, base in enumerate(candidates):
             self.api_url = base
+            request_id = None
             try:
                 request_id = self._submit_solve_request(source_list)
                 if not request_id:
                     failure = 'NextAstro solve submission'
                 else:
+                    self.last_request_id = request_id
+                    self.last_solve_status = 'queued'
                     wcs_header = self._poll_for_solution(request_id)
                     failure = 'NextAstro solve status'
                 if wcs_header:
                     break
+                # A server response or an exhausted polling allowance is not
+                # a connection failure. Keep unsolved/slow jobs off Shadowserver.
+                break
             except requests.RequestException as exc:
                 failure = f'NextAstro service request: {exc}'
+                if not is_astrometry_connection_error(exc):
+                    break
             if index + 1 < len(candidates):
                 self._emit_debug(f'NextAstro astrometry {base} failed ({failure}); trying {candidates[index + 1]}.')
         if not wcs_header:
+            if self.last_request_id:
+                self._emit_debug(
+                    f'NextAstro astrometry request {self.last_request_id} at {self.api_url}: '
+                    f'latest status={self.last_solve_status!r}. {failure}.')
             return self._fail(failure)
 
         wcs_file = Path(self.directory) / "working_artifacts" / "wcs.fits"
@@ -504,6 +542,7 @@ class NextAstroPlateSolution(_SourceListExtractor):
                 return False
 
             status = str(response_json.get('status', '')).lower()
+            self.last_solve_status = status
             latest_status = response_json.get('status')
             if status == 'solved':
                 self._emit_debug(

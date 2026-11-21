@@ -136,8 +136,10 @@ from tenacity import RetryError, retry, retry_if_exception, stop_after_attempt, 
 from colour_demosaicing import demosaicing_CFA_Bayer_bilinear
 # ########## EXOTIC imports ##########
 try:
+    from .api import bad_pixels as bad_pixel_processing
     from .api.bad_pixels import prepare_reference as prepare_bad_pixel_reference, repair_frame as repair_detector_pixels
 except ImportError:
+    from api import bad_pixels as bad_pixel_processing
     from api.bad_pixels import prepare_reference as prepare_bad_pixel_reference, repair_frame as repair_detector_pixels
 try:  # light curve numerics
     from .api.elca import lc_fitter, transit, get_phase
@@ -4003,7 +4005,17 @@ def widen_rprs_bounds_to_data_uncertainty_window(bounds, prior):
         return widened
     window = rprs_prior_centered_bounds(prior)
     if window is not None:
-        widened['rprs'] = window
+        # This helper also runs after the LM scout and posterior retries have
+        # opened a wider range. The data-based window is a minimum search
+        # interval, not a replacement prior that can discard that support.
+        try:
+            lower, upper = np.asarray(widened['rprs'], dtype=float).reshape(-1)[:2]
+        except (TypeError, ValueError):
+            lower = upper = np.nan
+        if np.isfinite(lower) and np.isfinite(upper) and lower < upper:
+            widened['rprs'] = [min(float(lower), window[0]), max(float(upper), window[1])]
+        else:
+            widened['rprs'] = window
     return widened
 
 
@@ -16195,6 +16207,7 @@ def nonlinear_ld(ld, info_dict, non_interactive_run=False):
     info_dict['filter_desc'] = ld.filter_desc
     info_dict['wl_min'] = ld.wl_min
     info_dict['wl_max'] = ld.wl_max
+    info_dict['hybrid4_limb_darkening'] = getattr(ld, 'hybrid4', None)
 
 
 def get_ld_values(planet_dict, info_dict, non_interactive_run=False):
@@ -16215,7 +16228,9 @@ def corruption_check(files):
     for file in files:
         plateStatus.setCurrentFilename(file)
         try:
-            with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdu1:
+            with fits.open(name=file, memmap=False, cache=False,
+                           lazy_load_hdus=bad_pixel_processing.PREPARATION_BACKEND == 'cpp',
+                           ignore_missing_end=True) as hdu1:
                 valid_files.append(file)
         except OSError as e:
             # Since google collab can have problems with initial load of big data sets from google
@@ -16224,7 +16239,9 @@ def corruption_check(files):
             log_info(f"Warning: retrying verify\n\t-File: {file}\n\t-Reason: {e}", warn=True)
             sleep(5)
             try: 
-                with fits.open(name=file, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True) as hdu1:
+                with fits.open(name=file, memmap=False, cache=False,
+                               lazy_load_hdus=bad_pixel_processing.PREPARATION_BACKEND == 'cpp',
+                               ignore_missing_end=True) as hdu1:
                     valid_files.append(file)
             except OSError as e:
                 log.debug(f"Warning: corrupted file found and removed from reduction\n\t-File: {file}\n\t-Reason: {e}")
@@ -21006,15 +21023,39 @@ def downsampled_fallback_transformation(image_data, file_name, report_failure=Tr
         translation=np.asarray(reduced_tform.translation, dtype=float) * downsample_factor,
     )
 
+def read_reduction_image_header(file_name):
+    """Select the first image header without decoding image pixels."""
+    if bad_pixel_processing.PREPARATION_BACKEND == 'python':
+        extension = 0
+        header = fits.getheader(filename=file_name, ext=extension)
+        while header['NAXIS'] == 0:
+            extension += 1
+            header = fits.getheader(filename=file_name, ext=extension)
+        return header
+    with fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=True,
+                   ignore_missing_end=True) as hdul:
+        extension = 0
+        while hdul[extension].header['NAXIS'] == 0:
+            extension += 1
+        return hdul[extension].header
+
+
+def read_reduction_image_data(image_hdu):
+    """The required image read/decompression boundary, shared by frame loaders."""
+    return image_hdu.data
+
+
 def load_image_data(file_name):
-    hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+    hdul = fits.open(name=file_name, memmap=False, cache=False,
+                     lazy_load_hdus=bad_pixel_processing.PREPARATION_BACKEND == 'cpp',
+                     ignore_missing_end=True)
     extension = 0
     image_header = hdul[extension].header
     while image_header["NAXIS"] == 0:
         extension += 1
         image_header = hdul[extension].header
 
-    image_data = hdul[extension].data
+    image_data = read_reduction_image_data(hdul[extension])
     hdul.close()
     return image_data
 
@@ -21345,9 +21386,9 @@ def build_persistent_bad_pixel_map(inputfiles, frame_loader, save_directory=None
     }
 
 
-def repair_bad_pixels_in_frame(image_data, bad_pixel_reference):
+def repair_bad_pixels_in_frame(image_data, bad_pixel_reference, *, copy=True):
     if bad_pixel_reference is not None and 'summary' in bad_pixel_reference:
-        return repair_detector_pixels(image_data, bad_pixel_reference)
+        return repair_detector_pixels(image_data, bad_pixel_reference, copy=copy)
     if bad_pixel_reference is None:
         return image_data
 
@@ -22551,7 +22592,26 @@ def _has_usable_centroid_signal(subarray, amplitude, min_snr=5.0):
     return amplitude >= (min_snr * scatter)
 
 
+_PHOTOMETRY_BACKEND = 'cpp'
+
+
+def _prepare_photometry_backend(psf_function=None):
+    # Run outside the established scientific fit-failure handlers: compiler or
+    # loader failures must never be silently converted to a centroid fallback.
+    if _PHOTOMETRY_BACKEND == 'cpp' and (psf_function is None or psf_function is gaussian_psf):
+        from exotic.api.photometry_cpp import prepare
+        prepare()
+
+
+def _fit_bounded_photometry_psf(fcn, xv, yv, data, x0, bounds, psf_function, jac):
+    if _PHOTOMETRY_BACKEND == 'cpp' and psf_function is gaussian_psf:
+        from exotic.api.photometry_cpp import fit_gaussian
+        return fit_gaussian(xv, yv, data, x0, bounds, method=jac)
+    return least_squares(fcn, x0=x0, bounds=bounds, jac=jac, method='trf')
+
+
 def _fit_seed_anchored_psf(data, pos, psf_function=gaussian_psf, box=8, bound_radius=4.0):
+    _prepare_photometry_backend(psf_function)
     xv, yv = mesh_box(pos, box, maxx=data.shape[1], maxy=data.shape[0])
     subarray = data[yv, xv]
     moment_fit = _fit_centroid_moments(subarray, xv, yv, pos, box)
@@ -22602,7 +22662,7 @@ def _fit_seed_anchored_psf(data, pos, psf_function=gaussian_psf, box=8, bound_ra
 
     # Retain SciPy's step-size stopping test. Disabling it lets a converged
     # profile shrink the trust region to zero and overflow inside TRF.
-    res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', method='trf')
+    res = _fit_bounded_photometry_psf(fcn2min, xv, yv, subarray, x0, [lo, up], psf_function, '2-point')
     if np.isfinite(moment_fit[6]):
         res.x[6] = moment_fit[6]
     return res.x
@@ -22827,6 +22887,7 @@ def should_keep_header_wcs_alignment(
 
 # Method fits a 2D gaussian function that matches the star_psf to the star image and returns its pixel coordinates
 def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weightedcenter=False, fast_mode=False):
+    _prepare_photometry_backend(psf_function)
     stage_start = perf_counter()
     # get sub field in image
     try:
@@ -22888,7 +22949,7 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
             return (subarray - model).flatten()
 
         try:
-            res = least_squares(fcn2min, x0=x0, bounds=[lo, up], jac='2-point', method='trf')
+            res = _fit_bounded_photometry_psf(fcn2min, xv, yv, subarray, x0, [lo, up], psf_function, '2-point')
         except Exception as exc:
             if (
                 has_usable_signal
@@ -22947,6 +23008,7 @@ def fit_centroid(data, pos, starIndex, psf_function=gaussian_psf, box=15, weight
 
 
 def fit_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaussian_psf, box=15):
+    _prepare_photometry_backend(psf_function)
     try:
         centroid_row = np.asarray(centroid_row, dtype=float).reshape(-1)
     except (TypeError, ValueError):
@@ -22987,18 +23049,24 @@ def fit_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaus
         np.nanmax(subarray) + 1,
     ]
 
+    # A circular initial Gaussian has no identifiable rotation. Roundoff in
+    # its numerical derivative can select different angle-bound local minima,
+    # changing PSF flux and downstream frame masks between equivalent solvers.
+    # Use the already measured shape for the modern flux fit, with identical
+    # initialization in the native and Python controls. The explicit legacy
+    # flux routine retains its original circular initialization.
+    if (psf_function is gaussian_psf and centroid_row.size >= 6
+            and np.all(np.isfinite(centroid_row[3:6]))
+            and np.all(centroid_row[3:5] > 0)):
+        init[1:4] = np.clip(centroid_row[3:6], np.asarray(lo)[3:6], np.asarray(up)[3:6]).tolist()
+
     def fcn2min(pars):
         model = psf_function(xv, yv, *pars)
         return (subarray - model).flatten()
 
     try:
-        res = least_squares(
-            fcn2min,
-            x0=[*pos, *init],
-            bounds=[lo, up],
-            jac='3-point',
-            method='trf',
-        )
+        res = _fit_bounded_photometry_psf(
+            fcn2min, xv, yv, subarray, [*pos, *init], [lo, up], psf_function, '3-point')
         flux_row = np.asarray(res.x, dtype=float)
     except Exception as exc:
         log.debug(
@@ -23013,12 +23081,13 @@ def fit_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaus
         return centroid_row.copy() if centroid_row.size >= 7 else _nan_psf_result()
 
     # Keep the robust centroid/offset solution for diagnostics and aperture placement,
-    # but use the legacy-stable Gaussian amplitude/width for PSF flux integration.
+    # but use the independently fitted Gaussian amplitude/width for PSF flux integration.
     flux_row[:2] = centroid_row[:2]
     return flux_row
 
 
 def fit_legacy_psf_photometry_flux_row(data, centroid_row, starIndex, psf_function=gaussian_psf, box=15):
+    _prepare_photometry_backend(psf_function)
     try:
         centroid_row = np.asarray(centroid_row, dtype=float).reshape(-1)
     except (TypeError, ValueError):
@@ -23075,13 +23144,8 @@ def fit_legacy_psf_photometry_flux_row(data, centroid_row, starIndex, psf_functi
         return (subarray - model).flatten()
 
     try:
-        res = least_squares(
-            fcn2min,
-            x0=[*pos, *init],
-            bounds=[lo, up],
-            jac='3-point',
-            method='trf',
-        )
+        res = _fit_bounded_photometry_psf(
+            fcn2min, xv, yv, subarray, [*pos, *init], [lo, up], psf_function, '3-point')
     except Exception as exc:
         plateStatus.lowFluxAmplitudeWarning(starIndex, pos[0], pos[1])
         log.debug(
@@ -24334,11 +24398,32 @@ def build_aperture_correction_profile(data, aperture_radii, fwhm_hint=np.nan, fa
 
 # Method calculates the flux of the star (uses the skybg_phot method to do background sub)
 def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=False, sigma_hint=np.nan):
+    _prepare_photometry_backend()
     stage_start = perf_counter()
     try:
         # Check for invalid coordinates
         if np.isnan(xc) or np.isnan(yc):
             return 0, 0
+
+        if _PHOTOMETRY_BACKEND == 'cpp':
+            # Retain Photutils' public radius/position validation. Mask
+            # construction and extraction run in the batched native kernel.
+            CircularAperture(positions=[(xc, yc)], r=r)
+        # Preserve Photutils' existing empty-mask/error behavior for degenerate
+        # nonfinite geometry; the integer-grid native kernel handles finite circles.
+        if _PHOTOMETRY_BACKEND == 'cpp' and np.isfinite(r):
+            from exotic.api.photometry_cpp import aperture_grid
+            geometry = resolve_sky_annulus_geometry(r, dr, psf_sigma=sigma_hint) if dr > 0 else None
+            ap, sky = aperture_grid(data, xc, yc, [r],
+                [[geometry['inner_radius'] if geometry else 0.]],
+                [[geometry['inner_radius'] + geometry['annulus_width'] if geometry else 0.]],
+                center=fast_mode, sigma=SKY_BACKGROUND_SIGMA_CLIP,
+                max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS)
+            bg = sky[0, 0, 0]
+            if dr > 0 and not np.isfinite(bg):
+                plateStatus.skyBackgroundWarning(starIndex, xc, yc)
+                return np.nan, bg
+            return (ap[0, 0] - bg * ap[0, 1] if ap[0, 2] else 0.), bg
 
         # Calculate background if dr > 0
         if dr > 0:
@@ -24376,6 +24461,17 @@ def aperPhot(data, starIndex, xc, yc, r=5, dr=5, fast_mode=False, sigma_hint=np.
 
 
 def skybg_phot(data, starIndex, xc, yc, r=10, dr=5, ptol=99, debug=False, fast_mode=False):
+    _prepare_photometry_backend()
+    if _PHOTOMETRY_BACKEND == 'cpp' and not debug and np.all(np.isfinite([r, r + dr])):
+        from exotic.api.photometry_cpp import aperture_grid
+        CircularAnnulus(positions=[(xc, yc)], r_in=float(r), r_out=float(r + dr))
+        _, sky = aperture_grid(data, xc, yc, [np.nan], [[r]], [[r + dr]],
+            center=fast_mode, ptol=ptol, sigma=SKY_BACKGROUND_SIGMA_CLIP,
+            max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS)
+        result = sky[0, 0]
+        if not np.isfinite(result[0]):
+            plateStatus.skyBackgroundWarning(starIndex, xc, yc)
+        return tuple(result)
     # The sky annulus uses an inner radius r and an outer radius r + dr.
     # Callers are responsible for choosing r and dr from the aperture radius and PSF size.
     annulus = CircularAnnulus(positions=[(xc, yc)], r_in=float(r), r_out=float(r + dr))
@@ -30787,6 +30883,67 @@ def apply_overexposure_masks_to_aperture_frame(aper_data, frame_index, target_ov
 def compute_star_aperture_grid(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan,
                                aperture_correction_factors=None, noise_config=None, exposure_s=np.nan,
                                airmass=np.nan, return_noise=False):
+    if _PHOTOMETRY_BACKEND == 'python':
+        return _compute_star_aperture_grid_python(data, star_index, xc, yc, apertures, annuli,
+            fast_mode=fast_mode, sigma_hint=sigma_hint,
+            aperture_correction_factors=aperture_correction_factors, noise_config=noise_config,
+            exposure_s=exposure_s, airmass=airmass, return_noise=return_noise)
+    _prepare_photometry_backend()
+    from exotic.api.photometry_cpp import aperture_grid
+    started = perf_counter()
+    try:
+        radii, widths = np.asarray(apertures, dtype=float).reshape(-1), np.asarray(annuli, dtype=float).reshape(-1)
+        shape = (len(radii), len(widths))
+        flux, bg = np.full(shape, np.nan), np.full(shape, np.nan)
+        noise = empty_noise_budget_grids(shape) if return_noise else None
+        if not (np.isfinite(xc) and np.isfinite(yc)):
+            return (flux, bg, noise) if return_noise else (flux, bg)
+        inner, outer = np.full(shape, np.nan), np.full(shape, np.nan)
+        for i, r in enumerate(radii):
+            if not np.isfinite(r) or r <= 0:
+                continue
+            for j, width in enumerate(widths):
+                if not np.isfinite(width) or width < 0:
+                    continue
+                if width == 0:
+                    inner[i, j] = outer[i, j] = 0.
+                else:
+                    geometry = resolve_sky_annulus_geometry(r, width, psf_sigma=sigma_hint)
+                    inner[i, j] = geometry['inner_radius']
+                    outer[i, j] = geometry['inner_radius'] + geometry['annulus_width']
+        ap, sky = aperture_grid(data, xc, yc, radii, inner, outer, center=fast_mode,
+            sigma=SKY_BACKGROUND_SIGMA_CLIP, max_iters=SKY_BACKGROUND_SIGMA_CLIP_MAX_ITERS)
+        for i, r in enumerate(radii):
+            if not np.isfinite(r) or r <= 0:
+                continue
+            for j, width in enumerate(widths):
+                if not np.isfinite(width) or width < 0:
+                    continue
+                bg[i, j], scatter, sky_area = sky[i, j]
+                if width > 0 and not np.isfinite(bg[i, j]):
+                    plateStatus.skyBackgroundWarning(star_index, xc, yc)
+                flux[i, j] = ap[i, 0] - bg[i, j] * ap[i, 1] if ap[i, 2] else 0.
+                if noise is not None:
+                    budget = compute_photometry_noise_budget(flux[i, j], scatter, ap[i, 1], sky_area,
+                        exposure_s=exposure_s, airmass=airmass, noise_config=noise_config)
+                    for component, grid in noise.items():
+                        grid[i, j] = budget.get(component, np.nan)
+        if aperture_correction_factors is not None:
+            factors = np.asarray(aperture_correction_factors, dtype=float).reshape(-1)
+            if len(factors) == len(radii):
+                valid = np.isfinite(factors) & (factors > 0)
+                flux[valid, :] *= factors[valid, None]
+                if noise is not None:
+                    for grid in noise.values():
+                        grid[valid, :] *= factors[valid, None]
+        return (flux, bg, noise) if return_noise else (flux, bg)
+    finally:
+        _record_photometry_stage_timing('aperPhot', perf_counter() - started)
+
+
+def _compute_star_aperture_grid_python(data, star_index, xc, yc, apertures, annuli, fast_mode=False, sigma_hint=np.nan,
+                               aperture_correction_factors=None, noise_config=None, exposure_s=np.nan,
+                               airmass=np.nan, return_noise=False):
     apertures = np.asarray(apertures, dtype=float).reshape(-1)
     annuli = np.asarray(annuli, dtype=float).reshape(-1)
     flux_grid = np.full((len(apertures), len(annuli)), np.nan, dtype=float)
@@ -30995,14 +31152,16 @@ def load_calibrated_reduction_image(file_name, generalDark, generalBias, general
 def load_calibrated_reduction_frame(file_name, generalDark, generalBias, generalFlat,
                                     demosaic_fmt, demosaic_out, demosaic_mult,
                                     bad_pixel_reference=None):
-    hdul = fits.open(name=file_name, memmap=False, cache=False, lazy_load_hdus=False, ignore_missing_end=True)
+    hdul = fits.open(name=file_name, memmap=False, cache=False,
+                     lazy_load_hdus=bad_pixel_processing.PREPARATION_BACKEND == 'cpp',
+                     ignore_missing_end=True)
     extension = 0
     image_header = hdul[extension].header
     while image_header["NAXIS"] == 0:
         extension += 1
         image_header = hdul[extension].header
 
-    image_data = hdul[extension].data
+    image_data = read_reduction_image_data(hdul[extension])
     hdul.close()
 
     image_data = apply_cals(
@@ -31014,7 +31173,7 @@ def load_calibrated_reduction_frame(file_name, generalDark, generalBias, general
         exposure_time=get_exp_time(image_header),
     )
     image_data = demosaic_img(image_data, demosaic_fmt, demosaic_out, demosaic_mult, 1)
-    image_data = repair_bad_pixels_in_frame(image_data, bad_pixel_reference)
+    image_data = repair_bad_pixels_in_frame(image_data, bad_pixel_reference, copy=False)
     return image_header, image_data
 
 
@@ -36703,6 +36862,7 @@ def _main_impl():
 
         if fitsortext == 1:
             # Calibration frames apply only to FITS-image reductions.
+            _prepare_photometry_backend()
             calibration_save_dir = exotic_infoDict.get('save')
             science_dir = None
             if exotic_infoDict.get('images'):
@@ -36791,12 +36951,8 @@ def _main_impl():
             times, jd_times, header_exptimes, timestamp_selections = [], [], [], []
             log_info(f"Reading FITS timestamps and converting to BJD_TDB for {len(inputfiles)} frame(s).")
             for file_index, file in enumerate(inputfiles):
-                extension = 0
                 plateStatus.setCurrentFilename(file)
-                header = fits.getheader(filename=file, ext=extension)
-                while header['NAXIS'] == 0:
-                    extension += 1
-                    header = fits.getheader(filename=file, ext=extension)
+                header = read_reduction_image_header(file)
                 obsTime, raw_jd_time, time_diagnostic = image_timestamp_solution(header, pDict, exotic_infoDict)
                 time_diagnostic['filename'] = str(file)
                 timestamp_selections.append(time_diagnostic)
@@ -38354,7 +38510,7 @@ def _main_impl():
                 plateStatus.setCurrentFilename(fileName)
                 frame_uses_memmap = use_memmap_initial_photometry
                 hdul = fits.open(name=fileName, memmap=frame_uses_memmap, cache=False,
-                                 lazy_load_hdus=frame_uses_memmap,
+                                 lazy_load_hdus=frame_uses_memmap or bad_pixel_processing.PREPARATION_BACKEND == 'cpp',
                                  ignore_missing_end=True)
                 # Final reductions should always use the full centroid fit so the
                 # centroid series does not inherit the fast moment-estimator cadence.
@@ -38374,7 +38530,7 @@ def _main_impl():
                         name=fileName,
                         memmap=False,
                         cache=False,
-                        lazy_load_hdus=False,
+                        lazy_load_hdus=bad_pixel_processing.PREPARATION_BACKEND == 'cpp',
                         ignore_missing_end=True,
                     )
                     extension = 0
@@ -38398,7 +38554,7 @@ def _main_impl():
                 frame_exposure_s = exptimes[-1]
 
                 # IMAGES
-                imageData = hdul[extension].data
+                imageData = read_reduction_image_data(hdul[extension])
 
                 # CALS
                 if not frame_uses_memmap:
@@ -38412,7 +38568,7 @@ def _main_impl():
                     )
                     # Demosaic, if needed
                     imageData = demosaic_img(imageData, demosaic_fmt, demosaic_out, demosaic_mult, i)
-                    imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference)
+                    imageData = repair_bad_pixels_in_frame(imageData, bad_pixel_reference, copy=False)
 
                 if i == 0 and multiprocess_alignment_results is None:
                     firstImage = np.copy(imageData)

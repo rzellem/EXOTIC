@@ -327,6 +327,7 @@ def createldgrid(minmu, maxmu, orbp,
     allcl = None
     allel = None
     out = {}
+    hybrid4_profiles = []
     avmu = [np.mean([mm, xm]) for mm, xm in zip(minmu, maxmu)]
     for i in np.arange(niter):
         loweri = i*segmentation
@@ -360,6 +361,32 @@ def createldgrid(minmu, maxmu, orbp,
             pass
         cl, el = ldx(ps.profile_mu, ps.profile_averages, ps.profile_uncertainties,
                      mumin=phoenixmin, debug=verbose, model=ldmodel)
+        if ldmodel == 'nonlinear':
+            try:
+                from .hybrid_ld import fit_hybrid4_profiles
+            except ImportError:
+                from hybrid_ld import fit_hybrid4_profiles
+            try:
+                shared_profiles = fit_hybrid4_profiles(
+                    ps.profile_mu, ps.profile_averages, ps.profile_uncertainties,
+                    mumin=phoenixmin,
+                )
+            except Exception as exc:
+                log.exception('hybrid4 atmosphere fit failed: %s', exc)
+                shared_profiles = [
+                    {'status': 'failed', 'reason': str(exc), 'error_type': type(exc).__name__}
+                    for _ in cl
+                ]
+            for profile, lower, upper, coefficients, errors in zip(
+                shared_profiles, munmmin, munmmax, cl, el,
+            ):
+                profile['wavelength_min_nm'] = float(lower)
+                profile['wavelength_max_nm'] = float(upper)
+                profile['stellar_parameters'] = dict(orbp)
+                profile['claret_coefficients'] = np.asarray(coefficients, dtype=float).tolist()
+                profile['claret_coefficient_errors'] = np.asarray(errors, dtype=float).tolist()
+                profile['claret_profile_fit_constraint'] = 'gamma4 = 1 - gamma1 - gamma2 - gamma3 (existing Claret fit)'
+            hybrid4_profiles.extend(shared_profiles)
         if allcl is None:
             allcl = cl
         else:
@@ -374,6 +401,7 @@ def createldgrid(minmu, maxmu, orbp,
     out['MU'] = avmu
     out['LD'] = allcl.T
     out['ERR'] = allel.T
+    out['HYBRID4_PROFILES'] = hybrid4_profiles
     for i in range(0, len(allcl.T)):
         ld_value = np.ravel(np.asarray(allcl.T[i], dtype=float))
         err_value = np.ravel(np.asarray(allel.T[i], dtype=float))

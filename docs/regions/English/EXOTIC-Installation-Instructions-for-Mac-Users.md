@@ -1,5 +1,13 @@
 # Install EXOTIC on macOS
 
+The native hybrid4 transit backend builds automatically during source
+installation and, when needed, on first use from a checkout. Install Apple's C++ command-line tools once with `xcode-select --install`.
+Platform wheels already include their native library. To prepare the backend
+before a bulk run, use `python -m exotic.api.native_build` in the active EXOTIC
+environment. Unchanged builds are reused; compiler failures are reported.
+Repository launchers run the checkout directly without reinstalling packages.
+
+
 EXOTIC requires **Python 3.12 or newer**. The commands below use Python 3.14.
 Use an existing supported Python or install the latest 3.14 maintenance release from
 [Python for macOS](https://www.python.org/downloads/macos/).

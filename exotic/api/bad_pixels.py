@@ -8,11 +8,34 @@ from astropy.io import fits
 from scipy.ndimage import distance_transform_edt, median_filter
 
 
+PREPARATION_BACKEND = 'cpp'
+
+
 def enabled(value):
     return value is True or str(value).strip().lower() in {'y', 'yes', 'true', '1'}
 
 
 def low_pixel_mask(image, gap_width=17, population_threshold=25):
+    if PREPARATION_BACKEND not in ('cpp', 'python'):
+        raise ValueError(f'Unknown image preparation backend: {PREPARATION_BACKEND!r}')
+    native_population = (
+        type(population_threshold) in (int, float, bool)
+        or isinstance(population_threshold, (np.integer, np.floating))
+        and population_threshold.dtype.itemsize <= 8
+    )
+    if isinstance(population_threshold, int) and population_threshold.bit_length() > 1023:
+        native_population = False
+    if PREPARATION_BACKEND == 'cpp' and isinstance(gap_width, (int, np.integer)) \
+            and -(2**63) <= gap_width < 2**63 and native_population:
+        from .image_preparation_cpp import low_pixel_mask as native_mask
+        return native_mask(image, gap_width, population_threshold)
+    # Preserve custom Python argument semantics outside the C ABI scalar
+    # types; ordinary detector settings use native counts. Native errors are
+    # propagated and never switch to this reference calculation.
+    return _low_pixel_mask_python(image, gap_width, population_threshold)
+
+
+def _low_pixel_mask_python(image, gap_width=17, population_threshold=25):
     """OBS principle: find the first quiet histogram run below the mode.
 
     Use the whole detector, integer ADU bins, and fewer than 25 pixels per
@@ -188,7 +211,18 @@ def prepare_reference(info, shape, existing=None, dark_files=None):
     return result
 
 
-def repair_frame(image, reference):
+def repair_frame(image, reference, *, copy=True):
+    if reference is None:
+        return image
+    if PREPARATION_BACKEND not in ('cpp', 'python'):
+        raise ValueError(f'Unknown image preparation backend: {PREPARATION_BACKEND!r}')
+    if PREPARATION_BACKEND == 'cpp' and np.ndim(image) == 2:
+        from .image_preparation_cpp import repair_frame as native_repair
+        return native_repair(image, reference, copy=copy)
+    return _repair_frame_python(image, reference)
+
+
+def _repair_frame_python(image, reference):
     """Mask simultaneously so no defective neighbour is used for repair."""
     if reference is None:
         return image
@@ -198,7 +232,7 @@ def repair_frame(image, reference):
         raise ValueError('Bad-pixel mask shape differs from current frame')
     mask |= ~np.isfinite(repaired)
     if reference.get('detect_low'):
-        low, _ = low_pixel_mask(repaired)
+        low, _ = _low_pixel_mask_python(repaired)
         mask |= low
     if not mask.any():
         return repaired

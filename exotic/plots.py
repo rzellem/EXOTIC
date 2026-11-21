@@ -1235,7 +1235,31 @@ def _final_lightcurve_model_grid(fit, high_res):
     return x_values, model, None
 
 
-def _transit_model_uncertainty_envelope_for_grid(fit, times, model_shape):
+class _LightcurveUncertaintyEvaluator:
+    """Reuse envelopes only while rendering one final light-curve export.
+
+    A fit can change when a retained sampler resumes. Keeping this cache local
+    to the export avoids stale bands without hashing or changing the fit.
+    """
+
+    def __init__(self, fit):
+        self.fit = fit
+        self.envelopes = []
+
+    def __call__(self, method_name, times):
+        times = np.asarray(times, dtype=float)
+        for name, grid, envelope in self.envelopes:
+            if name == method_name and np.array_equal(grid, times, equal_nan=True):
+                return envelope
+        method = getattr(self.fit, method_name, None)
+        envelope = method(times) if callable(method) else None
+        self.envelopes.append((method_name, times.copy(), envelope))
+        return envelope
+
+
+def _transit_model_uncertainty_envelope_for_grid(
+    fit, times, model_shape, uncertainty_evaluator=None,
+):
     if times is None or times.shape != model_shape:
         return None
 
@@ -1244,7 +1268,10 @@ def _transit_model_uncertainty_envelope_for_grid(fit, times, model_shape):
         return None
 
     try:
-        envelope = uncertainty_func(times)
+        envelope = (
+            uncertainty_func(times) if uncertainty_evaluator is None
+            else uncertainty_evaluator('transit_model_uncertainty', times)
+        )
     except Exception:
         return None
     if envelope is None or len(envelope) != 2:
@@ -1257,7 +1284,9 @@ def _transit_model_uncertainty_envelope_for_grid(fit, times, model_shape):
     return lower, upper
 
 
-def _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res):
+def _plot_final_data_scatter_uncertainty_band(
+    ax_lc, fit, high_res, uncertainty_evaluator=None,
+):
     empirical_uncertainty = getattr(fit, 'empirical_transit_uncertainty', None)
     if not isinstance(empirical_uncertainty, dict) or not empirical_uncertainty.get('available'):
         empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
@@ -1288,7 +1317,9 @@ def _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res):
     empirical_lower_sorted = empirical_lower[sort_index]
     empirical_upper_sorted = empirical_upper[sort_index]
 
-    model_envelope = _transit_model_uncertainty_envelope_for_grid(fit, times, model.shape)
+    model_envelope = _transit_model_uncertainty_envelope_for_grid(
+        fit, times, model.shape, uncertainty_evaluator=uncertainty_evaluator,
+    )
     drew_band = False
     def next_label():
         nonlocal drew_band
@@ -1497,7 +1528,10 @@ def _build_final_lightcurve_figure(
     show_restricted_baseline_points,
     show_binned_points,
     diagnostic=False,
+    uncertainty_evaluator=None,
 ):
+    if uncertainty_evaluator is None:
+        uncertainty_evaluator = _LightcurveUncertaintyEvaluator(fit)
     f, (ax_lc, ax_res) = _plot_bestfit_for_lightcurve_png(
         fit,
         show_flux_baseline_label=False,
@@ -1506,6 +1540,7 @@ def _build_final_lightcurve_figure(
         show_restricted_baseline_points=show_restricted_baseline_points,
         show_rejected_points=True,
         show_binned_points=show_binned_points,
+        _uncertainty_evaluator=uncertainty_evaluator,
     )
 
     if getattr(fit, 'quick_look_mode', False):
@@ -1516,7 +1551,9 @@ def _build_final_lightcurve_figure(
         title = targ_name
     ax_lc.set_title(title)
 
-    drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(ax_lc, fit, high_res)
+    drew_data_scatter_band = _plot_final_data_scatter_uncertainty_band(
+        ax_lc, fit, high_res, uncertainty_evaluator=uncertainty_evaluator,
+    )
     if hasattr(fit, 'phase_upsample') and hasattr(fit, 'transit_upsample'):
         ax_lc.plot(fit.phase_upsample, fit.transit_upsample, 'r', zorder=1000, lw=2)
     else:
@@ -1627,6 +1664,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
     # cached. Recompute from the final arrays, as the final JSON export does.
     empirical_uncertainty = fit_empirical_transit_uncertainty(fit)
     fit.empirical_transit_uncertainty = empirical_uncertainty
+    uncertainty_evaluator = _LightcurveUncertaintyEvaluator(fit)
 
     Path(save).mkdir(parents=True, exist_ok=True)
 
@@ -1650,6 +1688,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
             show_restricted_baseline_points=True,
             show_binned_points=True,
             diagnostic=True,
+            uncertainty_evaluator=uncertainty_evaluator,
         )
         diagnostics_dir = Path(save) / "Diagnostics"
         diagnostics_dir.mkdir(parents=True, exist_ok=True)
@@ -1679,6 +1718,7 @@ def plot_final_lightcurve(fit, high_res, targ_name, save, date, observed_filter=
         show_restricted_baseline_points=False,
         show_binned_points=False,
         diagnostic=False,
+        uncertainty_evaluator=uncertainty_evaluator,
     )
     try:
         save_figure_formats(

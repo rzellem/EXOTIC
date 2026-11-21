@@ -35,6 +35,32 @@ class DummyFit:
         self.airmass = np.array([1.1, 1.2, 1.3])
 
 
+def test_lightcurve_uncertainty_reuse_tracks_method_and_grid():
+    calls = []
+    def envelope(times):
+        calls.append(times.copy())
+        return times - 0.01, times + 0.01
+    fit = SimpleNamespace(transit_model_uncertainty=envelope)
+    evaluate = plots_module._LightcurveUncertaintyEvaluator(fit)
+    times = np.array([1., np.nan, 3.])
+    first = evaluate('transit_model_uncertainty', times)
+    assert evaluate('transit_model_uncertainty', times.copy()) is first
+    assert len(calls) == 1
+    # The cache owns its grid, even when the caller changes its input array.
+    times[0] = 2.
+    evaluate('transit_model_uncertainty', times)
+    assert len(calls) == 2
+    fit.baseline_model_uncertainty = lambda times: None
+    assert evaluate('baseline_model_uncertainty', times) is None
+    assert evaluate('baseline_model_uncertainty', times.copy()) is None
+    assert len(evaluate.envelopes) == 3
+    # A subsequent export evaluates again, including an unavailable band.
+    fit.baseline_model_uncertainty = envelope
+    fresh = plots_module._LightcurveUncertaintyEvaluator(fit)
+    assert fresh('baseline_model_uncertainty', times) is not None
+    assert len(calls) == 3
+
+
 @pytest.mark.parametrize('diagnostic', [False, True])
 def test_final_residual_window_ignores_rejected_outliers(diagnostic):
     class Fit:

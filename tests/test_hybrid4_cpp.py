@@ -42,6 +42,9 @@ def test_missing_cpp_library_is_an_explicit_error(tmp_path, monkeypatch):
     limbdarkfast_cpp._library.cache_clear()
     with monkeypatch.context() as patch:
         patch.setattr(limbdarkfast_cpp, 'library_path', lambda: tmp_path/'absent.dll')
+        # Exercise the load error independently of the source-build tests. A
+        # synthetic missing-library path must not start a real compiler here.
+        patch.setattr(limbdarkfast_cpp, 'ensure_hybrid4_native', lambda **kwargs: None)
         with pytest.raises(RuntimeError, match='scripts/build_hybrid4_cpp.py'):
             limbdarkfast_cpp.hybrid4_flux([0.2],0.1,[0.3,0.2,0.1,0.05])
     limbdarkfast_cpp._library.cache_clear()

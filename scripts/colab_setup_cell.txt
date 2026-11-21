@@ -35,8 +35,7 @@ display(HTML('<p class="hidden">Loading styles, please wait, this takes a few mi
 
 # Install EXOTIC Colab interface code to provide styling and interaction features
 # !pip install git+https://github.com/alienlifeform/exotic-colab.git --upgrade
-!pip install --upgrade --quiet "setuptools>=77"
-!pip install --upgrade --quiet jedi
+!pip install --quiet "setuptools>=77" jedi importlib-metadata
 # !pip install --upgrade --use-deprecated=legacy-resolver git+https://github.com/alienlifeform/exotic-colab.git
 # Download the shared, tested binary setup; no per-notebook ZIP upload.
 from urllib.request import urlretrieve
@@ -54,7 +53,6 @@ loaded_numpy = sys.modules.get('numpy')
 if loaded_numpy is not None and loaded_numpy.__version__ != package_metadata.version('numpy'):
     display(HTML('<p class="attention">NumPy ' + loaded_numpy.__version__ + ' is still loaded; ' + package_metadata.version('numpy') + ' is now installed. Restart the session and rerun Step 1 to load the updated dependencies. Rerunning Step 1 retrieves the shared binary setup automatically.</p>'))
 
-!pip install --quiet importlib-metadata
 # !pip install --upgrade --quiet bokeh==3.4.3
 
 from exoticcolab.display import setupDisplay, testImplementation, displayStep, makeContainer, downloadButton, appendToContainer, appendStepToContainer, expandableSection, expandableSectionCustom, hideWarning, showProgress, resize_colab_cell

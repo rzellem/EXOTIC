@@ -13,6 +13,16 @@ wheel; only dependency metadata and the matching version label changed. The
 installer constrains NumPy to the runtime's existing installed version, so a
 normal Colab setup keeps its preloaded NumPy instead of upgrading it.
 
+The `.colabdeps` revision also accepts Colab's requests 2.32.4, Numba 0.64.0
+and Bokeh 3.8.2. The installer reads this wheel's actual dependency requirements
+and constrains compatible installed NumPy/requests/Numba/Bokeh versions, avoiding
+the google-colab, PyTensor and Panel conflicts caused by unnecessary upgrades.
+Missing or incompatible versions remain available for pip to resolve. Bootstrap
+packages are installed together without upgrading already-satisfied versions.
+Manifest retrieval, wheel downloads and pip installation are timed separately.
+This revision changes only EXOTIC's dependency metadata and version label; all
+64 other package files, including its native library, are unchanged.
+
 The `.localmath` revision includes EXOTIC's local Python reference calculations
 for orbital geometry, transit/eclipse integration and eclipse timing. Native
 fits, Python comparisons and joint fits no longer import PyLightcurve or load
@@ -33,8 +43,8 @@ file MIME types, without requiring an HTML package-index service.
 Ordinary dependencies continue to resolve through the normal package index.
 If a future Colab Python ABI or platform needs another UltraNest wheel, pip
 reports the incompatibility instead of silently compiling it from source.
-Likewise, if another dependency cannot use the retained NumPy version, pip
-reports that dependency conflict instead of replacing NumPy.
+If the retained compatible packages conflict with another dependency, pip
+reports that conflict normally.
 
 From an existing checkout, the wheelhouse can already be used locally:
 
@@ -48,12 +58,22 @@ directory on the existing `rzellem/EXOTIC` branch
 files to make them available at that location; neither installer nor builder
 uploads or publishes anything.
 
-The actual Colab wheel installation passed 818 tests. Its normal native loads
-and replay of 10,325 saved HAT-P-26b/WASP-16b posterior draws made zero compiler
-calls. That validation was saved-data replay, not a new full image reduction.
-The automatic-download path is tested locally through a loopback HTTP server
-with pip's CPython 3.13 / Linux resolver; it has not been tested against a
-published repository URL.
+The original native wheel passed 818 Colab tests, including replay of 10,325
+saved HAT-P-26b/WASP-16b posterior draws. The `.localmath` revision passed 3,090
+local tests and 957 tests in a fresh Colab CPU runtime (Python 3.13.18, glibc
+2.39, NumPy 2.4.6). These include frozen PyLightcurve 4.0.4 vectors, the joint
+transit/RV/ephemeris likelihood, Python/native model comparisons, orbital replay,
+photometry and notebook imports. The missing-library load-error fixture is
+isolated from the source builder so it does not deliberately compile a library.
+
+The fresh runtime downloaded all three wheels automatically from this branch's
+published JSON manifest, retained its original NumPy, and installed/imported no
+PyLightcurve. Installation took 91.9 seconds and the notebook imports took 5.1
+seconds. Normal native loads and the regression suite required no C++ compiler
+calls or ZIP uploads. Drive mounting and full science-image reductions were not
+exercised in this setup test. Pip reported existing dependency conflicts with
+the runtime's google-colab/requests, pytensor/numba and panel/bokeh requirements;
+the EXOTIC checks above passed despite those warnings.
 
 Rebuild the wheel set with `scripts/build_colab_wheels.py`. It also regenerates
 the exact version requirements and wheel manifest from that build's outputs.

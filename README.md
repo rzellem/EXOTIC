@@ -455,7 +455,7 @@ When available, a source record may supply `joint_posterior: {"ecc": [...], "ome
 
 ### UltraNest CPU start gate
 
-By default, each UltraNest fit waits until total system CPU usage is at or below **50%** before starting. EXOTIC measures CPU usage over one second and, while above the threshold, reports the wait and checks again after five seconds. There is no wait timeout. Existing fits continue running; photometry and least-squares fitting are unaffected. CPU measurement failures are reported as errors rather than silently bypassing the gate.
+By default, each UltraNest fit waits until total system CPU usage is at or below **50%** before starting. EXOTIC checks CPU usage immediately without an unconditional one-second pause. The counter is primed during startup and refreshed after each completed fit. While above the threshold, EXOTIC reports the wait and checks again after five seconds. There is no wait timeout. Existing fits continue running; photometry and least-squares fitting are unaffected. CPU measurement failures are reported as errors rather than silently bypassing the gate.
 
 Configure the gate in your init JSON:
 

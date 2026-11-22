@@ -58,7 +58,6 @@ ULTRANEST_CPU_GATE_ENV = "EXOTIC_ULTRANEST_CPU_GATE"
 ULTRANEST_CPU_THRESHOLD_ENV = "EXOTIC_ULTRANEST_CPU_THRESHOLD"
 RESOURCE_WAIT_EVENTS_ENV = "EXOTIC_RESOURCE_WAIT_EVENTS"
 DEFAULT_CPU_THRESHOLD_PERCENT = 50.0
-CPU_SAMPLE_SECONDS = 1.0
 CPU_GATE_POLL_SECONDS = 5.0
 BYTES_PER_GIB = 1024 ** 3
 MIN_AUTO_POINTS_PER_WORKER = 8
@@ -104,7 +103,23 @@ def configure_ultranest_cpu_gate(enabled=None, threshold=None):
         os.environ[ULTRANEST_CPU_GATE_ENV] = str(enabled)
     if threshold is not None:
         os.environ[ULTRANEST_CPU_THRESHOLD_ENV] = str(threshold)
-    return _cpu_gate_settings()
+    settings = _cpu_gate_settings()
+    if settings[0]:
+        # Prime during startup; preparation supplies the initial sampling
+        # interval without pausing the first fit.
+        _prime_cpu_usage_counter()
+    return settings
+
+
+def _prime_cpu_usage_counter():
+    try:
+        psutil.cpu_percent(interval=None)
+    except Exception as exc:
+        # Do not discard a completed fit if refreshing the counter fails.
+        # The next gate still measures CPU usage and reports any failure.
+        logging.getLogger(__name__).warning(
+            "[ultranest] Could not prime CPU usage counter: %s", exc,
+        )
 
 
 @contextmanager
@@ -140,8 +155,8 @@ def _poll_cpu_capacity(threshold, verbose=True, stream=None):
     output_stream = stream if stream is not None else sys.stdout
     waited = False
     while True:
-        # A blocking sample avoids psutil's meaningless first nonblocking 0%.
-        cpu_percent = psutil.cpu_percent(interval=CPU_SAMPLE_SECONDS)
+        # Read usage since the previous sample immediately.
+        cpu_percent = psutil.cpu_percent(interval=None)
         if not math.isfinite(cpu_percent) or not 0 <= cpu_percent <= 100:
             raise RuntimeError(f"Cannot measure system CPU usage: {cpu_percent!r}.")
         if cpu_percent <= threshold:
@@ -1069,12 +1084,17 @@ def run_reactive_sampler(
 
     Set EXOTIC_ULTRANEST_RICH_PROGRESS=1 for UltraNest's native status output.
     Use verbose=False to silence all progress updates.
-    CPU admission defaults to on at 50%; disable with EXOTIC_ULTRANEST_CPU_GATE=0.
+    CPU admission defaults to on at 50%; available capacity starts immediately.
     """
     with _evaluation_budget_context() as budget:
-        return _run_reactive_sampler(
+        result = _run_reactive_sampler(
             sampler, run_kwargs, verbose, stream, interval_seconds, budget,
         )
+        if _cpu_gate_settings()[0]:
+            # Refresh after the workers finish so this fit's CPU work is not
+            # mistaken for background load when the next fit is admitted.
+            _prime_cpu_usage_counter()
+        return result
 
 
 def _run_reactive_sampler(sampler, run_kwargs, verbose, stream, interval_seconds, budget):

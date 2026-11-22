@@ -20,7 +20,7 @@ def test_cpu_gate_waits_for_load_to_drop_before_workers_and_sampling(monkeypatch
 
     def sample(interval):
         events.append(('sample', interval))
-        return next(loads)
+        return next(loads, 50.0)
 
     @contextmanager
     def workers(sampler):
@@ -40,9 +40,9 @@ def test_cpu_gate_waits_for_load_to_drop_before_workers_and_sampling(monkeypatch
 
     assert result == {'fit': 'complete'}
     assert events == [
-        ('sample', 1.0), ('sleep', 5.0),
-        ('sample', 1.0), ('sleep', 5.0),
-        ('sample', 1.0), 'workers', 'run',
+        ('sample', None), ('sleep', 5.0),
+        ('sample', None), ('sleep', 5.0),
+        ('sample', None), 'workers', 'run', ('sample', None),
     ]
     assert 'system CPU 94.0% > 50%' in stream.getvalue()
     assert 'CPU gate ready' in stream.getvalue()
@@ -94,8 +94,8 @@ def test_gate_events_include_sampling_and_waits_even_in_silent_fits(monkeypatch,
     monkeypatch.setattr(utils.time, 'monotonic', lambda: now.value)
 
     def sample(interval):
-        now.value += interval
-        return next(readings)
+        assert interval is None
+        return next(readings, loads[-1])
 
     monkeypatch.setattr(utils.psutil, 'cpu_percent', sample)
     monkeypatch.setattr(utils.time, 'sleep', lambda seconds: setattr(now, 'value', now.value + seconds))
@@ -112,7 +112,7 @@ def test_gate_events_include_sampling_and_waits_even_in_silent_fits(monkeypatch,
         return 'complete'
 
     assert utils.run_reactive_sampler(SimpleNamespace(run=run), verbose=False, stream=stream) == 'complete'
-    assert now.value == (107 if len(loads) == 2 else 101)
+    assert now.value == (105 if len(loads) == 2 else 100)
     assert stream.getvalue() == ''
     assert capsys.readouterr().out.splitlines() == [
         f'[exotic-runtime] processing_end {worker} {now.value:.9f}',
@@ -211,3 +211,63 @@ def test_mpi_cpu_gate_propagates_root_failure_to_workers(monkeypatch):
     comm.bcast = lambda value, root: messages[0]
     with pytest.raises(RuntimeError, match='CPU counters unavailable'):
         utils._wait_for_sampler_cpu_capacity(SimpleNamespace(use_mpi=True, mpi_rank=1, comm=comm))
+
+
+def test_available_cpu_starts_repeated_fits_without_a_sampling_pause(monkeypatch):
+    loads = iter([30.0, 90.0, 30.0, 90.0])
+    events = []
+
+    def sample(interval):
+        assert interval is None
+        load = next(loads)
+        events.append(('check', load))
+        return load
+
+    def run(**kwargs):
+        events.append('fit')
+        return 'complete'
+
+    monkeypatch.setattr(utils.psutil, 'cpu_percent', sample)
+    monkeypatch.setattr(utils.time, 'sleep', lambda seconds: pytest.fail('CPU is available'))
+    sampler = SimpleNamespace(run=run)
+    assert utils.run_reactive_sampler(sampler, verbose=False) == 'complete'
+    assert utils.run_reactive_sampler(sampler, verbose=False) == 'complete'
+    assert events == [
+        ('check', 30.0), 'fit', ('check', 90.0),
+        ('check', 30.0), 'fit', ('check', 90.0),
+    ]
+
+
+def test_startup_primes_counter_before_first_gate_check(monkeypatch):
+    loads = iter([0.0, 80.0, 30.0])
+    events = []
+
+    def sample(interval):
+        assert interval is None
+        load = next(loads)
+        events.append(('check', load))
+        return load
+
+    monkeypatch.setattr(utils.psutil, 'cpu_percent', sample)
+    monkeypatch.setattr(utils.time, 'sleep', lambda seconds: events.append(('sleep', seconds)))
+    assert utils.configure_ultranest_cpu_gate() == (True, 50.0)
+    utils._wait_for_cpu_capacity(verbose=False)
+    assert events == [('check', 0.0), ('check', 80.0), ('sleep', 5.0), ('check', 30.0)]
+
+
+def test_counter_refresh_failure_preserves_completed_fit(monkeypatch, caplog):
+    calls = []
+
+    def sample(interval):
+        assert interval is None
+        calls.append('check')
+        if len(calls) == 1:
+            return 30.0
+        raise OSError('CPU counters unavailable')
+
+    monkeypatch.setattr(utils.psutil, 'cpu_percent', sample)
+    sampler = SimpleNamespace(run=lambda **kwargs: 'complete')
+    assert utils.run_reactive_sampler(sampler, verbose=False) == 'complete'
+    assert 'Could not prime CPU usage counter: CPU counters unavailable' in caplog.text
+    with pytest.raises(OSError, match='CPU counters unavailable'):
+        utils.run_reactive_sampler(sampler, verbose=False)

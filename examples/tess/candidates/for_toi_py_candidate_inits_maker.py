@@ -1,6 +1,5 @@
 import requests
 import os
-import time
 import json
 import csv
 import pandas as pd
@@ -44,9 +43,6 @@ while True:
             break  # Exit the loop if the download was successful
     except ValueError:
         print("Invalid TIC ID. Please enter a correct numeric value.")
-
-# Delay to prevent rapid consecutive requests
-time.sleep(1)
 
 print(f'Download completed and saved to {target_directory} folder')
 

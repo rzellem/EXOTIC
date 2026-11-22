@@ -1,6 +1,5 @@
 import requests
 import os
-import time
 import json
 import csv
 from math import degrees, floor
@@ -48,9 +47,6 @@ while True:
             break  # Exit the loop if the download was successful
     except ValueError:
         print("Invalid TIC ID. Please enter a correct numeric value.")
-
-# for multiple file version, Delay for a specified number of seconds so we're not a robot. beep boop
-time.sleep(1)  
 
 print(f'Download completed and saved to output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_files folder')
 

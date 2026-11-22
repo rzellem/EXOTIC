@@ -28,8 +28,43 @@ ordering. The installer records download wall time separately from overlapping
 per-wheel times. It then uses one pip call with `--no-index --no-compile`:
 dependency compatibility checks remain enabled, while PyPI lookups and
 installation-time Python bytecode compilation are avoided. Python may prepare
-bytecode during first imports, so compare installation plus imports. These
-installer changes await manual push and fresh-runtime validation.
+bytecode during first imports, so compare installation plus imports.
+
+The fresh 22-wheel validation downloaded all 34.0 MB in 1.31 seconds of wall
+time, using four workers, and made no PyPI package downloads. Pip resolved
+dependencies locally, kept all eight protected Colab versions, and `pip check`
+reported no broken requirements. No bytecode files existed in the checked
+newly installed packages before their ordinary imports. All 1,209 selected
+installed-wheel checks passed, with zero source builds, C++ compiler calls or
+ZIP uploads. Local installer/dependency/native checks passed 32 tests, with
+two Colab-only checks skipped locally and exercised in that fresh runtime.
+
+| Software startup stage | Previous 8-wheel setup | Complete 22-wheel setup |
+| --- | ---: | ---: |
+| Installation | 20.50 s | 14.67 s |
+| First imports | 7.88 s | 10.64 s |
+| Installation plus first imports | 28.38 s | 25.30 s |
+
+Installation was 28.4% shorter, while the combined install/import measurement
+was 10.8% shorter (3.08 seconds saved). First imports were longer, so the
+installation-only improvement overstates the observed complete startup gain.
+The three changes were measured together; their individual effects were not
+isolated. These are separate fresh-VM observations, excluding VM allocation,
+Drive mounting and validation-only reference installs/refits. Pip itself took
+12.65 seconds: approximately 6.47 seconds for startup/local dependency
+resolution and 6.18 seconds for unpack/install.
+
+The new setup completed 24 matched HAT-P-26b/WASP-16b Claret/hybrid4 refits,
+using three seeds and the same stored photometry, atmosphere coefficients,
+exposures, masks, priors and sampling settings. All 12 pairs against isolated
+untrimmed dependencies had identical complete posterior summaries, reported
+errors, maximum-likelihood/reported parameters, models, RMS, chi-square,
+evidence and its error, bounds and call counts. The 1,028 likelihood/prior
+replays and Bayer/imreg dependency probes also matched exactly. No fit reached
+its call limit. The same fields, models and prior bounds also matched all 12
+saved fits from the preceding eight-wheel setup exactly. Reference installs
+and refits are excluded from startup timing; images and atmosphere profiles
+were not regenerated.
 
 | Package | Original wheel MB | Prepared wheel MB |
 | --- | ---: | ---: |

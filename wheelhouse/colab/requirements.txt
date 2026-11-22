@@ -1,4 +1,4 @@
 # Tested Colab software versions; native packages must use binary wheels.
-exotic==4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps
+exotic==4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps.scipy116
 exoticcolab==0.1.dev71+gef0aa1741
 ultranest==4.6.3

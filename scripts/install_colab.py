@@ -33,7 +33,7 @@ def compatible_runtime_versions(exotic_wheel):
     retained = {}
     for value in metadata.get_all('Requires-Dist', []):
         requirement = Requirement(value)
-        if requirement.name.lower() not in ('numpy', 'requests', 'numba', 'bokeh'):
+        if requirement.name.lower() not in ('numpy', 'requests', 'numba', 'bokeh', 'scipy'):
             continue
         if requirement.marker and not requirement.marker.evaluate({'extra': ''}):
             continue

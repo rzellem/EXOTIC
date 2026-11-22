@@ -23,6 +23,11 @@ Manifest retrieval, wheel downloads and pip installation are timed separately.
 This revision changes only EXOTIC's dependency metadata and version label; all
 64 other package files, including its native library, are unchanged.
 
+The `.scipy116` revision accepts and retains Colab's SciPy 1.16.3 as well.
+Its only wheel changes are the SciPy dependency minimum and matching version
+label. All 64 other package files and the compiled native backend are unchanged.
+Other environments may continue using newer compatible SciPy versions.
+
 The `.localmath` revision includes EXOTIC's local Python reference calculations
 for orbital geometry, transit/eclipse integration and eclipse timing. Native
 fits, Python comparisons and joint fits no longer import PyLightcurve or load
@@ -73,7 +78,33 @@ seconds. Normal native loads and the regression suite required no C++ compiler
 calls or ZIP uploads. Drive mounting and full science-image reductions were not
 exercised in this setup test. Pip reported existing dependency conflicts with
 the runtime's google-colab/requests, pytensor/numba and panel/bokeh requirements;
-the EXOTIC checks above passed despite those warnings.
+the EXOTIC checks above passed despite those warnings. Those dependency
+conflicts are resolved by the `.colabdeps` revision.
+
+The fresh `.colabdeps` validation retained requests 2.32.4, Numba 0.64.0,
+llvmlite 0.46.0, Bokeh 3.8.2 and NumPy 2.4.6. `pip check` reported no broken
+requirements. All 962 selected installed-wheel checks passed, including LDTK's
+Numba nonlinear profile calculation and serialization of EXOTIC's Bokeh image
+and drawing tools. The shared binary downloads, native/Python comparisons and
+joint likelihood checks again used zero C++ compiler calls and no ZIP uploads.
+
+That setup took 73.2 seconds, compared with 91.9 seconds in the earlier run;
+notebook imports took 7.4 seconds. The measured install stages were:
+
+| Stage | Seconds |
+| --- | ---: |
+| Bootstrap packages (setuptools, jedi, importlib-metadata) | 21.4 |
+| Dependency resolution, metadata and source preparation | 11.8 |
+| Dependency wheel payload downloads | 2.9 |
+| Pure Python imreg-dft wheel build | 1.4 |
+| Unpacking, replacing and installing packages | 34.1 |
+| Installer retrieval, shared binaries and other startup work | 1.5 |
+
+The phase timings come from ordinary pip log boundaries. The three shared
+wheels downloaded in 0.94 seconds; dependency payloads fell from approximately
+187 MB to 117 MB. Package installation and bootstrap work dominated this run.
+Network and VM performance vary between runtimes. Drive mounting and complete
+science-image reductions were not part of this dependency validation.
 
 Rebuild the wheel set with `scripts/build_colab_wheels.py`. It also regenerates
 the exact version requirements and wheel manifest from that build's outputs.

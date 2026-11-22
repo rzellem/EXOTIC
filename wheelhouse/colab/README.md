@@ -28,6 +28,41 @@ Its only wheel changes are the SciPy dependency minimum and matching version
 label. All 64 other package files and the compiled native backend are unchanged.
 Other environments may continue using newer compatible SciPy versions.
 
+The fresh `.scipy116` runtime retained SciPy 1.16.3 alongside NumPy 2.4.6 and
+the other Colab dependency versions. All 962 installed-wheel checks passed and
+`pip check` reported no broken requirements. The full local suite under an
+isolated SciPy 1.16.3 installation passed 3,095 tests, with the optional
+Colab/IPython image check skipped locally and exercised successfully in Colab.
+
+Normal setup took 55.7 seconds versus 73.2 seconds in the previous fresh runtime
+(17.6 seconds, or 24%, shorter in this pair). Dependency payloads fell from
+116.9 MB to 81.6 MB by retaining the existing 35.3 MB SciPy wheel installation.
+Pip installation fell from 50.3 to 37.9 seconds; its unpack/replace/install phase
+fell from 34.1 to 23.2 seconds. Notebook imports took 7.6 seconds. These are
+individual fresh-runtime observations, with the same timing scope as above.
+
+Scientific validation refitted the recorded HAT-P-26b (241 points) and WASP-16b
+(72 points) Claret and hybrid4 inputs under both SciPy 1.16.3 and 1.18.1, using
+three matched seeds: 24 independent fits and 12 version pairs. Photometry,
+atmosphere coefficients, exposure integration, masks, priors and normal sampling
+controls were held fixed. All pairs had identical models, posterior medians,
+68% intervals, reported errors, chi-square, log evidence, prior bounds and
+likelihood-call counts. Replaying 257 prior/likelihood points per input case
+also gave zero numerical differences. The SciPy 1.18.1 reference was installed
+into a separate validation directory and did not replace the runtime's SciPy;
+that reference installation and all refits are excluded from setup timing.
+This check reused saved photometry and did not rerun image reductions or
+regenerate stellar atmosphere profiles. Native C++ compilation and ZIP uploads
+were again unnecessary.
+
+The `.colabstack` revision also accepts and retains Colab's Astropy 7.2.3,
+Matplotlib 3.10.0 and scikit-image 0.25.2. Only these three dependency minima
+and the matching wheel version label change; the other 64 package files,
+including the compiled native backend, are unchanged. The installer pins all
+eight shared packages only when the installed versions satisfy the wheel's
+requirements. Newer compatible versions remain supported. Fresh-runtime
+timings and matched fit comparisons are pending this revision's manual push.
+
 The `.localmath` revision includes EXOTIC's local Python reference calculations
 for orbital geometry, transit/eclipse integration and eclipse timing. Native
 fits, Python comparisons and joint fits no longer import PyLightcurve or load

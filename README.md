@@ -102,10 +102,12 @@ Python version. The tested Colab wheels are prepared in
 and a download manifest. The shared installer can fetch them automatically
 once those repository files are published; no per-notebook ZIP is needed.
 Commit and push the prepared files before switching the notebook's setup cell.
-The shared installer retains the runtime's NumPy, requests, Numba, Bokeh and SciPy
+The shared installer retains the runtime's NumPy, requests, Numba, Bokeh, SciPy,
+Astropy, Matplotlib and scikit-image
 using pip constraints when they satisfy the wheel's requirements. The source
 requirements and revised Colab wheel support NumPy 2.4.6, requests 2.32.4,
-Numba 0.64.0, Bokeh 3.8.2 and SciPy 1.16.3. An incompatible or absent dependency is resolved
+Numba 0.64.0, Bokeh 3.8.2, SciPy 1.16.3, Astropy 7.2.3, Matplotlib 3.10.0
+and scikit-image 0.25.2. An incompatible or absent dependency is resolved
 by pip normally. Setup also reports the manifest, binary-download and pip
 installation times; the small bootstrap dependencies use one pip invocation.
 Installing those wheels avoids rebuilding either native component. Installing EXOTIC from a Git

@@ -141,7 +141,9 @@ def test_bundled_reference_needs_no_external_pylightcurve():
 
 def test_installer_retains_compatible_colab_packages(monkeypatch):
     installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
-    runtime = dict(numpy='2.4.6', requests='2.32.4', numba='0.64.0', bokeh='3.8.2', scipy='1.16.3')
+    runtime = dict(numpy='2.4.6', requests='2.32.4', numba='0.64.0', bokeh='3.8.2',
+                   scipy='1.16.3', astropy='7.2.3', matplotlib='3.10.0',
+                   **{'scikit-image': '0.25.2'})
     monkeypatch.setitem(installer['compatible_runtime_versions'].__globals__, 'version', runtime.__getitem__)
     commands = []
     constraints = []
@@ -164,7 +166,8 @@ def test_installer_allows_needed_upgrades_and_missing_dependencies(monkeypatch):
     def installed(name):
         if name == 'bokeh':
             raise installer['PackageNotFoundError'](name)
-        return dict(numpy='2.4.6', requests='2.31.0', numba='0.63.0', scipy='1.15.2')[name]
+        return dict(numpy='2.4.6', requests='2.31.0', numba='0.63.0', scipy='1.15.2',
+                    astropy='6.1.7', matplotlib='3.9.4', **{'scikit-image': '0.24.0'})[name]
 
     monkeypatch.setitem(installer['compatible_runtime_versions'].__globals__, 'version', installed)
     manifest = json.loads((WHEELHOUSE / 'index.json').read_text())

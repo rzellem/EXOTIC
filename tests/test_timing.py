@@ -190,9 +190,9 @@ def test_calculated_tmid_difference_fits_both_series_without_changing_production
     from types import SimpleNamespace
     import importlib.util
     import sys
-    from pathlib import Path
     if flat_import:
-        spec = importlib.util.spec_from_file_location('timing', Path(__file__).parents[1]/'exotic'/'timing.py')
+        import exotic.timing as installed_timing
+        spec = importlib.util.spec_from_file_location('timing', installed_timing.__file__)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
     else:

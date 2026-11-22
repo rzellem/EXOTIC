@@ -5,6 +5,7 @@ published. This installer only reads that location; it never uploads files.
 Use --wheelhouse PATH to install from an existing local wheelhouse instead.
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from email.parser import BytesParser
 from importlib.metadata import PackageNotFoundError, version
 import json
@@ -27,6 +28,19 @@ WHEELHOUSE_URL = (
 # Install notebook prerequisites in the same resolver pass as EXOTIC. Build
 # tools are unnecessary here: the shared wheelhouse includes imreg-dft too.
 NOTEBOOK_REQUIREMENTS = ('jedi', 'importlib-metadata')
+
+
+def download_wheels(source, directory, wheels):
+    """Download independent wheels concurrently, preserving manifest order."""
+    def download(wheel):
+        started = time.perf_counter()
+        destination = directory / wheel
+        urlretrieve(source + '/' + wheel, destination)
+        return dict(wheel=wheel, seconds=time.perf_counter() - started,
+                    bytes=destination.stat().st_size)
+
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        return list(workers.map(download, wheels))
 
 
 def compatible_runtime_versions(exotic_wheel):
@@ -58,7 +72,8 @@ def compatible_runtime_versions(exotic_wheel):
 
 def install_prebuilt(wheelhouse=WHEELHOUSE_URL):
     started = time.perf_counter()
-    timings = dict(manifest_seconds=0., wheel_downloads=[])
+    timings = dict(manifest_seconds=0., wheel_downloads=[],
+                   wheel_download_seconds=0., download_workers=0)
     source = str(wheelhouse).rstrip('/')
     with TemporaryDirectory(prefix='exotic-colab-') as temporary:
         if source.startswith(('https://', 'http://')):
@@ -67,12 +82,10 @@ def install_prebuilt(wheelhouse=WHEELHOUSE_URL):
                 manifest = json.load(response)
             timings['manifest_seconds'] = time.perf_counter() - stage_started
             directory = Path(temporary)
-            for wheel in manifest['wheels']:
-                stage_started = time.perf_counter()
-                urlretrieve(source + '/' + wheel, directory / wheel)
-                timings['wheel_downloads'].append(dict(
-                    wheel=wheel, seconds=time.perf_counter() - stage_started,
-                    bytes=(directory / wheel).stat().st_size))
+            stage_started = time.perf_counter()
+            timings['wheel_downloads'] = download_wheels(source, directory, manifest['wheels'])
+            timings['wheel_download_seconds'] = time.perf_counter() - stage_started
+            timings['download_workers'] = 4
         else:
             directory = Path(source).resolve()
             manifest = json.loads((directory / 'index.json').read_text(encoding='utf-8'))
@@ -88,7 +101,7 @@ def install_prebuilt(wheelhouse=WHEELHOUSE_URL):
         stage_started = time.perf_counter()
         binary_packages = ','.join(Requirement(pin).name for pin in manifest['requirements'])
         subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install',
+            sys.executable, '-m', 'pip', 'install', '--no-index', '--no-compile',
             '--only-binary=' + binary_packages,
             '--find-links', str(directory), *constraints,
             *[str(directory / wheel) for wheel in manifest['wheels']],

@@ -9,6 +9,7 @@ from collections import Counter
 from email.parser import BytesParser
 import json
 from pathlib import Path, PurePosixPath
+import shutil
 import subprocess
 import sys
 from zipfile import ZipFile
@@ -20,6 +21,14 @@ from wheel.wheelfile import WheelFile
 
 DEPENDENCIES = ('astroquery==0.4.11', 'photutils==3.1.1',
                 'colour-science==0.4.7', 'colour-demosaicing==0.2.7')
+# Packages absent from, or too old in, the tested fresh Colab base. Keep their
+# exact validated versions; shared NumPy/Astropy/etc. remain runtime packages.
+REMAINING_DEPENDENCIES = (
+    'jedi==0.20.1', 'astroalign==2.6.2', 'barycorrpy==0.4.4',
+    'bottleneck==1.6.1', 'ldtk==1.9.3', 'lmfit==1.3.4', 'asteval==1.0.10',
+    'psutil==7.2.2', 'pyvo==1.10.0', 'rebound==5.2.3', 'sep==1.4.1',
+    'uncertainties==3.2.3', 'corner==2.3.0', 'jplephem==2.24',
+)
 SLIM_PACKAGES = {'astroquery', 'photutils', 'colour-science', 'colour-demosaicing'}
 BUILD_TAG = '1colabslim'
 
@@ -97,8 +106,9 @@ def prepare_dependencies(output, upstream=None):
         subprocess.check_call([
             sys.executable, '-m', 'pip', 'download', '--only-binary=:all:', '--no-deps',
             '--platform', 'manylinux_2_28_x86_64', '--platform', 'manylinux2014_x86_64',
+            '--platform', 'manylinux_2_24_x86_64', '--platform', 'manylinux_2_12_x86_64',
             '--python-version', '3.13', '--implementation', 'cp', '--abi', 'cp313', '--abi', 'abi3',
-            '--dest', str(upstream), *DEPENDENCIES])
+            '--dest', str(upstream), *DEPENDENCIES, *REMAINING_DEPENDENCIES])
     records = []
     selected = []
     for requirement in DEPENDENCIES:
@@ -115,9 +125,22 @@ def prepare_dependencies(output, upstream=None):
         if not imreg.name.endswith('-none-any.whl') or any(n.endswith(('.so', '.pyd', '.dll')) for n in archive.namelist()):
             raise ValueError('Expected the pure Python imreg-dft wheel')
     selected.append(imreg)
+    remaining = []
+    for requirement in REMAINING_DEPENDENCIES:
+        package, version = requirement.split('==')
+        source = next(path for path in Path(upstream).glob('*.whl')
+                      if parse_wheel_filename(path.name)[:2] == (package, Version(version)))
+        destination = output / source.name
+        if source.resolve() != destination.resolve():
+            shutil.copy2(source, destination)
+        selected.append(destination)
+        remaining.append(dict(requirement=requirement, wheel=source.name,
+                              bytes=destination.stat().st_size,
+                              preparation='Unmodified upstream wheel'))
     (output / 'dependency_audit.json').write_text(json.dumps(dict(
         slimmed=records, imreg_wheel=imreg.name,
-        imreg_build='Pure Python upstream wheel; built once during distribution preparation.'), indent=2) + '\n', encoding='utf-8')
+        imreg_build='Pure Python upstream wheel; built once during distribution preparation.',
+        remaining=remaining), indent=2) + '\n', encoding='utf-8')
     return selected
 
 

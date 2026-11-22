@@ -77,6 +77,8 @@ def test_prepared_dependencies_match_manifest_and_audit():
             for name in archive.namelist():
                 archive.read(name)
     assert audit['imreg_wheel'] in manifest['wheels']
+    assert len(audit['remaining']) == 14
+    assert all(item['wheel'] in manifest['wheels'] for item in audit['remaining'])
     with ZipFile(directory / audit['imreg_wheel']) as archive:
         assert 'imreg_dft/imreg.py' in archive.namelist()
         assert not any(name.endswith(('.so', '.dll', '.pyd')) for name in archive.namelist())

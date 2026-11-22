@@ -90,8 +90,11 @@ explicitly requested.
 `install_colab.py` installs the exact package versions advertised in a shared
 wheelhouse. It uses pip's standard wheel selection and
 [`--only-binary`](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-only-binary)
-for all eight bundled packages. Other dependencies continue to use
-normal pip resolution. Missing downloads and incompatible native wheels are
+for all 22 bundled packages. The remaining 14 wheels from the tested fresh
+Colab install are included unmodified. Four concurrent workers download the
+manifest's files, then pip resolves dependencies locally with `--no-index`.
+Dependency checking stays enabled; the installer does not use `--no-deps`.
+Missing downloads and incompatible native wheels are
 reported directly; the installer does not retry with a Git or source build.
 The installer reads the selected wheel's requirements and retains compatible
 installed NumPy, requests, Numba, Bokeh, SciPy, Astropy, Matplotlib and
@@ -104,6 +107,10 @@ prepared builds are selected. Notebook prerequisites (`jedi` and
 `importlib-metadata`) join that same pip call; Step 1 has no separate bootstrap
 install. Already-satisfied packages are retained without a blanket upgrade.
 The prebuilt path does not need to upgrade setuptools for source builds.
+Pip uses `--no-compile` to defer Python bytecode preparation until imports.
+Measure installation plus first imports to assess the resulting startup time;
+this is separate from native C++ compilation. The installer reports concurrent
+download wall time and individual wheel timings separately.
 
 The prepared wheels, version requirements and download manifest are in
 [`wheelhouse/colab`](../wheelhouse/colab/README.md). The default download URLs

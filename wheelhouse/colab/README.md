@@ -7,7 +7,7 @@ and has no Python C ABI dependency; UltraNest's extension uses CPython 3.13.
 The package versions and wheel filenames are recorded in `requirements.txt`
 and `index.json`. The original wheel license files are preserved.
 
-The current manifest includes eight wheels: the three EXOTIC/UltraNest/display
+The current manifest includes 22 wheels: the three EXOTIC/UltraNest/display
 packages, pure Python imreg-dft 2.0.0, and trimmed upstream Astroquery 0.4.11,
 Photutils 3.1.1, colour-science 0.4.7 and colour-demosaicing 0.2.7 wheels. Their
 `1colabslim` build tag preserves the upstream versions. Only tests, examples
@@ -15,7 +15,21 @@ and HTML coverage reports are omitted; every retained payload and licence is
 unchanged, except for the WHEEL build tag and regenerated RECORD. Catalogues,
 runtime numerical data and compiled extensions remain. RECORD is regenerated
 once for software-distribution integrity, with no science-file hashing.
+Version/build identifiers cannot replace the wheel format's required member
+list and per-member checksums after those development files are omitted.
 `dependency_audit.json` records the omitted files and their sizes.
+
+The other 14 wheels are unmodified upstream Jedi, Astroalign, barycorrpy,
+Bottleneck, LDTk, lmfit, asteval, psutil, PyVO, REBOUND, SEP, uncertainties,
+corner and jplephem, pinned to the versions used in the preceding successful
+fresh-runtime validation. Shared Colab libraries are supplied by the runtime.
+Four workers download the manifest wheels concurrently, with stable report
+ordering. The installer records download wall time separately from overlapping
+per-wheel times. It then uses one pip call with `--no-index --no-compile`:
+dependency compatibility checks remain enabled, while PyPI lookups and
+installation-time Python bytecode compilation are avoided. Python may prepare
+bytecode during first imports, so compare installation plus imports. These
+installer changes await manual push and fresh-runtime validation.
 
 | Package | Original wheel MB | Prepared wheel MB |
 | --- | ---: | ---: |
@@ -30,7 +44,44 @@ per-runtime source preparation/build. The installer supplies these exact files
 and the notebook's Jedi/importlib-metadata requirements to one pip call,
 retaining compatible installed packages without a blanket upgrade. The normal
 Step 1 no longer has a separate bootstrap pip command. Fresh-runtime timing
-and matched HAT-P/WASP fit validation of this revision await its manual push.
+and installed-wheel validation used the pushed eight-wheel manifest directly.
+
+Normal installation took 20.5 seconds versus 42.4 seconds in the preceding
+fresh VM: 21.9 seconds, or 51.6%, shorter in this pair. The single pip call took
+17.4 seconds; log-boundary phases were 7.5 seconds for startup/resolution,
+3.4 seconds for PyPI payload downloads, zero for source builds, and 6.5 seconds
+for unpack/install. The eight shared wheels downloaded in 2.3 seconds, with
+the remaining time in manifest/installer retrieval and startup. Imports took
+7.9 seconds separately. Allocation, Drive mounting and validation-only work
+are excluded; separate-VM and network performance vary.
+
+Measured wheel downloads totalled 34.0 MB: 15.1 MB from the shared wheelhouse
+and 18.9 MB from PyPI, including the 4.9 MB Jedi wheel. The previous quiet
+bootstrap did not record its payload bytes, so its 47.6 MB dependency figure
+is not directly comparable to this combined total. The four trimmed wheels'
+21.866 MB reduction above compares the actual upstream/prepared files.
+
+All 1,209 selected installed-wheel checks passed with zero source builds,
+C++ compiler calls or ZIP uploads. These include all three Bayer demosaicing
+algorithms and imreg-dft translation, alongside the native/Python models,
+photometry, plotting, joint fits, timing and FITS/WCS checks. `pip check`
+reported no broken requirements, and all eight protected Colab versions were
+retained. The local full suite passed 3,108 tests with two Colab/IPython checks
+skipped; four additional image API checks passed separately.
+
+The scientific comparison completed 24 independent fits of recorded HAT-P-26b
+(241 points) and WASP-16b (72 points) photometry: Claret and hybrid4 under both
+slim and isolated untrimmed copies of the same dependency versions, using
+three matched seeds. Atmosphere coefficients, photometry, masks, exposures,
+priors and normal sampling controls were fixed. All 12 pairs had identical
+complete posterior summaries, maximum-likelihood/reported parameters,
+reported errors and adjustments, models, RMS, chi-square, evidence and its
+error, prior bounds, likelihood-call counts and sampling budgets. No fit
+reached its call limit. The 1,028 prior/likelihood replay points, three
+demosaicing probes and image-translation probe also matched exactly. The normal runtime
+kept its prepared libraries and `pip check` remained clean. This comparison
+used saved photometry and did not regenerate profiles or reduce images.
+Reference downloads and all refits were excluded from installation timing.
 
 The `.numpy24` EXOTIC wheel revises the declared NumPy minimum to 2.4.6.
 Its compiled library and native sources are identical to the previous tested

@@ -119,6 +119,10 @@ Photutils, colour-science and colour-demosaicing wheels. They omit development
 tests, examples and coverage reports while preserving runtime files and
 licences. The shared installer installs these and the notebook prerequisites
 in one pip call; the notebook needs no separate bootstrap installation.
+The wheelhouse also supplies the 14 remaining packages needed by the tested
+Colab base. Downloads use four workers, pip checks dependencies without
+package-index queries, and install-time Python bytecode compilation is
+disabled. Compatible preinstalled Colab libraries are still retained.
 
 A C++ compiler is needed when building from source: MSVC **Desktop development
 with C++** on Windows, Xcode Command Line Tools on macOS, or `g++`/`clang++` on

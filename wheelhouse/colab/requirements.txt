@@ -1,9 +1,23 @@
 # Tested Colab software versions; native packages must use binary wheels.
+asteval==1.0.10
+astroalign==2.6.2
 astroquery==0.4.11
+barycorrpy==0.4.4
+bottleneck==1.6.1
 colour-demosaicing==0.2.7
 colour-science==0.4.7
+corner==2.3.0
 exotic==4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps.scipy116.colabstack
 exoticcolab==0.1.dev71+gef0aa1741
 imreg-dft==2.0.0
+jedi==0.20.1
+jplephem==2.24
+ldtk==1.9.3
+lmfit==1.3.4
 photutils==3.1.1
+psutil==7.2.2
+pyvo==1.10.0
+rebound==5.2.3
+sep==1.4.1
 ultranest==4.6.3
+uncertainties==3.2.3

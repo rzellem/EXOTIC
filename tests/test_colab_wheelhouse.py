@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 from zipfile import ZipFile
 
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 import pytest
 
@@ -54,6 +55,9 @@ def resolve_with_pip(monkeypatch, tmp_path, source, python_version='3.13'):
     def dry_run(command):
         # Execute the actual install command, adding pip's foreign-runtime
         # resolver options so Linux wheels can be tested on this Windows host.
+        # Notebook prerequisites use PyPI in production; this no-index check
+        # isolates the bundled distributions, with those arguments tested below.
+        command = [arg for arg in command if arg not in installer['NOTEBOOK_REQUIREMENTS']]
         completed = subprocess.run([
             *command, '--dry-run', '--ignore-installed', '--no-deps', '--no-index',
             '--platform', 'manylinux_2_38_x86_64', '--platform', 'manylinux_2_17_x86_64',
@@ -73,8 +77,9 @@ def resolve_with_pip(monkeypatch, tmp_path, source, python_version='3.13'):
 def test_real_colab_wheels_resolve_without_source_builds(monkeypatch, tmp_path, wheel_server, remote):
     source = wheel_server['url'] if remote else WHEELHOUSE
     report, output = resolve_with_pip(monkeypatch, tmp_path, source)
-    installed = {item['metadata']['name'].lower(): item for item in report['install']}
-    assert set(installed) == {'exotic', 'ultranest', 'exoticcolab'}
+    installed = {canonicalize_name(item['metadata']['name']): item for item in report['install']}
+    assert set(installed) == {'exotic', 'ultranest', 'exoticcolab', 'imreg-dft',
+                              'astroquery', 'photutils', 'colour-science', 'colour-demosaicing'}
     assert installed['ultranest']['metadata']['version'] == '4.6.3'
     assert all(item['download_info']['url'].endswith('.whl') for item in installed.values())
     assert 'Building wheel' not in output
@@ -88,7 +93,8 @@ def test_incompatible_python_does_not_start_a_source_build(monkeypatch, tmp_path
     # UltraNest's CPython 3.13 extension cannot be loaded by CPython 3.14.
     with pytest.raises(subprocess.CalledProcessError) as failure:
         resolve_with_pip(monkeypatch, tmp_path, wheel_server['url'], python_version='3.14')
-    assert 'No matching distribution found for ultranest==4.6.3' in failure.value.output
+    assert 'ultranest-4.6.3-cp313-cp313-' in failure.value.output
+    assert 'not a supported wheel on this platform' in failure.value.output
     assert 'Building wheel' not in failure.value.output
 
 
@@ -176,7 +182,19 @@ def test_installer_allows_needed_upgrades_and_missing_dependencies(monkeypatch):
     assert installer['compatible_runtime_versions'](wheel) == {'numpy': '2.4.6'}
 
 
-def test_bootstrap_keeps_satisfied_packages_in_one_pip_call():
+def test_notebook_delegates_all_packages_to_single_installer(monkeypatch):
     source = (ROOT / 'scripts' / 'colab_setup_cell.txt').read_text()
     pip_lines = [line for line in source.splitlines() if line.startswith('!pip install')]
-    assert pip_lines == ['!pip install --quiet "setuptools>=77" jedi importlib-metadata']
+    assert pip_lines == []
+    installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
+    commands = []
+    monkeypatch.setattr(installer['subprocess'], 'check_call', commands.append)
+    installer['install_prebuilt'](WHEELHOUSE)
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[:4] == [installer['sys'].executable, '-m', 'pip', 'install']
+    assert 'jedi' in command and 'importlib-metadata' in command
+    assert '--upgrade' not in command
+    assert '--only-binary=' + ','.join(Requirement(pin).name for pin in
+        json.loads((WHEELHOUSE / 'index.json').read_text())['requirements']) in command
+    assert all(str(WHEELHOUSE.resolve() / wheel.name) in command for wheel in WHEELHOUSE.glob('*.whl'))

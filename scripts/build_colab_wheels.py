@@ -86,6 +86,12 @@ def main():
             selected_wheels.append(wheelhouse / built.name)
         records.append(dict(wheel=wheel.name, compatible_tag=compatible_tag,
                             analysis=analysis))
+    from prepare_colab_dependencies import prepare_dependencies
+    dependency_directory = workspace / 'dependencies'
+    for prepared in prepare_dependencies(dependency_directory):
+        shutil.copy2(prepared, wheelhouse / prepared.name)
+        selected_wheels.append(wheelhouse / prepared.name)
+    shutil.copy2(dependency_directory / 'dependency_audit.json', wheelhouse / 'dependency_audit.json')
     write_colab_manifest(wheelhouse, selected_wheels)
     report = dict(python=sys.version, platform=platform.platform(), source=str(args.source.resolve()),
                   build_workspace=str(workspace), wheels=records)

@@ -1,12 +1,22 @@
 {
   "requirements": [
+    "astroquery==0.4.11",
+    "colour-demosaicing==0.2.7",
+    "colour-science==0.4.7",
     "exotic==4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps.scipy116.colabstack",
     "exoticcolab==0.1.dev71+gef0aa1741",
+    "imreg-dft==2.0.0",
+    "photutils==3.1.1",
     "ultranest==4.6.3"
   ],
   "wheels": [
+    "astroquery-0.4.11-1colabslim-py3-none-any.whl",
+    "colour_demosaicing-0.2.7-1colabslim-py3-none-any.whl",
+    "colour_science-0.4.7-1colabslim-py3-none-any.whl",
     "exotic-4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps.scipy116.colabstack-py3-none-manylinux_2_38_x86_64.whl",
     "exoticcolab-0.1.dev71+gef0aa1741-py3-none-any.whl",
+    "imreg_dft-2.0.0-py3-none-any.whl",
+    "photutils-3.1.1-1colabslim-cp312-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
     "ultranest-4.6.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
   ]
 }

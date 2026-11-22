@@ -24,6 +24,10 @@ WHEELHOUSE_URL = (
     'michael_fitzgeralds_wonderful_branch_of_magic/wheelhouse/colab'
 )
 
+# Install notebook prerequisites in the same resolver pass as EXOTIC. Build
+# tools are unnecessary here: the shared wheelhouse includes imreg-dft too.
+NOTEBOOK_REQUIREMENTS = ('jedi', 'importlib-metadata')
+
 
 def compatible_runtime_versions(exotic_wheel):
     """Keep Colab's shared packages when they satisfy this EXOTIC wheel."""
@@ -82,10 +86,13 @@ def install_prebuilt(wheelhouse=WHEELHOUSE_URL):
                                        encoding='utf-8')
             constraints = ['--constraint', str(constraint_path)]
         stage_started = time.perf_counter()
+        binary_packages = ','.join(Requirement(pin).name for pin in manifest['requirements'])
         subprocess.check_call([
-            sys.executable, '-m', 'pip', 'install', '--upgrade',
-            '--only-binary=exotic,ultranest,exoticcolab',
-            '--find-links', str(directory), *constraints, *manifest['requirements'],
+            sys.executable, '-m', 'pip', 'install',
+            '--only-binary=' + binary_packages,
+            '--find-links', str(directory), *constraints,
+            *[str(directory / wheel) for wheel in manifest['wheels']],
+            *NOTEBOOK_REQUIREMENTS,
         ])
         timings['pip_seconds'] = time.perf_counter() - stage_started
     timings['total_seconds'] = time.perf_counter() - started

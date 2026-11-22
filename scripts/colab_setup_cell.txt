@@ -34,9 +34,7 @@ display(HTML('<p class="bookend">START: Importing necessary software libraries</
 display(HTML('<p class="hidden">Loading styles, please wait, this takes a few minutes...</p>'))
 
 # Install EXOTIC Colab interface code to provide styling and interaction features
-# !pip install git+https://github.com/alienlifeform/exotic-colab.git --upgrade
-!pip install --quiet "setuptools>=77" jedi importlib-metadata
-# !pip install --upgrade --use-deprecated=legacy-resolver git+https://github.com/alienlifeform/exotic-colab.git
+# The shared installer includes notebook prerequisites in its single pip call.
 # Download the shared, tested binary setup; no per-notebook ZIP upload.
 from urllib.request import urlretrieve
 from pathlib import Path

@@ -7,6 +7,31 @@ and has no Python C ABI dependency; UltraNest's extension uses CPython 3.13.
 The package versions and wheel filenames are recorded in `requirements.txt`
 and `index.json`. The original wheel license files are preserved.
 
+The current manifest includes eight wheels: the three EXOTIC/UltraNest/display
+packages, pure Python imreg-dft 2.0.0, and trimmed upstream Astroquery 0.4.11,
+Photutils 3.1.1, colour-science 0.4.7 and colour-demosaicing 0.2.7 wheels. Their
+`1colabslim` build tag preserves the upstream versions. Only tests, examples
+and HTML coverage reports are omitted; every retained payload and licence is
+unchanged, except for the WHEEL build tag and regenerated RECORD. Catalogues,
+runtime numerical data and compiled extensions remain. RECORD is regenerated
+once for software-distribution integrity, with no science-file hashing.
+`dependency_audit.json` records the omitted files and their sizes.
+
+| Package | Original wheel MB | Prepared wheel MB |
+| --- | ---: | ---: |
+| Astroquery | 11.139 | 0.741 |
+| Photutils | 10.075 | 9.277 |
+| colour-science | 9.066 | 1.644 |
+| colour-demosaicing | 3.263 | 0.015 |
+
+Together these omit 21.866 MB compressed and 107.803 MB unpacked, across 1,786
+development files. The pure Python imreg-dft wheel is 47 KB and avoids its
+per-runtime source preparation/build. The installer supplies these exact files
+and the notebook's Jedi/importlib-metadata requirements to one pip call,
+retaining compatible installed packages without a blanket upgrade. The normal
+Step 1 no longer has a separate bootstrap pip command. Fresh-runtime timing
+and matched HAT-P/WASP fit validation of this revision await its manual push.
+
 The `.numpy24` EXOTIC wheel revises the declared NumPy minimum to 2.4.6.
 Its compiled library and native sources are identical to the previous tested
 wheel; only dependency metadata and the matching version label changed. The
@@ -60,8 +85,41 @@ Matplotlib 3.10.0 and scikit-image 0.25.2. Only these three dependency minima
 and the matching wheel version label change; the other 64 package files,
 including the compiled native backend, are unchanged. The installer pins all
 eight shared packages only when the installed versions satisfy the wheel's
-requirements. Newer compatible versions remain supported. Fresh-runtime
-timings and matched fit comparisons are pending this revision's manual push.
+requirements. Newer compatible versions remain supported.
+
+The fresh `.colabstack` runtime retained all eight requested packages and their
+shared dependencies; `pip check` reported no broken requirements. All 1,205
+selected installed-wheel checks passed, including plotting, image alignment
+and downsampling, FITS/WCS and timing, LDTK, joint fits and native/reference
+maths. The local suite with Astropy 7.2.3, Matplotlib 3.10.0, scikit-image
+0.25.2 and SciPy 1.16.3 passed 3,097 tests; two Colab/IPython checks were skipped
+locally and passed in Colab.
+
+Normal setup took 42.4 seconds versus 55.7 seconds in the previous fresh
+runtime (13.3 seconds, or 24%, shorter in this pair). Dependency payloads fell
+from 81.6 MB to 47.6 MB, avoiding 34.0 MB of Astropy/Matplotlib/scikit-image
+downloads. Pip installation fell from 37.9 to 25.8 seconds and its
+unpack/replace/install phase from 23.2 to 9.4 seconds. Bootstrap packages took
+15.1 seconds; notebook imports took 9.0 seconds. The three shared binary wheels
+downloaded in 0.64 seconds, without native compilation or ZIP uploads. These
+are separate fresh-VM measurements; runtime and network performance vary.
+VM allocation, Drive mounting, validation-only reference installs and
+scientific refits are excluded from normal setup timing.
+
+Scientific validation performed 24 independent refits: HAT-P-26b (241 points)
+and WASP-16b (72 points), each with Claret and hybrid4, using three matched
+seeds under both the retained stack and an isolated reference stack of
+Astropy 8.0.3, Matplotlib 3.11.2 and scikit-image 0.26.0. NumPy 2.4.6 and SciPy
+1.16.3 were shared. All 12 pairs had identical complete posterior summaries,
+maximum-likelihood and reported parameters, reported errors and adjustments,
+models, RMS, chi-square, evidence and evidence errors, prior bounds,
+likelihood-call counts and sampling budgets. No fit reached its call limit.
+The 1,028 prior/likelihood replay points also matched exactly. Photometry,
+stored atmosphere coefficients, masks, exposure integration and priors were
+held fixed; no images were re-reduced or atmosphere profiles regenerated.
+The normal runtime retained its original libraries and `pip check` remained
+clean after validation. The notebook's diagnostic was restored to its small
+optional model check; normal Run all does not repeat these benchmark fits.
 
 The `.localmath` revision includes EXOTIC's local Python reference calculations
 for orbital geometry, transit/eclipse integration and eclipse timing. Native

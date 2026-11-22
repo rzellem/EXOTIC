@@ -54,6 +54,25 @@ def test_alignment_apis_recover_known_image_translation():
                                [[15., 17.], [45., 47.]], rtol=0, atol=1.e-13)
 
 
+def test_bundled_imreg_translation_recovers_known_shift():
+    from exotic import exotic as reduction
+    image = np.random.default_rng(19403).normal(size=(64, 80))
+    result = reduction.ird.translation(image, np.roll(image, (3, -5), axis=(0, 1)))
+    np.testing.assert_allclose(result['tvec'], [-3., 5.], rtol=0, atol=1.e-12)
+
+
+@pytest.mark.parametrize('algorithm', ['bilinear', 'malvar2004', 'menon2007'])
+def test_slim_demosaicing_preserves_constant_colour_field(algorithm):
+    from exotic.api.demosaicing import reconstruct_bayer
+    image = np.full((24, 28), 50.)
+    image[::2, ::2] = 100.
+    image[1::2, 1::2] = 10.
+    actual = reconstruct_bayer(image, 'RGGB', algorithm)
+    assert actual.shape == (24, 28, 3)
+    expected = np.broadcast_to([100., 50., 10.], actual[4:-4, 4:-4].shape)
+    np.testing.assert_allclose(actual[4:-4, 4:-4], expected, rtol=0, atol=1.e-12)
+
+
 @pytest.mark.parametrize('module_name', ['exotic.api.colab', 'exotic.api.plotting'])
 def test_display_downsampling_preserves_block_means(module_name):
     from importlib import import_module

@@ -44,7 +44,7 @@ Python version intended for Colab. Install the build tools once in that build
 environment:
 
 ```bash
-python -m pip install build auditwheel patchelf
+python -m pip install build wheel auditwheel patchelf
 python scripts/build_colab_wheels.py --output /path/to/colab-wheels
 ```
 
@@ -57,6 +57,14 @@ produce a wheel supporting older glibc versions; a newer Linux build must not
 be relabelled as supporting an older runtime without that compatibility.
 The existing `exotic-colab` notebook display helper is collected as a pure
 Python wheel as well, retaining its normal package dependency.
+The builder also calls `prepare_colab_dependencies.py` to collect the tested
+Colab dependency wheels. It builds pure Python imreg-dft once and removes tests,
+examples and HTML coverage reports from Astroquery, Photutils, colour-science
+and colour-demosaicing. All retained payloads and licences are compared with
+their upstream wheel files; runtime catalogues and numerical data remain.
+The `1colabslim` build tag distinguishes these wheels without changing package
+versions. Their regenerated RECORD protects software-installation integrity;
+science data is not scanned. `dependency_audit.json` records every omission.
 
 Transfer the resulting wheels into the Colab runtime and install their paths:
 
@@ -82,7 +90,7 @@ explicitly requested.
 `install_colab.py` installs the exact package versions advertised in a shared
 wheelhouse. It uses pip's standard wheel selection and
 [`--only-binary`](https://pip.pypa.io/en/stable/cli/pip_install/#cmdoption-only-binary)
-for EXOTIC, UltraNest and the notebook helper. Dependencies continue to use
+for all eight bundled packages. Other dependencies continue to use
 normal pip resolution. Missing downloads and incompatible native wheels are
 reported directly; the installer does not retry with a Git or source build.
 The installer reads the selected wheel's requirements and retains compatible
@@ -91,6 +99,11 @@ scikit-image versions using exact pip constraints. Missing or incompatible
 versions are resolved normally. The prepared `.colabstack` wheel accepts
 Colab's NumPy 2.4.6, SciPy 1.16.3, Astropy 7.2.3, Matplotlib 3.10.0 and
 scikit-image 0.25.2, and preserves the original native library.
+The installer passes the downloaded wheel paths directly to pip, ensuring the
+prepared builds are selected. Notebook prerequisites (`jedi` and
+`importlib-metadata`) join that same pip call; Step 1 has no separate bootstrap
+install. Already-satisfied packages are retained without a blanket upgrade.
+The prebuilt path does not need to upgrade setuptools for source builds.
 
 The prepared wheels, version requirements and download manifest are in
 [`wheelhouse/colab`](../wheelhouse/colab/README.md). The default download URLs

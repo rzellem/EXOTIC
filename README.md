@@ -114,6 +114,12 @@ Installing those wheels avoids rebuilding either native component. Installing EX
 URL is a source install and still compiles the backend. See
 [the wheel-building instructions](scripts/README.md#prebuilt-colab-wheels).
 
+The Colab wheelhouse also includes prebuilt imreg-dft and slimmer Astroquery,
+Photutils, colour-science and colour-demosaicing wheels. They omit development
+tests, examples and coverage reports while preserving runtime files and
+licences. The shared installer installs these and the notebook prerequisites
+in one pip call; the notebook needs no separate bootstrap installation.
+
 A C++ compiler is needed when building from source: MSVC **Desktop development
 with C++** on Windows, Xcode Command Line Tools on macOS, or `g++`/`clang++` on
 Linux. Linux/Colab builds use the available compiler; if none is installed,

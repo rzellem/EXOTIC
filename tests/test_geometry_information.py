@@ -1,5 +1,7 @@
 """Pre-UltraNest geometry decisions use information, not a point-count floor."""
 from types import SimpleNamespace
+import copy
+import json
 
 import numpy as np
 import pytest
@@ -296,3 +298,117 @@ def test_failed_estimate_is_reported_without_suppressing_free_geometry(monkeypat
     assert payload['geometry_information']['available'] is False
     assert 'model derivative failed' in payload['geometry_information']['note']
     assert 'remains free' in payload['geometry_information']['note']
+
+
+def test_profile_holds_b_while_reoptimizing_ars_and_inclination():
+    from exotic.api.elca import impact_parameter_from_inclination
+    source = model_at_solution(noise=0.0003)
+    b = float(impact_parameter_from_inclination(source.parameters, source.parameters['inc']))
+    local = copy.copy(source)
+    local.prior = {**source.parameters, 'ars': 9.0}
+    local.bounds = {key: value for key, value in source.bounds.items() if key != 'inc'}
+    local.duration_prior = None
+    local.fit_LM(fixed_impact_parameter=b, create_fit_variables=False, allow_unbounded_retry=False)
+    assert local.parameters['ars'] == pytest.approx(10.0, rel=1e-6)
+    assert local.parameters['inc'] == pytest.approx(87.0, abs=1e-5)
+    assert impact_parameter_from_inclination(local.parameters, local.parameters['inc']) == pytest.approx(b, abs=2e-13)
+    assert local.lm_data_chi2 < 1e-8
+
+
+def test_profile_removes_duration_prior_preserves_input_and_records_raw_chi2():
+    source = model_at_solution(noise=0.0005, times=np.linspace(-0.09, 0.06, 180), exposure_seconds=45)
+    source.data += np.random.default_rng(721).normal(0, source.dataerr)
+    source.duration_prior = {'applied': True, 'expected_duration': 0.5, 'sigma_log_duration': 1e-7}
+    prior_object = source.duration_prior
+    original = copy.deepcopy((source.parameters, source.bounds, source.prior))
+    time, data = source.time, source.data
+    published = {**source.parameters, 'inc': 87.2, 'ars': 10.2}
+    result = source.profile_geometry_likelihood(published)
+    assert result['available'] and result['duration_prior_applied'] is False
+    assert result['fit_count'] <= 9
+    assert source.duration_prior is prior_object
+    assert (source.parameters, source.bounds, source.prior) == original
+    assert source.time is time and source.data is data
+    assert result['published_geometry']['parameters']['inc'] == 87.2
+    assert result['published_geometry']['parameters']['ars'] == 10.2
+    assert 'rprs' in result['published_geometry']['fitted_parameters']
+    assert 'tmid' in result['published_geometry']['fitted_parameters']
+    assert 'ars' not in result['published_geometry']['fitted_parameters']
+    assert result['published_geometry']['tmid_shift_from_free_seconds'] == pytest.approx(
+        (result['published_geometry']['parameters']['tmid'] - result['free_geometry']['parameters']['tmid']) * 86400
+    )
+    for entry in [result['free_geometry'], *result['profile'], result['published_geometry']]:
+        assert entry['available']
+        parameters = {**source.parameters, **entry['parameters']}
+        model = source._transit_model(source.time, parameters) * parameters['a0']
+        assert entry['chi2'] == pytest.approx(float(np.sum(((source.data - model) / source.dataerr)**2)), abs=1e-6)
+    source.duration_prior = None
+    repeated = source.profile_geometry_likelihood(published)
+    assert repeated['free_geometry']['chi2'] == pytest.approx(result['free_geometry']['chi2'], abs=1e-8)
+    json.dumps(result, allow_nan=False)
+
+
+def test_profile_reports_failed_points_and_retains_bound_contacts():
+    source = model_at_solution(noise=0.0005, times=np.linspace(-0.09, 0.09, 150))
+    original = source._transit_model
+
+    def model(times, parameters):
+        if parameters.get('b', 0.0) > 0.9:
+            raise RuntimeError('demonstrated profile model failure')
+        return original(times, parameters)
+
+    source._transit_model = model
+    bounds = {**source.bounds, 'ars': [9.4, 9.8]}
+    result = source.profile_geometry_likelihood(source.parameters, bounds=bounds)
+    assert result['available']
+    assert any('demonstrated profile model failure' in point.get('error', '') for point in result['profile'])
+    assert any(point.get('active_bounds') for point in [result['free_geometry'], *result['profile']])
+    assert result['nuisance_bounds']['ars'] == [9.4, 9.8]
+
+
+def test_profile_can_evaluate_a_fully_fixed_point_without_nuisance_parameters():
+    source = model_at_solution(times=np.linspace(-0.09, 0.09, 120))
+    source.bounds = {'inc': [80.0, 90.0]}
+    result = source.profile_geometry_likelihood(source.parameters)
+    assert result['available']
+    assert all(point['available'] for point in result['profile'])
+    assert all(point['fitted_parameters'] == [] for point in result['profile'])
+    assert result['published_geometry']['fitted_parameters'] == []
+
+
+def test_fixed_b_at_the_orbital_scale_is_a_permitted_model_evaluation():
+    source = model_at_solution(times=np.linspace(-0.09, 0.09, 60))
+    source.duration_prior = None
+    source.bounds = {}
+    source.fit_LM(fixed_impact_parameter=source.parameters['ars'], create_fit_variables=False,
+                  allow_unbounded_retry=False)
+    assert source.parameters['inc'] == 0.0
+    assert np.isfinite(source.lm_data_chi2)
+
+
+@pytest.mark.parametrize('fractional_error,forced,expected', [(0.05, False, True), (0.2, False, False), (0.2, True, False)])
+def test_profile_runs_only_after_passing_screen_without_changing_sampler_seed(monkeypatch, fractional_error, forced, expected):
+    import exotic.exotic as ex
+    calls = []
+
+    def fake_profile(published_geometry, bounds):
+        calls.append((published_geometry, copy.deepcopy(bounds)))
+        return {'available': False, 'note': 'Diagnostic result deliberately independent of the sampler.'}
+
+    source = model_at_solution()
+    monkeypatch.setattr(ex, 'lc_fitter', lambda *args, **kwargs: SimpleNamespace(
+        parameters=dict(source.parameters), errors={}, profile_geometry_likelihood=fake_profile,
+        estimate_geometry_information=lambda: {
+            'available': True, 'ingress_fractional_uncertainty': fractional_error,
+            'b_squared_uncertainty': 0.05, 'ingress_points': 20, 'egress_points': 20,
+        },
+    ))
+    prior, bounds, payload = ex.prepare_ultranest_bounds_with_lm_boundary_scout(
+        source.time, source.data, source.dataerr, source.airmass,
+        source.parameters, source.bounds, enabled=True, force_fit_inclination=forced,
+        run_geometry_diagnostics=True, published_geometry={'inc': 86.0, 'ars': 11.0},
+    )
+    assert bool(calls) is expected
+    assert prior == source.parameters and bounds == source.bounds
+    if expected:
+        assert calls[0][0] == {'inc': 86.0, 'ars': 11.0}

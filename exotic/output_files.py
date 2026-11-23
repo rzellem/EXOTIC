@@ -1,4 +1,5 @@
 from json import dump, dumps
+import logging
 import shutil
 from numpy import mean, std
 from pathlib import Path
@@ -3392,6 +3393,27 @@ class OutputFiles:
             'ORBITAL RANDOM AND SYSTEMATIC UNCERTAINTY': orbital_components,
             'POSTERIOR UNCERTAINTY REPORTING': posterior_reporting_metadata(self.fit, self.orbital_budget),
         }
+        geometry_profile = getattr(self.fit, 'pre_ultranest_geometry_profile', None)
+        if geometry_profile:
+            geometry_profile = dict(geometry_profile)
+            if publish_to_root and geometry_profile.get('available'):
+                try:
+                    if __package__:
+                        from .api.geometry_diagnostics import save_geometry_profile_plot
+                    else:
+                        from api.geometry_diagnostics import save_geometry_profile_plot
+                    plot_path = save_geometry_profile_plot(
+                        geometry_profile, self.dir / 'Diagnostics' / safe_output_filename(
+                            'LMGeometryProfile', self.p_dict['pName'],
+                            filename_date_token(self.i_dict['date']), extension='png',
+                        ),
+                    )
+                    if plot_path is not None:
+                        geometry_profile['plot_path'] = str(plot_path)
+                except Exception as exc:
+                    geometry_profile['plot_error'] = f'{type(exc).__name__}: {exc}'
+                    logging.getLogger(__name__).warning('LM geometry diagnostic plot failed: %s', exc)
+            final_params['DATA-ONLY LM GEOMETRY DIAGNOSTICS'] = geometry_profile
         if publish_to_root:
             try:
                 from .api.hybrid_comparison import comparison_for_output

@@ -1692,6 +1692,33 @@ def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path
     }
 
 
+def test_final_params_saves_data_only_geometry_profile_and_plot(tmp_path):
+    fit = DummyFit()
+    fit.pre_ultranest_geometry_profile = {
+        'available': True, 'duration_prior_applied': False,
+        'profile': [
+            {'available': True, 'fixed_b': 0.2, 'delta_chi2': 3.0, 'tmid_shift_from_free_seconds': -1.0},
+            {'available': True, 'fixed_b': 0.4, 'delta_chi2': 0.0, 'tmid_shift_from_free_seconds': 0.0},
+            {'available': True, 'fixed_b': 0.6, 'delta_chi2': 2.0, 'tmid_shift_from_free_seconds': 2.0},
+        ],
+        'free_geometry': {'available': True, 'parameters': {'b': 0.4},
+                          'delta_chi2': 0.0, 'tmid_shift_from_free_seconds': 0.0},
+        'published_geometry': {'available': True, 'parameters': {'b': 0.5},
+                               'delta_chi2': 1.0, 'tmid_shift_from_free_seconds': 0.2},
+    }
+    (tmp_path / 'working_artifacts').mkdir()
+    OutputFiles(fit, {'pName': 'HAT-P-32 b'}, {'save': str(tmp_path), 'date': '2020-01-01'}, [0.083]).final_planetary_params(
+        phot_opt=False, vsp_params=[], publish_to_root=True,
+    )
+    params_path = next((tmp_path / 'working_artifacts').glob('FinalParams_*.json'))
+    diagnostics = json.loads(params_path.read_text())['DATA-ONLY LM GEOMETRY DIAGNOSTICS']
+    assert diagnostics['duration_prior_applied'] is False
+    assert diagnostics['profile'] == fit.pre_ultranest_geometry_profile['profile']
+    plots = list((tmp_path / 'Diagnostics').glob('LMGeometryProfile*.png'))
+    assert len(plots) == 1 and plots[0].stat().st_size > 0
+    assert diagnostics['plot_path'] == str(plots[0])
+
+
 def test_final_params_reports_remaining_timing_bound_influence_without_replacing_timing(tmp_path):
     fit = DummyFit()
     original_tmid = fit.parameters['tmid']

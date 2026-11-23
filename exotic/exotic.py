@@ -742,6 +742,7 @@ def annotate_lm_boundary_scout(fit, payload):
     fit.lm_boundary_scout_active_bounds = dict(payload.get('active_bounds') or {})
     fit.lm_boundary_scout_note = payload.get('note')
     fit.pre_ultranest_geometry_information = dict(payload.get('geometry_information') or {})
+    fit.pre_ultranest_geometry_profile = dict(payload.get('geometry_profile') or {})
 
 
 def ensure_forced_inclination_bounds(prior, bounds, fixed_errors):
@@ -8276,6 +8277,8 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
     max_iterations=ULTRANEST_LM_BOUNDARY_SCOUT_MAX_ITERATIONS,
     log_ultranest_launch=True,
     force_fit_inclination=None,
+    run_geometry_diagnostics=False,
+    published_geometry=None,
 ):
     """Use cheap LM fits to place UltraNest bounds before posterior sampling starts."""
     if enabled is None:
@@ -8304,6 +8307,10 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
             'force_fit_inclination': forced,
             'note': ('Geometry precision not assessed; no free geometry or usable LM solution.'
                      if enabled else 'LM boundary scout disabled.'),
+        },
+        'geometry_profile': {
+            'available': False,
+            'note': 'Not run; data-only profile diagnostics follow a passing geometry precision screen.',
         },
     }
     if not enabled or not working_bounds:
@@ -8500,6 +8507,36 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
             )
         payload['geometry_information'] = geometry
         log_info(geometry['note'], warn=not geometry.get('available', False))
+        profile_geometry = getattr(last_fit, 'profile_geometry_likelihood', None)
+        if run_geometry_diagnostics and geometry.get('meets_target') and callable(profile_geometry):
+            try:
+                profile = profile_geometry(
+                    configured_prior if published_geometry is None else published_geometry,
+                    bounds=working_bounds,
+                )
+            except Exception as exc:
+                profile = {'available': False, 'error': f'{type(exc).__name__}: {exc}',
+                           'note': 'Data-only LM geometry diagnostic failed; production fit is unchanged.'}
+            payload['geometry_profile'] = profile
+            if profile.get('available'):
+                rows = [row for row in profile.get('profile', []) if row.get('available')]
+                log_info('Data-only LM b profile (duration prior excluded): ' + '; '.join(
+                    f"b={row['fixed_b']:.4f}, delta chi2={row['delta_chi2']:.3f}"
+                    for row in rows
+                ))
+                published = profile.get('published_geometry', {})
+                shift = published.get('tmid_shift_from_free_seconds')
+                if shift is not None:
+                    log_info(f"Supplied geometry minus free geometry: Tmid shift={shift:+.3f} s; "
+                             f"data-only delta chi2={published['delta_chi2'] - profile['free_geometry']['delta_chi2']:+.3f}.")
+                log_info(f"LM geometry diagnostics: {profile['fit_count']} fits, "
+                         f"{profile['elapsed_seconds']:.3f} s; diagnostic only, current nuisance bounds retained.")
+                for row in [profile.get('free_geometry', {}), *profile.get('profile', []), published]:
+                    if not row.get('available') or not row.get('converged', True):
+                        log_info(f"Warning: LM geometry diagnostic point b={row.get('fixed_b')}: "
+                                 f"{row.get('error', row.get('message', 'unavailable'))}", warn=True)
+            else:
+                log_info(f"Warning: {profile.get('note', profile.get('error', 'LM geometry diagnostic unavailable.'))}", warn=True)
     if payload['applied']:
         suffix = " Launching UltraNest." if log_ultranest_launch else ""
         log_info(f"{payload['note']}{suffix}")
@@ -9046,6 +9083,8 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             duration_prior=duration_prior,
             enabled=use_lm_boundary_scout,
             force_fit_inclination=forced,
+            run_geometry_diagnostics=True,
+            published_geometry=geometry_reference_prior,
         )
     )
     current_prior, current_bounds, base_fixed_parameter_errors = apply_pre_ultranest_geometry_information(

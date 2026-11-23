@@ -51,7 +51,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 import numpy as np
 from scipy import spatial
-from scipy.optimize import least_squares
+from scipy.optimize import OptimizeResult, least_squares
 from scipy.signal import savgol_filter
 from scipy.special import ndtr, ndtri
 from ultranest import ReactiveNestedSampler
@@ -4205,10 +4205,18 @@ class lc_fitter(object):
         })
         return result
 
-    def fit_LM(self):
+    def profile_geometry_likelihood(self, published_geometry=None, bounds=None):
+        if __package__:
+            from .geometry_diagnostics import profile_geometry_likelihood
+        else:
+            from geometry_diagnostics import profile_geometry_likelihood
+        return profile_geometry_likelihood(self, published_geometry, bounds)
+
+    def fit_LM(self, *, fixed_impact_parameter=None, create_fit_variables=True,
+               allow_unbounded_retry=True):
         self._prepare_native_backend()
         freekeys = list(self.bounds.keys())
-        boundarray = np.array([self.bounds[k] for k in freekeys])
+        boundarray = np.array([self.bounds[k] for k in freekeys]).reshape(-1, 2)
         initial_parameters = np.asarray([self.prior[k] for k in freekeys], dtype=float)
         self.lm_initial_parameters = dict(zip(freekeys, initial_parameters.tolist()))
         self.lm_prior_uncertainties = {
@@ -4237,6 +4245,19 @@ class lc_fitter(object):
             and np.isfinite(expected_duration) and expected_duration > 0
             and np.isfinite(sigma_log_duration) and sigma_log_duration > 0
         )
+        model_evaluations = 0
+
+        def assign_parameters(values, pars):
+            values.update(zip(freekeys, pars))
+            b = fixed_impact_parameter if fixed_impact_parameter is not None else (
+                values['b'] if 'b' in freekeys else None
+            )
+            if b is not None:
+                scale = float(impact_parameter_scale(values))
+                if not np.isfinite(scale) or scale <= 0 or not 0 <= b <= scale:
+                    raise ValueError('Fixed/fitted b requires 0 <= b <= the orbital impact-parameter scale.')
+                values['b'] = float(b)
+                values['inc'] = float(inclination_from_impact_parameter(values, b))
 
         def with_duration_prior(residuals):
             if not self.lm_duration_prior_applied:
@@ -4254,8 +4275,10 @@ class lc_fitter(object):
             self.gw, self.nearest = gaussian_weights(self.airmass, neighbors=self.neighbors)
 
         def lc2min_nneighbor(pars):
-            for i in range(len(pars)):
-                self.prior[freekeys[i]] = pars[i]
+            nonlocal model_evaluations
+            model_evaluations += 1
+            self.lm_model_evaluations = model_evaluations
+            assign_parameters(self.prior, pars)
             lightcurve = self._transit_model(self.time, self.prior)
             detrended = self.data / lightcurve
             wf = weightedflux(detrended, self.gw, self.nearest)
@@ -4268,8 +4291,10 @@ class lc_fitter(object):
             return with_duration_prior((self.data - model) / self.dataerr)
 
         def lc2min_airmass(pars):
-            for i in range(len(pars)):
-                self.prior[freekeys[i]] = pars[i]
+            nonlocal model_evaluations
+            model_evaluations += 1
+            self.lm_model_evaluations = model_evaluations
+            assign_parameters(self.prior, pars)
             model = self._transit_model(self.time, self.prior)
             model *= airmass_trend(
                 self.prior.get('a2', 0),
@@ -4300,7 +4325,13 @@ class lc_fitter(object):
             return evaluate
 
         try:
-            if np.ndim(self.airmass) == 2:
+            if not freekeys:
+                residual = lc2min_nneighbor if np.ndim(self.airmass) == 2 else lc2min_airmass
+                fun = residual(np.empty(0))
+                res = OptimizeResult(x=np.empty(0), fun=fun, jac=np.empty((len(fun), 0)),
+                                     active_mask=np.empty(0), success=True, status=1,
+                                     message='No free nuisance parameters; evaluated fixed model.', nfev=1, njev=0)
+            elif np.ndim(self.airmass) == 2:
                 res = least_squares(
                     scaled_residual_function(lc2min_nneighbor),
                     x0=np.zeros(len(freekeys), dtype=float),
@@ -4317,6 +4348,8 @@ class lc_fitter(object):
                     loss='linear',
                 )
         except Exception as e:
+            if not allow_unbounded_retry:
+                raise
             print(f"{e} \nbounded light curve fitting failed...check priors "
                   "(e.g. estimated mid-transit time + orbital period)")
 
@@ -4375,6 +4408,11 @@ class lc_fitter(object):
             self.parameters[k] = optimized_parameters[i]
             self.errors[k] = parameter_errors[i]
             self.quantiles[k] = [-parameter_errors[i], parameter_errors[i]]
+        assign_parameters(self.parameters, optimized_parameters)
+        self.lm_data_chi2 = float(np.sum(np.square(np.asarray(res.fun)[:len(self.time)])))
+        self.lm_optimizer_success = bool(getattr(res, 'success', False))
+        self.lm_optimizer_message = str(getattr(res, 'message', ''))
+        self.lm_model_evaluations = model_evaluations
 
         self.sampled_keys = list(freekeys)
         self.sample_bounds = copy.deepcopy(self.bounds)
@@ -4382,7 +4420,16 @@ class lc_fitter(object):
         self.sample_errors = {k: self.errors[k] for k in self.sampled_keys}
         self.sample_quantiles = {k: self.quantiles[k] for k in self.sampled_keys}
 
-        self.create_fit_variables()
+        if create_fit_variables:
+            self.create_fit_variables()
+        elif self._uses_analytic_flux_baseline():
+            model = self._transit_model(self.time, self.parameters) * airmass_trend(
+                self.parameters.get('a2', 0), self.airmass, reference=self._get_airmass_reference(),
+            )
+            self._set_flux_baseline(solve_flux_baseline(
+                model, self.data, self.dataerr, mask=self._get_baseline_fit_mask(),
+            ))
+            self.lm_model_evaluations += 1
 
     def create_fit_variables(self):
         self.transit = self._transit_model(self.time, self.parameters)

@@ -94,6 +94,98 @@ AAVSO_WAVELENGTH_UNIT_FACTORS_TO_NM = {
 }
 NEXTASTRO_GAIA_DISTPM_ENDPOINT = 'https://archive.nextastro.org/single_star_gaia_distpm'
 NEXTASTRO_REQUEST_TIMEOUT = 30
+NEXTASTRO_CANDIDATE_ENDPOINT = 'https://archive.nextastro.org/api/candidate_parameters'
+CANDIDATE_NUMERIC_KEYS = (
+    'pPer', 'pPerUnc', 'midT', 'midTUnc', 'rprs', 'rprsUnc', 'aRs', 'aRsUnc',
+    'inc', 'incUnc', 'ecc', 'omega', 'teff', 'teffUncPos', 'teffUncNeg',
+    'met', 'metUncPos', 'metUncNeg', 'logg', 'loggUncPos', 'loggUncNeg',
+    'dist', 'pm_ra', 'pm_dec',
+)
+
+
+def candidate_parameter_missing(value):
+    return is_blank_value(value) or str(value).strip().lower() in ('nan', 'inf', '-inf')
+
+
+def populate_missing_candidate_parameters(planet_dict, info_dict, *, non_interactive_run=False):
+    """Offer auto-fill interactively; default it on for unattended candidates."""
+    if not any(candidate_parameter_missing(planet_dict.get(key))
+               for key in CANDIDATE_NUMERIC_KEYS + ('ra', 'dec', 'sName')):
+        return set()
+    configured = info_dict.get('use_nextastro_candidate_estimator')
+    enabled = coerce_boolean_config_value(configured)
+    if configured is None:
+        if non_interactive_run:
+            enabled = True
+            log_info('Unattended candidate run: automatically filling missing parameters from NextAstro.')
+        else:
+            log_info('\nNextAstro can fill missing candidate parameters using catalogue/Gaia values '
+                     'and labelled starting approximations. Existing inputs are preserved.')
+            enabled = user_input('Auto-fill missing candidate parameters from NextAstro? (y/n): ',
+                                 type_=str, values=['y', 'n']) == 'y'
+    if enabled is not True:
+        return set()
+
+    parameters = {}
+    for key in CANDIDATE_NUMERIC_KEYS:
+        parameters[key] = coerce_finite_float(planet_dict.get(key))
+    for key in ('transit_depth', 'transit_depth_unc', 'transit_duration', 'transit_duration_unc'):
+        parameters[key] = coerce_finite_float(info_dict.get(key))
+    parameters['transit_depth_unit'] = info_dict.get('transit_depth_unit') or 'fraction'
+    parameters['transit_duration_unit'] = info_dict.get('transit_duration_unit') or 'hours'
+    parameters['eccUnc'] = coerce_finite_float(info_dict.get('ecc_unc'))
+    parameters['omegaUnc'] = coerce_finite_float(info_dict.get('omega_unc'))
+    for key in ('pName', 'sName', 'midTStandard', 'midTSource'):
+        value = planet_dict.get(key)
+        parameters[key] = None if candidate_parameter_missing(value) else str(value)
+    # Keep an independently supplied coordinate even when its partner is missing.
+    ra, dec = planet_dict.get('ra'), planet_dict.get('dec')
+    parameters['ra'] = radec_to_decimal_degrees(ra, 0)[0] if not candidate_parameter_missing(ra) else None
+    parameters['dec'] = radec_to_decimal_degrees(0, dec)[1] if not candidate_parameter_missing(dec) else None
+    try:
+        response = requests.post(NEXTASTRO_CANDIDATE_ENDPOINT, json={'parameters': parameters},
+                                 timeout=(16, 512))  # Same network allowance as the NEA client.
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get('parameters'), dict):
+            raise ValueError('response does not contain candidate parameters')
+        suggestions = payload['parameters']
+        for key, value in suggestions.items():
+            if key in CANDIDATE_NUMERIC_KEYS + ('ra', 'dec') and coerce_finite_float(value) is None:
+                raise ValueError('response contains an invalid numeric value for ' + key)
+    except (requests.RequestException, ValueError) as exc:
+        log_info(f'NextAstro candidate auto-fill failed: {exc}. Missing parameters still need input.', warn=True)
+        return set()
+
+    filled = set()
+    for key in CANDIDATE_NUMERIC_KEYS + ('ra', 'dec', 'pName', 'sName'):
+        if candidate_parameter_missing(planet_dict.get(key)) and not candidate_parameter_missing(suggestions.get(key)):
+            planet_dict[key] = (coerce_finite_float(suggestions[key])
+                                if key in CANDIDATE_NUMERIC_KEYS + ('ra', 'dec') else suggestions[key])
+            filled.add(key)
+            source = (payload.get('sources') or {}).get(key) or {}
+            log_info(f'NextAstro filled {key} = {suggestions[key]} '
+                     f'[{source.get("kind", "unspecified")}: {source.get("reference", "source not supplied")}]')
+    if 'midT' in filled:
+        copy_ephemeris_metadata(planet_dict, suggestions)
+    info_dict['candidate_parameter_estimates'] = payload
+    gaia = payload.get('gaia')
+    if isinstance(gaia, dict):
+        log_info(f'NextAstro matched Gaia DR3 source {gaia.get("source_id")} '
+                 f'at {gaia.get("separation_arcsec")} arcsec from the target.')
+    if filled and info_dict.get('save'):
+        try:
+            report = Path(info_dict['save']) / 'working_artifacts' / 'NextAstroCandidateParameters.json'
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+        except OSError as exc:
+            log_info(f'Could not save NextAstro candidate parameter report: {exc}', warn=True)
+    for message in payload.get('warnings') or []:
+        log_info('NextAstro: ' + str(message), warn=True)
+    if payload.get('missing'):
+        log_info('NextAstro could not determine: ' + ', '.join(payload['missing'])
+                 + '. Supply these candidate parameters.', warn=True)
+    return filled
 
 
 def is_blank_value(value):
@@ -295,6 +387,10 @@ class Inputs:
             'photometer_fortuitous_variables': True,
             'use_single_comparison_for_fortuitous_variables': True,
             'use_nextastro_vsx_cache_first': False,
+            'use_nextastro_candidate_estimator': None,
+            'transit_depth': None, 'transit_depth_unc': None, 'transit_depth_unit': 'fraction',
+            'transit_duration': None, 'transit_duration_unc': None, 'transit_duration_unit': 'hours',
+            'ecc_unc': None, 'omega_unc': None,
             'detrend_on_outoftransit_baseline': True,
             'final_fit_baseline_duration_multiplier': 1.0,
             'restrict_baseline_to_an_hour': True,
@@ -571,6 +667,14 @@ class Inputs:
             'pm_dec': 'Star Proper Motion DEC (mas/yr)'
         }
         opt_info = {
+            'use_nextastro_candidate_estimator': 'use_nextastro_candidate_estimator',
+            'transit_depth': ('transit_depth', 'Transit Depth (fraction)'),
+            'transit_depth_unc': ('transit_depth_unc', 'Transit Depth Uncertainty (fraction)'),
+            'transit_depth_unit': 'transit_depth_unit',
+            'transit_duration': ('transit_duration', 'Transit Duration (hours)'),
+            'transit_duration_unc': ('transit_duration_unc', 'Transit Duration Uncertainty (hours)'),
+            'transit_duration_unit': 'transit_duration_unit',
+            'ecc_unc': 'ecc_unc', 'omega_unc': 'omega_unc',
             'orbital_constraints': ('orbital_constraints', 'Orbital Constraints'),
             'demosaic_fmt': 'Demosaic Format',
             'demosaic_out': 'Demosaic Output',

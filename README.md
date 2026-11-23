@@ -404,6 +404,21 @@ Get EXOTIC up and running faster with a json file. Please see the included file 
 
 Put these tags in the top-level `"optional_info"` object. JSON booleans (`true` and `false`) are recommended. Every initialization boolean also accepts numeric `1`/`0` and case-insensitive strings `"y"`/`"n"`, `"yes"`/`"no"`, `"true"`/`"false"`, and `"on"`/`"off"`.
 
+Candidate runs with missing parameters offer an optional NextAstro auto-fill. Set
+`optional_info.use_nextastro_candidate_estimator` to `true` to select it directly.
+Unattended candidate runs, including unattended `-ov` runs, enable it by default
+when the setting is absent. An explicit `false` disables it without prompting.
+It fills only missing inputs from target catalogues, Gaia DR3
+astrophysical parameters, target-specific ratio estimates, and labelled Archive
+starting approximations. Missing a/Rs uses period and Gaia stellar mass/radius;
+missing Rp/Rs uses available transit depth; missing inclination uses total
+transit duration with eccentricity/omega when known, otherwise circular geometry.
+Fixed guesses are the final option. Existing
+values, including zero eccentricity and metallicity, are preserved. Period and
+transit epoch require supplied or catalogue values. Sources and assumptions are
+printed and saved in `working_artifacts/NextAstroCandidateParameters.json` under
+the output directory. See [candidate auto-fill](docs/candidate-parameters.md).
+
 Transit comparison selection uses the existing preflight ranking to shortlist the first three candidates (or all candidates when fewer are available). After reducing that shortlist, EXOTIC selects among completed PASS or MARGINAL fits using the existing final-fit metrics. If none is acceptable, it continues in preflight order until an acceptable fit is found or the pool is exhausted. The existing first-PASS and promising-partial early exits remain active. Set `"exit_at_first_qc_pass_solution": false` to evaluate every ranked candidate before selection. Quick Look continues to use its existing least-squares search. The shortlist reduces the number of comparison candidates evaluated; each evaluated candidate retains its existing UltraNest settings, detrending, and refits.
 
 The pre-UltraNest LM scout also estimates whether the observations can measure ingress/egress duration to 10% precision. It uses the fitted transit model, timestamps, measurement errors and exposure integration, accounting for correlations with all free parameters. The estimate excludes duration-prior information and uses `b²` internally so a central transit can still supply an upper limit on impact parameter. There is no minimum point-count rule. When this local estimate falls short or geometry is locally unidentifiable, UltraNest holds inclination at the supplied value and continues fitting the other parameters. The supplied inclination uncertainty is retained for reporting; uncertainties on the other parameters are conditional on that fixed geometry. The log and final-parameter JSON record the estimated precision, ingress/egress counts and decision. This local white-noise estimate does not establish robustness to correlated noise or multiple solutions. Disabling the existing LM scout also disables this assessment; a failed estimate is reported and leaves geometry free.

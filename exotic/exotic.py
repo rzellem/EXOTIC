@@ -151,6 +151,7 @@ try:  # output files
         CALIBRATION_MASTER_FILENAMES,
         Inputs,
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        populate_missing_candidate_parameters,
         check_imaging_files,
         comparison_star_coords,
         target_star_coords,
@@ -161,6 +162,7 @@ except ImportError:  # package import
         CALIBRATION_MASTER_FILENAMES,
         Inputs,
         NEXTASTRO_GAIA_DISTPM_ENDPOINT,
+        populate_missing_candidate_parameters,
         check_imaging_files,
         comparison_star_coords,
         target_star_coords,
@@ -16057,7 +16059,7 @@ def repair_missing_planetary_numeric_values(parameters):
 
 # --------PLANETARY PARAMETERS UI------------------------------------------
 # Get the user's confirmation of values that will later be used in lightcurve fit
-def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
+def get_planetary_parameters(candplanetbool, userpdict, pdict=None, autofilled_keys=()):
     log_info("*******************************************")
     log_info("Planetary Parameters for Lightcurve Fitting")
 
@@ -16175,6 +16177,8 @@ def get_planetary_parameters(candplanetbool, userpdict, pdict=None):
     else:
         for i, key in enumerate(tuple(userpdict)):
             if key in ('ra', 'dec') or is_ephemeris_metadata_key(key):
+                continue
+            if key in autofilled_keys:
                 continue
             # Used initialization file and is not empty
             if userpdict[key] is not None:
@@ -36899,6 +36903,15 @@ def _main_impl():
             pDict = userpDict
             CandidatePlanetBool = False
 
+        candidate_autofilled_keys = set()
+        if CandidatePlanetBool or (args.override and parse_bool_config_value(
+            exotic_infoDict.get('use_nextastro_candidate_estimator'), args.non_interactive_run,
+            'use_nextastro_candidate_estimator',
+        )):
+            candidate_autofilled_keys = populate_missing_candidate_parameters(
+                userpDict, exotic_infoDict, non_interactive_run=args.non_interactive_run,
+            )
+
         if file_cmd_opt == 2:
             # -nea combined with -ov: the override wins the data choice above
             # (pDict = userpDict, sexagesimal strings), so the coordinate
@@ -36964,7 +36977,9 @@ def _main_impl():
                 else:
                     pDict = userpDict
         else:
-            pDict = get_planetary_parameters(CandidatePlanetBool, userpDict, pdict=pDict)
+            pDict = get_planetary_parameters(
+                CandidatePlanetBool, userpDict, pdict=pDict, autofilled_keys=candidate_autofilled_keys,
+            )
 
         def lookup_archive_ephemeris():
             lookup_name = (

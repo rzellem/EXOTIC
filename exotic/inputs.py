@@ -310,6 +310,7 @@ class Inputs:
             'detect_low_pixels_before_photometry': True,
             'multiprocess_bad_pixel_precheck': 'n',
             'use_impactparameter_rather_than_inclination_to_fit': 'y',
+            'force_fit_inclination': False,
             'use_psf_photometry': 'y', 'use_aperture_photometry': 'y',
             'use_legacy_psf_flux': 'n',
             'psf_seed_track_directory': None,
@@ -715,6 +716,10 @@ class Inputs:
                 'use_impactparameter_rather_than_inclination_to_fit',
                 'Use impact parameter rather than inclination to fit? (y/n)',
                 'Use Impact Parameter Rather Than Inclination To Fit? (y/n)',
+            ),
+            'force_fit_inclination': (
+                'force_fit_inclination',
+                'Force Fit Inclination? (y/n)',
             ),
             'use_psf_photometry': (
                 'use_psf_photometry',

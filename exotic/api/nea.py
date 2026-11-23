@@ -130,7 +130,7 @@ class NASAExoplanetArchive:
 
     def __init__(self, planet=None, candidate=False, non_interactive=False):
         self.planet = planet
-        # self.candidate = candidate
+        self.candidate = bool(candidate)
         self.pl_dict = None
         self.orbital_constraints = []
         self.non_interactive = bool(non_interactive)
@@ -190,9 +190,10 @@ class NASAExoplanetArchive:
                 )
                 if not self._load_params_from_nextastro_cache():
                     raise
-                candidate = False
+                candidate = self.candidate
+                catalog = 'candidate' if candidate else 'NASA Exoplanet Archive'
                 print(
-                    f"Successfully loaded cached NASA Exoplanet Archive parameters for {self.planet} "
+                    f"Successfully loaded cached {catalog} parameters for {self.planet} "
                     "from the NextAstro NEA cache server!",
                     flush=True,
                 )
@@ -206,6 +207,7 @@ class NASAExoplanetArchive:
                     self._get_params(data[idx])
                     print(f"Successfully found {self.planet} in the NASA Exoplanet Archive!")
 
+            self.candidate = candidate
             return self.planet, candidate, self.pl_dict
 
     @staticmethod
@@ -251,6 +253,8 @@ class NASAExoplanetArchive:
             params={'name': self.planet},
             timeout=self.requests_timeout
         )
+        if response.status_code == 404:
+            return False
         response.raise_for_status()
         payload = response.json()
         params = payload.get('params') if isinstance(payload, dict) else None
@@ -318,6 +322,8 @@ class NASAExoplanetArchive:
 
         self.planet = mapped_data['pl_name']
         self._get_params(mapped_data)
+        source = params.get('source') or {}
+        self.candidate = isinstance(source, dict) and source.get('table') in ('toi', 'toi_targets')
         return True
 
     @staticmethod
@@ -371,10 +377,24 @@ class NASAExoplanetArchive:
             return response.text
 
     def resolve_name(self):
-        # Colab validates the name after planet_info(), including cache fallback.
-        # Reuse that successful lookup so an outage cannot invalidate it.
+        """Resolve confirmed planets and candidates, preferring NextAstro's cache.
+
+        Retained for existing Colab notebooks and other callers. A successful
+        planet_info() lookup is already a resolution and needs no second query.
+        Missing fit priors do not make a recognised candidate name invalid.
+        """
         if self.pl_dict and self.pl_dict.get('pName') == self.planet:
             return True
+        if not self.planet or not self.planet.strip():
+            return False
+
+        try:
+            if self._load_params_from_nextastro_cache():
+                return True
+            print(f"{self.planet} is not in the NextAstro cache; checking the NASA confirmed-planet table.")
+        except requests.exceptions.RequestException as error:
+            print(f"NextAstro name lookup failed for {self.planet}: {error}. "
+                  "Checking the NASA confirmed-planet table.")
 
         uri_ipac_base = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query="
         uri_ipac_query = {
@@ -581,11 +601,13 @@ class NASAExoplanetArchive:
         # compute Rp/Rs
         if 'pl_trandep' in data and data['pl_trandep'] is not None:
             rprs = np.sqrt(data['pl_trandep'] / 100.)
-            rprserr = np.sqrt(np.abs((data['pl_trandeperr1'] / 100.) * (data['pl_trandeperr2'] / 100.))) / (2. * rprs)
+            if data.get('pl_trandeperr1') is not None and data.get('pl_trandeperr2') is not None:
+                rprserr = np.sqrt(np.abs((data['pl_trandeperr1'] / 100.) * (data['pl_trandeperr2'] / 100.))) / (2. * rprs)
 
         elif 'pl_ratror' in data and data['pl_ratror'] is not None:
             rprs = data['pl_ratror']
-            rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
+            if data.get('pl_ratrorerr1') is not None and data.get('pl_ratrorerr2') is not None:
+                rprserr = np.sqrt(np.abs(data['pl_ratrorerr1'] * data['pl_ratrorerr2']))
 
         # check if rprs is still 0 or nan
         if np.isnan(rprs) or rprs <= 0.:

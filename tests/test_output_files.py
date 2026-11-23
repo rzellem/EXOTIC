@@ -1652,8 +1652,10 @@ def test_quick_look_outputs_are_preliminary_and_not_submission_ready(tmp_path):
     assert params["Submission Ready"] is False
 
 
-def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path):
+@pytest.mark.parametrize('forced', [False, True])
+def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path, forced):
     fit = DummyFit()
+    fit.force_fit_inclination = forced
     fit.lm_boundary_scout_adjusted = True
     fit.lm_boundary_scout_expanded_keys = ["ars", "rprs"]
     fit.lm_boundary_scout_final_bounds = {
@@ -1663,6 +1665,12 @@ def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path
     fit.lm_boundary_scout_note = (
         "Expanded the UltraNest search bounds from the deterministic fit."
     )
+    fit.pre_ultranest_geometry_information = {
+        'available': True, 'ingress_fractional_uncertainty': 0.3,
+        'ingress_points': 4, 'egress_points': 3, 'meets_target': False,
+        'fixed_parameters': ['inc'], 'fixed_values': {'inc': 88.0},
+        'conditional_on_supplied_geometry': True,
+    }
     (tmp_path / "working_artifacts").mkdir()
 
     OutputFiles(
@@ -1675,6 +1683,8 @@ def test_final_planetary_params_records_pre_ultranest_lm_boundary_scout(tmp_path
     params_path = next((tmp_path / "working_artifacts").glob("FinalParams_*.json"))
     params = json.loads(params_path.read_text(encoding="utf-8"))["FINAL PLANETARY PARAMETERS"]
     assert params["Pre-UltraNest LM boundary scout note"] == fit.lm_boundary_scout_note
+    assert params["Pre-UltraNest geometry information"] == fit.pre_ultranest_geometry_information
+    assert params["Force inclination/impact-parameter fit"] is forced
     assert params["Pre-UltraNest LM boundary scout expanded parameters"] == "ars, rprs"
     assert json.loads(params["Pre-UltraNest LM boundary scout final bounds"]) == {
         "ars": [7.5, 14.6],

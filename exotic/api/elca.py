@@ -418,7 +418,8 @@ def grazing_impact_parameter(values):
     return 1.0 + rprs
 
 
-def transit_duration(values):
+def transit_duration(values, contact_radius=None):
+    """Contact duration in days; a missing inner chord has zero duration."""
     try:
         period = float(values['per'])
         rprs = float(values['rprs'])
@@ -443,7 +444,10 @@ def transit_duration(values):
 
     impact_scale = ars * (1.0 - ecc ** 2) / max(np.finfo(float).eps, 1.0 + ecc * np.sin(omega))
     impact_parameter = impact_scale * np.cos(np.deg2rad(inc))
-    chord_sq = (1.0 + rprs) ** 2 - impact_parameter ** 2
+    radius = 1.0 + rprs if contact_radius is None else float(contact_radius)
+    chord_sq = radius ** 2 - impact_parameter ** 2
+    if contact_radius is not None and chord_sq <= 0:
+        return 0.0
     if not np.isfinite(chord_sq) or chord_sq <= 0 or not np.isfinite(impact_scale) or impact_scale <= 0:
         return np.nan
 
@@ -4073,6 +4077,133 @@ class lc_fitter(object):
                 from limbdarkfast_cpp import _library
             _library()
             self.backend_setup_seconds = perf_counter() - started
+
+    def estimate_geometry_information(self):
+        """Local, data-only precision at the LM solution; no additional fit.
+
+        Differentiate in b**2, which remains regular at a central transit, and
+        include every free nuisance parameter. Duration priors and parameter
+        bounds contribute no information here. Exposure integration uses the
+        same model as the fit. This is a white-noise/local approximation, not
+        a guarantee about a nonlinear or multimodal posterior.
+        """
+        result = {'available': False, 'note': 'No free transit geometry in the LM fit.'}
+        keys = list(self.bounds)
+        geometry_keys = [key for key in ('inc', 'b') if key in keys]
+        if len(geometry_keys) != 1:
+            return result
+        if self.mode != 'lm' or np.ndim(self.airmass) != 1:
+            result['note'] = 'Geometry precision not estimated for this fit/baseline; geometry remains free.'
+            return result
+        geometry_key = geometry_keys[0]
+        geometry_index = keys.index(geometry_key)
+        parameters = dict(self.parameters)
+        b_squared = float(impact_parameter_from_inclination(parameters, parameters['inc'])) ** 2
+        coordinates = np.array([parameters[key] for key in keys], dtype=float)
+        coordinates[geometry_index] = b_squared
+        total_duration = transit_duration(parameters)
+        scales = np.array([float(self.bounds[key][1]) - float(self.bounds[key][0]) for key in keys])
+        scales[geometry_index] = 1.0
+        if 'tmid' in keys:
+            scales[keys.index('tmid')] = min(scales[keys.index('tmid')], total_duration)
+        if (not np.isfinite(total_duration) or total_duration <= 0
+                or not np.all(np.isfinite(scales) & (scales > 0))):
+            result['note'] = 'LM geometry or derivative scales are unavailable.'
+            return result
+
+        def evaluate(point):
+            values = dict(parameters)
+            values.update(zip(keys, point))
+            q = float(point[geometry_index])
+            scale = float(impact_parameter_scale(values))
+            if q < 0 or scale <= 0 or q >= min(scale ** 2, (1 + values['rprs']) ** 2):
+                return None
+            values['inc'] = float(inclination_from_impact_parameter(values, np.sqrt(q)))
+            if geometry_key == 'b':
+                values['b'] = np.sqrt(q)
+            outer = transit_duration(values)
+            inner = transit_duration(values, max(1 - values['rprs'], 0.0))
+            ingress = 0.5 * (outer - inner)
+            if not np.isfinite(ingress) or ingress <= 0:
+                return None
+            curve = self._transit_model(self.time, values) * airmass_trend(
+                values.get('a2', 0), self.airmass, reference=self._get_airmass_reference(),
+            )
+            if self._has_free_flux_baseline() or self._uses_fixed_flux_baseline():
+                curve *= get_flux_baseline(values)
+            else:
+                curve *= solve_flux_baseline(
+                    curve, self.data, self.dataerr, mask=self._get_baseline_fit_mask(),
+                )
+            return np.asarray(curve, dtype=float), ingress
+
+        center = evaluate(coordinates)
+        if center is None:
+            result['note'] = 'LM solution has no measurable ingress duration.'
+            return result
+        curve, ingress = center
+        jacobian = np.empty((len(self.time), len(keys)))
+        duration_gradient = np.empty(len(keys))
+        for index, scale in enumerate(scales):
+            # Numerical derivative steps, not observational quality thresholds.
+            step = max(np.cbrt(np.finfo(float).eps) * scale,
+                       4 * abs(np.spacing(coordinates[index])))
+            if index == geometry_index:
+                upper = min(impact_parameter_scale(parameters) ** 2, (1 + parameters['rprs']) ** 2)
+                step = min(step, 0.25 * (upper - b_squared))
+            plus, minus = coordinates.copy(), coordinates.copy()
+            plus[index] += step
+            minus[index] -= step
+            high, low = evaluate(plus), evaluate(minus)
+            if high is None and low is None:
+                result['note'] = f'Cannot estimate a local derivative for {keys[index]}; geometry remains free.'
+                return result
+            width = 2 * step
+            if low is None:
+                low, width = center, step
+            if high is None:
+                high, width = center, step
+            jacobian[:, index] = (high[0] - low[0]) / self.dataerr * scale / width
+            duration_gradient[index] = (high[1] - low[1]) * scale / width
+
+        if not np.all(np.isfinite(jacobian)):
+            result['note'] = 'Non-finite model derivatives; geometry precision is unavailable.'
+            return result
+        _, singular_values, vectors = np.linalg.svd(jacobian, full_matrices=False)
+        tolerance = np.finfo(float).eps * max(jacobian.shape) * singular_values[0]
+        keep = singular_values > tolerance
+        vectors, singular_values = vectors[keep], singular_values[keep]
+        rank = len(singular_values)
+        profiled_baseline = not (self._has_free_flux_baseline() or self._uses_fixed_flux_baseline())
+        dof = max(len(self.time) - rank - int(profiled_baseline), 1)
+        variance = max(1.0, float(np.sum(((self.data - curve) / self.dataerr) ** 2) / dof))
+
+        def uncertainty(gradient):
+            projection = vectors @ gradient
+            # A pseudoinverse alone gives false zero errors along null modes.
+            if not np.allclose(vectors.T @ projection, gradient, rtol=1e-7,
+                               atol=1e-10 * np.linalg.norm(gradient)):
+                return np.inf
+            return float(np.sqrt(variance * np.sum((projection / singular_values) ** 2)))
+
+        b_gradient = np.zeros(len(keys))
+        b_gradient[geometry_index] = 1.0
+        ingress_error = uncertainty(duration_gradient)
+        b_squared_error = uncertainty(b_gradient)
+        offset = (np.asarray(self.time) - parameters['tmid'] + 0.5 * parameters['per']) % parameters['per'] - 0.5 * parameters['per']
+        start, end = -0.5 * total_duration, 0.5 * total_duration
+        result.update({
+            'available': True,
+            'method': 'data-only local Fisher information in b squared at the LM solution',
+            'ingress_duration_minutes': float(ingress * 1440),
+            'ingress_fractional_uncertainty': float(ingress_error / ingress) if np.isfinite(ingress_error) else None,
+            'b_squared_uncertainty': b_squared_error if np.isfinite(b_squared_error) else None,
+            'ingress_points': int(np.count_nonzero((offset >= start) & (offset <= start + ingress))),
+            'egress_points': int(np.count_nonzero((offset >= end - ingress) & (offset <= end))),
+            'noise_scale': float(np.sqrt(variance)),
+            'note': 'Local white-noise estimate including free-parameter correlations; duration priors excluded.',
+        })
+        return result
 
     def fit_LM(self):
         self._prepare_native_backend()

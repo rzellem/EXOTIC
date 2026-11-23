@@ -390,6 +390,8 @@ ULTRANEST_MIN_NUM_LIVE_POINTS_DEFAULT = 200
 ULTRANEST_MIN_NUM_LIVE_POINTS_ENV = "EXOTIC_ULTRANEST_MIN_NUM_LIVE_POINTS"
 ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT = True
 ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED = False
+FORCE_FIT_INCLINATION_DEFAULT = False
+FORCE_FIT_INCLINATION = FORCE_FIT_INCLINATION_DEFAULT
 # Inflate the final light curve's per-point uncertainties so an LM fit's residuals give reduced chi2 = 1 before the
 # final UltraNest posterior (EXOTIC 1.0 behaviour; never deflated). The photon/read/dark budget omits scintillation,
 # comparison-star and flat-field noise, so on bright stars the residuals scatter ~2x the budget and the Tmid posterior
@@ -494,6 +496,9 @@ ARS_RETRY_MIN_HALF_WIDTH = 0.0
 IMPACT_PARAMETER_POSTERIOR_MAX_RETRIES_DEFAULT = 5
 INCLINATION_SEARCH_BOUND_MIN = 0.0
 INCLINATION_SEARCH_BOUND_MAX = 90.0
+# Planning precision discussed for deciding whether ingress/egress can support
+# a free geometry parameter; this is not a minimum point-count requirement.
+PRE_ULTRANEST_INGRESS_MAX_FRACTIONAL_UNCERTAINTY = 0.10
 INITIAL_ARS_BOUND_SIGMA_MULTIPLIER = 5.0
 INITIAL_ARS_BOUND_FALLBACK_RELATIVE_HALF_WIDTH = 0.25
 DURATION_PRIOR_MONTE_CARLO_SAMPLES = 256
@@ -736,6 +741,52 @@ def annotate_lm_boundary_scout(fit, payload):
     fit.lm_boundary_scout_initial_parameters = dict(payload.get('initial_parameters') or {})
     fit.lm_boundary_scout_active_bounds = dict(payload.get('active_bounds') or {})
     fit.lm_boundary_scout_note = payload.get('note')
+    fit.pre_ultranest_geometry_information = dict(payload.get('geometry_information') or {})
+
+
+def ensure_forced_inclination_bounds(prior, bounds, fixed_errors):
+    """Restore the normal inclination bounds if an earlier fit fixed geometry."""
+    if 'inc' not in bounds and 'b' not in bounds:
+        inc = coerce_finite_transit_qc_scalar(prior.get('inc', np.nan))
+        if np.isfinite(inc):
+            bounds.update(sanitize_inclination_search_bounds({
+                'inc': [inc - 5.0, min(90.0, inc + 5.0)],
+            }))
+    if 'inc' in bounds or 'b' in bounds:
+        fixed_errors.pop('inc', None)
+        fixed_errors.pop('b', None)
+
+
+def apply_pre_ultranest_geometry_information(
+    prior, bounds, fixed_errors, assessment, reference_prior, force_fit_inclination=None,
+):
+    """Hold weak inclination at the supplied value, never at the noisy LM value."""
+    prior, bounds, fixed_errors = dict(prior), clone_lightcurve_bounds(bounds), dict(fixed_errors)
+    forced = FORCE_FIT_INCLINATION if force_fit_inclination is None else should_force_fit_inclination(force_fit_inclination)
+    if forced:
+        ensure_forced_inclination_bounds(prior, bounds, fixed_errors)
+        assessment['force_fit_inclination'] = True
+        return prior, bounds, fixed_errors
+    if not assessment.get('available') or assessment.get('meets_target') is not False:
+        return prior, bounds, fixed_errors
+    for key in ('inc', 'b'):
+        if key not in bounds:
+            continue
+        value = coerce_finite_transit_qc_scalar(reference_prior.get(key, np.nan))
+        if not np.isfinite(value):
+            assessment['note'] += f' No supplied {key} value is available; it remains free.'
+            log_info(assessment['note'], warn=True)
+            continue
+        prior[key] = value
+        bounds.pop(key)
+        fixed_errors[key] = partial_transit_geometry_prior_assumption_fixed_error(key, prior, reference_prior)
+        assessment['fixed_parameters'] = list(dict.fromkeys(assessment.get('fixed_parameters', []) + [key]))
+        assessment['fixed_values'] = {**assessment.get('fixed_values', {}), key: value}
+        log_info(f"Pre-UltraNest geometry decision: fixed {key}={value} at the supplied value; "
+                 "remaining fitted uncertainties are conditional on this geometry.")
+    if assessment.get('fixed_parameters'):
+        assessment['conditional_on_supplied_geometry'] = True
+    return prior, bounds, fixed_errors
 
 
 def annotate_final_fit_prefit_refinement(
@@ -4639,24 +4690,29 @@ def estimate_fixed_airmass_coefficient_error(flux_values, flux_errors, airmass):
     return float(relative_error / airmass_span_value)
 
 
-def partial_transit_geometry_prior_assumption_note(mode, assessment, sampled_parameters):
+def partial_transit_geometry_prior_assumption_note(mode, assessment, sampled_parameters, force_fit_inclination=False):
     observed_segment = assessment.get('observed_segment') or 'partial transit'
     pre_points = int(assessment.get('pre_ingress_points', 0) or 0)
     post_points = int(assessment.get('post_egress_points', 0) or 0)
     sampled_text = ", ".join(sampled_parameters) if sampled_parameters else "no free parameters"
+    fixed_shape = "Rp/R*, a/Rs" if force_fit_inclination else "Rp/R*, a/Rs, and inclination/impact parameter"
+    force_note = (
+        " Inclination/impact parameter remains free because force_fit_inclination=true."
+        if force_fit_inclination else ""
+    )
     if mode == 'tmid_baseline_airmass':
         return (
             "Applied prior-assumed transit geometry for a no-out-of-transit partial light curve; "
-            "Rp/R*, a/Rs, and inclination/impact parameter were fixed to the input priors because "
+            f"{fixed_shape} were fixed to the input priors because "
             f"the observation contains {pre_points} pre-ingress and {post_points} post-egress "
             f"out-of-transit point(s) ({observed_segment}). The fit keeps baseline/airmass "
-            f"terms simultaneous with Tmid; sampled parameter(s): {sampled_text}."
+            f"terms simultaneous with Tmid; sampled parameter(s): {sampled_text}.{force_note}"
         )
     return (
-        "Applied prior-assumed transit geometry for a one-sided partial light curve; Rp/R*, a/Rs, "
-        "and inclination/impact parameter were fixed to the input priors because the transit shape "
+        f"Applied prior-assumed transit geometry for a one-sided partial light curve; {fixed_shape} "
+        "were fixed to the input priors because the transit shape "
         f"is baseline-degenerate with {pre_points} pre-ingress and {post_points} post-egress "
-        f"out-of-transit point(s) ({observed_segment}). Sampled parameter(s): {sampled_text}."
+        f"out-of-transit point(s) ({observed_segment}). Sampled parameter(s): {sampled_text}.{force_note}"
     )
 
 
@@ -4679,7 +4735,9 @@ def apply_partial_transit_geometry_prior_assumption(
     airmass=None,
     fixed_parameter_errors=None,
     search_restriction_prior=None,
+    force_fit_inclination=None,
 ):
+    forced = FORCE_FIT_INCLINATION if force_fit_inclination is None else should_force_fit_inclination(force_fit_inclination)
     mode = partial_transit_geometry_prior_assumption_mode(assessment)
     local_prior = dict(prior) if isinstance(prior, dict) else {}
     local_bounds = clone_lightcurve_bounds(bounds)
@@ -4688,18 +4746,23 @@ def apply_partial_transit_geometry_prior_assumption(
         if isinstance(fixed_parameter_errors, dict)
         else {}
     )
+    if forced:
+        ensure_forced_inclination_bounds(local_prior, local_bounds, local_fixed_errors)
     payload = {
         'applied': False,
         'mode': None,
         'note': None,
         'fixed_parameters': [],
         'sampled_parameters': list(local_bounds.keys()),
+        'force_fit_inclination': forced,
     }
     if mode is None:
         return local_prior, local_bounds, local_fixed_errors, payload
 
     fixed_parameters = []
     for key in ('rprs', 'ars', 'inc', 'b'):
+        if forced and key in ('inc', 'b'):
+            continue
         if key in local_bounds:
             local_bounds.pop(key, None)
             fixed_parameters.append(key)
@@ -4734,7 +4797,7 @@ def apply_partial_transit_geometry_prior_assumption(
     sampled_parameters = list(local_bounds.keys())
     payload.update({
         'applied': True,
-        'mode': mode,
+        'mode': 'tmid_and_inclination' if forced and mode == 'tmid_only' else mode,
         'fixed_parameters': sorted(set(fixed_parameters)),
         'sampled_parameters': sampled_parameters,
     })
@@ -4742,6 +4805,7 @@ def apply_partial_transit_geometry_prior_assumption(
         mode,
         assessment,
         sampled_parameters,
+        force_fit_inclination=forced,
     )
     return local_prior, local_bounds, local_fixed_errors, payload
 
@@ -5025,8 +5089,10 @@ def fit_quick_look_lightcurve_least_squares(
     expected_planet_dict=None,
     expected_tmid_search_summary=None,
     eebls_search_summary=None,
+    force_fit_inclination=None,
 ):
     """Fit one Quick Look comparison candidate without entering posterior inference."""
+    forced = FORCE_FIT_INCLINATION if force_fit_inclination is None else should_force_fit_inclination(force_fit_inclination)
     times = np.asarray(times, dtype=float)
     flux_values = np.asarray(flux_values, dtype=float)
     flux_errors = np.asarray(flux_errors, dtype=float)
@@ -5089,6 +5155,7 @@ def fit_quick_look_lightcurve_least_squares(
         search_restriction_prior=build_search_restriction_prior_from_planet_dict(
             expected_planet_dict or {}
         ),
+        force_fit_inclination=forced,
     )
 
     fit = run_lm(
@@ -5167,6 +5234,7 @@ def fit_quick_look_lightcurve_least_squares(
     )
     annotate_pre_ultranest_transit_coverage(fit, coverage_assessment)
     annotate_partial_transit_geometry_prior_assumption(fit, partial_geometry_assumption)
+    fit.force_fit_inclination = forced
     annotate_out_of_transit_baseline_detrending(
         fit,
         detrend_result.get('applied', False),
@@ -8207,10 +8275,12 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
     enabled=None,
     max_iterations=ULTRANEST_LM_BOUNDARY_SCOUT_MAX_ITERATIONS,
     log_ultranest_launch=True,
+    force_fit_inclination=None,
 ):
     """Use cheap LM fits to place UltraNest bounds before posterior sampling starts."""
     if enabled is None:
         enabled = ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
+    forced = FORCE_FIT_INCLINATION if force_fit_inclination is None else should_force_fit_inclination(force_fit_inclination)
 
     working_prior = dict(prior) if isinstance(prior, dict) else {}
     configured_prior = dict(working_prior)
@@ -8229,6 +8299,12 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
         'initial_parameters': dict(working_prior),
         'active_bounds': {},
         'note': 'Disabled; UltraNest started from the configured search bounds.',
+        'geometry_information': {
+            'available': False,
+            'force_fit_inclination': forced,
+            'note': ('Geometry precision not assessed; no free geometry or usable LM solution.'
+                     if enabled else 'LM boundary scout disabled.'),
+        },
     }
     if not enabled or not working_bounds:
         return working_prior, working_bounds, payload
@@ -8299,7 +8375,7 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
             log_info(
                 "LM boundary contacts before UltraNest: "
                 + ', '.join(f"{key}={edge}" for key, edge in payload['active_bounds'].items())
-                + ". These are least-squares diagnostics; posterior parameters remain free."
+                + ". Geometry precision will be assessed after the scout."
             )
 
         for key in working_bounds:
@@ -8393,6 +8469,37 @@ def prepare_ultranest_bounds_with_lm_boundary_scout(
     payload['expanded_keys'] = sorted(expanded_keys)
     payload['bounds'] = clone_lightcurve_bounds(working_bounds)
     payload['note'] = stop_reason or "LM boundary scout completed."
+    estimate_geometry = getattr(last_fit, 'estimate_geometry_information', None)
+    if callable(estimate_geometry) and ('inc' in working_bounds or 'b' in working_bounds):
+        try:
+            geometry = estimate_geometry()
+        except Exception as exc:
+            geometry = {'available': False, 'note': f'Geometry precision estimate failed ({type(exc).__name__}: {exc}). Geometry remains free.'}
+        geometry['force_fit_inclination'] = forced
+        if geometry.get('available'):
+            target = PRE_ULTRANEST_INGRESS_MAX_FRACTIONAL_UNCERTAINTY
+            fractional_error = geometry.get('ingress_fractional_uncertainty')
+            geometry['target_fractional_uncertainty'] = target
+            geometry['meets_target'] = bool(
+                fractional_error is not None and np.isfinite(fractional_error)
+                and fractional_error <= target and geometry.get('b_squared_uncertainty') is not None
+            )
+            precision_text = f'{fractional_error:.1%}' if fractional_error is not None else 'unconstrained'
+            if forced:
+                decision = 'Inclination/impact parameter remains free because force_fit_inclination=true, regardless of estimated precision.'
+            else:
+                decision = (
+                    'Inclination/impact parameter remains free.' if geometry['meets_target'] else
+                    'Use the supplied inclination/impact parameter; remaining fitted uncertainties are conditional on it.'
+                )
+            geometry['note'] = (
+                f"LM ingress/egress precision estimate: {precision_text} (target <= {target:.0%}); "
+                f"ingress/egress points={geometry['ingress_points']}/{geometry['egress_points']}. "
+                f'{decision} Local white-noise estimate with free-parameter correlations and exposure integration; '
+                'duration priors excluded.'
+            )
+        payload['geometry_information'] = geometry
+        log_info(geometry['note'], warn=not geometry.get('available', False))
     if payload['applied']:
         suffix = " Launching UltraNest." if log_ultranest_launch else ""
         log_info(f"{payload['note']}{suffix}")
@@ -8667,7 +8774,9 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
     search_restriction_prior=None,
     use_prior_rprs_when_posterior_pinned=None,
     use_lm_boundary_scout=None,
+    force_fit_inclination=None,
 ):
+    forced = FORCE_FIT_INCLINATION if force_fit_inclination is None else should_force_fit_inclination(force_fit_inclination)
     timing_envelope = tmid_search_envelope(prior, bounds)
     if use_lm_boundary_scout is None:
         # Keep the low-level API backward compatible. CLI reduction paths pass
@@ -8684,6 +8793,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         if isinstance(search_restriction_prior, dict)
         else dict(prior) if isinstance(prior, dict) else {}
     )
+    geometry_reference_prior = {**dict(prior), **restriction_reference_prior}
 
     def impact_parameter_retry_available(fit, local_bounds):
         if not use_impactparameter_rather_than_inclination_to_fit or 'inc' not in local_bounds:
@@ -8786,7 +8896,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             'max_retries': min(
                 max_impact_parameter_retries,
                 partial_retry_limits['max_retries']['b'],
-            ) if partial_retry_limits['active'] else max_impact_parameter_retries,
+            ) if partial_retry_limits['active'] and not forced else max_impact_parameter_retries,
             'requested_max_retries': max_impact_parameter_retries,
             'min_bound': INCLINATION_SEARCH_BOUND_MIN,
             'max_bound': INCLINATION_SEARCH_BOUND_MAX,
@@ -8834,7 +8944,13 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                 airmass=airmass,
                 fixed_parameter_errors=effective_fixed_parameter_errors,
                 search_restriction_prior=restriction_reference_prior,
+                force_fit_inclination=forced,
             )
+        )
+        local_prior, local_bounds, effective_fixed_parameter_errors = apply_pre_ultranest_geometry_information(
+            local_prior, local_bounds, effective_fixed_parameter_errors,
+            lm_boundary_scout.get('geometry_information', {}), geometry_reference_prior,
+            force_fit_inclination=forced,
         )
         effective_fixed_flux_baseline = (
             fixed_flux_baseline
@@ -8883,6 +8999,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
         )
         annotate_duration_prior(fit, duration_prior)
         annotate_partial_transit_geometry_prior_assumption(fit, prior_assumption)
+        fit.force_fit_inclination = forced
         record_ultranest_fit(fit)
         return fit
 
@@ -8899,6 +9016,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             airmass=airmass,
             fixed_parameter_errors=base_fixed_parameter_errors,
             search_restriction_prior=restriction_reference_prior,
+            force_fit_inclination=forced,
         )
     )
     current_prior = clamp_retry_priors_to_bounds(current_prior, current_bounds)
@@ -8927,7 +9045,13 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
             fixed_flux_baseline=scout_fixed_flux_baseline,
             duration_prior=duration_prior,
             enabled=use_lm_boundary_scout,
+            force_fit_inclination=forced,
         )
+    )
+    current_prior, current_bounds, base_fixed_parameter_errors = apply_pre_ultranest_geometry_information(
+        current_prior, current_bounds, base_fixed_parameter_errors,
+        lm_boundary_scout.get('geometry_information', {}), geometry_reference_prior,
+        force_fit_inclination=forced,
     )
     retry_histories = {config['key']: [] for config in retry_configs}
     retry_notes = {config['key']: None for config in retry_configs}
@@ -8980,7 +9104,7 @@ def run_nested_lightcurve_fit_with_rprs_posterior_retry(
                             f"Skipped; automatic {config['label']} posterior range refits are disabled "
                             "for this fit."
                         )
-                    elif partial_retry_limits['active']:
+                    elif partial_retry_limits['active'] and (key != 'b' or not forced):
                         retry_notes[key] = partial_retry_limits['note']
                 continue
 
@@ -10784,6 +10908,10 @@ def should_use_lm_boundary_scout_before_ultranest(config_value):
     )
 
 
+def should_force_fit_inclination(config_value):
+    return parse_bool_config_value(config_value, FORCE_FIT_INCLINATION_DEFAULT, 'force_fit_inclination')
+
+
 def should_run_fast_ultranest_before_final_run(config_value):
     if config_value is None:
         return FAST_ULTRANEST_BEFORE_FINAL_RUN_DEFAULT
@@ -10907,6 +11035,12 @@ def configure_lm_boundary_scout_before_ultranest(config_value):
     global ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
     ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED = should_use_lm_boundary_scout_before_ultranest(config_value)
     return ULTRANEST_LM_BOUNDARY_SCOUT_ENABLED
+
+
+def configure_force_fit_inclination(config_value):
+    global FORCE_FIT_INCLINATION
+    FORCE_FIT_INCLINATION = should_force_fit_inclination(config_value)
+    return FORCE_FIT_INCLINATION
 
 
 def should_inflate_final_fit_uncertainties(config_value):
@@ -27387,6 +27521,11 @@ def fitted_lightcurve_scatter_on_dataset(fit, times, flux_values, airmass):
     return float(scatter) if np.isfinite(scatter) and scatter >= 0 else np.nan
 
 
+def initialize_lightcurve_candidate_worker(force_fit_inclination):
+    suppress_inherited_tk_cleanup_in_worker()
+    configure_force_fit_inclination(force_fit_inclination)
+
+
 def evaluate_lightcurve_candidate(task):
     exposure_times_seconds = None
     gain_e_per_adu = None
@@ -27765,7 +27904,8 @@ def run_target_driven_photometry_search(times, jd_times, airmass, ld, p_dict, co
         with suppress_tk_cleanup_during_process_pool():
             with ProcessPoolExecutor(
                 max_workers=multiprocess_lightcurve_fits,
-                initializer=suppress_inherited_tk_cleanup_in_worker,
+                initializer=initialize_lightcurve_candidate_worker,
+                initargs=(FORCE_FIT_INCLINATION,),
             ) as executor:
                 fit_results = list(executor.map(evaluate_lightcurve_candidate, fit_tasks))
     else:
@@ -36522,6 +36662,12 @@ def _main_impl():
                 'use_lm_boundary_scout_before_ultranest',
                 ULTRANEST_LM_BOUNDARY_SCOUT_DEFAULT,
             )
+        )
+        force_fit_inclination = configure_force_fit_inclination(
+            exotic_infoDict.get('force_fit_inclination', FORCE_FIT_INCLINATION_DEFAULT)
+        )
+        log_info(
+            f"Force inclination/impact-parameter fitting: {'enabled' if force_fit_inclination else 'disabled'}."
         )
         inflate_final_fit_uncertainties = configure_final_fit_uncertainty_inflation(
             exotic_infoDict.get(

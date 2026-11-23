@@ -3085,6 +3085,10 @@ class OutputFiles:
         lm_boundary_scout_note = getattr(self.fit, 'lm_boundary_scout_note', None)
         if lm_boundary_scout_note:
             params_num["Pre-UltraNest LM boundary scout note"] = str(lm_boundary_scout_note)
+        geometry_information = getattr(self.fit, 'pre_ultranest_geometry_information', None)
+        params_num["Force inclination/impact-parameter fit"] = bool(getattr(self.fit, 'force_fit_inclination', False))
+        if geometry_information:
+            params_num["Pre-UltraNest geometry information"] = geometry_information
         if getattr(self.fit, 'lm_boundary_scout_adjusted', False):
             params_num["Pre-UltraNest LM boundary scout expanded parameters"] = ", ".join(
                 str(key) for key in (getattr(self.fit, 'lm_boundary_scout_expanded_keys', []) or [])

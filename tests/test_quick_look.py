@@ -328,7 +328,8 @@ def test_quick_look_fit_uses_only_lm_and_labels_uncertainty(monkeypatch):
     np.testing.assert_array_equal(fitted_unc, np.full(20, 0.002))
 
 
-def test_quick_look_partial_uses_observed_edge_as_timing_anchor(monkeypatch):
+@pytest.mark.parametrize('forced', [False, True])
+def test_quick_look_partial_uses_observed_edge_as_timing_anchor(monkeypatch, forced):
     captured = {}
 
     monkeypatch.setattr(
@@ -378,13 +379,16 @@ def test_quick_look_partial_uses_observed_edge_as_timing_anchor(monkeypatch):
             'a0': [0.95, 1.05], 'a2': [-1.0, 1.0],
         },
         detrend_on_outoftransit_baseline=False,
+        force_fit_inclination=forced,
     )
 
-    assert list(captured['bounds']) == ['tmid']
-    assert set(captured['fixed_parameter_errors']) >= {'rprs', 'ars', 'inc'}
+    assert list(captured['bounds']) == (['tmid', 'inc'] if forced else ['tmid'])
+    assert set(captured['fixed_parameter_errors']) >= {'rprs', 'ars'}
+    assert ('inc' in captured['fixed_parameter_errors']) is not forced
     assert fit.partial_transit_geometry_prior_assumption_applied is True
-    assert fit.partial_transit_geometry_prior_assumption_mode == 'tmid_only'
-    assert fit.partial_transit_geometry_prior_assumption_sampled_parameters == ['tmid']
+    assert fit.partial_transit_geometry_prior_assumption_mode == ('tmid_and_inclination' if forced else 'tmid_only')
+    assert fit.partial_transit_geometry_prior_assumption_sampled_parameters == (['tmid', 'inc'] if forced else ['tmid'])
+    assert fit.force_fit_inclination is forced
 
 
 def test_quick_look_ranked_comparisons_stop_at_first_qc_pass_without_posterior(monkeypatch):

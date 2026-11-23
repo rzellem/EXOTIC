@@ -1057,6 +1057,19 @@ def test_comp_params_defaults_use_impactparameter_fit_to_yes(tmp_path):
     inputs.comp_params(init_file, {})
 
     assert inputs.info_dict["use_impactparameter_rather_than_inclination_to_fit"] == "y"
+    assert inputs.info_dict["force_fit_inclination"] is False
+
+
+@pytest.mark.parametrize('value', [True, False, 'y', 'n'])
+def test_comp_params_reads_force_fit_inclination(tmp_path, value):
+    init_file = tmp_path / 'inits.json'
+    init_file.write_text(json.dumps({
+        'user_info': {}, 'optional_info': {'force_fit_inclination': value},
+        'planetary_parameters': {},
+    }))
+    inputs = Inputs(init_opt='y')
+    inputs.comp_params(init_file, {})
+    assert inputs.info_dict['force_fit_inclination'] == value
 
 
 def test_comp_params_defaults_use_psf_photometry_to_yes(tmp_path):

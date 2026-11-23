@@ -11,6 +11,7 @@ from exotic.api.nea import NASAExoplanetArchive, planet_name_lookup_candidates
 class DummyResponse:
     def __init__(self, payload):
         self._payload = payload
+        self.status_code = 200
 
     def raise_for_status(self):
         return None
@@ -193,6 +194,7 @@ def test_resolve_name_queries_nasa_without_matching_loaded_parameters(monkeypatc
     nea = NASAExoplanetArchive('WASP-12 b')
     nea.pl_dict = loaded_params
     queries = []
+    monkeypatch.setattr(nea, '_load_params_from_nextastro_cache', lambda: False)
 
     def tap(base_url, query):
         queries.append(query)
@@ -203,6 +205,83 @@ def test_resolve_name_queries_nasa_without_matching_loaded_parameters(monkeypatc
     assert nea.resolve_name() is found
     assert len(queries) == 1
     assert queries[0]['where'] == "tran_flag = 1 and pl_name = 'WASP-12 b'"
+
+
+@pytest.mark.parametrize('disposition', ['PC', 'FP', 'CP'])
+def test_resolve_name_accepts_nextastro_candidate_with_missing_fit_priors(monkeypatch, disposition):
+    nea = NASAExoplanetArchive('TOI-3671.01')
+    calls = []
+    payload = {'params': {
+        'name': 'TIC 312345863.01', 'hostStarName': 'TIC 312345863',
+        'raDeg': 12.407583333333333, 'decDeg': 56.00155,
+        'orbitalPeriodDays': {'value': 1.7266138, 'errPlus': .0000036, 'errMinus': -.0000036},
+        'midTransitTimeDays': {'value': 2459909.44404},
+        'rpOverRs': {'value': .10972693379476162},
+        'aOverRs': {'value': None}, 'inclinationDeg': {'value': None},
+        'disposition': disposition, 'source': {'table': 'toi_targets'},
+    }}
+
+    def get(url, params, timeout):
+        calls.append((url, params))
+        return DummyResponse(payload)
+
+    monkeypatch.setattr(requests, 'get', get)
+    monkeypatch.setattr(nea, '_tap_query', lambda *args, **kwargs: pytest.fail('resolved candidates must not query NASA'))
+
+    assert nea.resolve_name() is True
+    assert nea.planet == 'TIC 312345863.01'
+    assert nea.candidate is True
+    assert nea.pl_dict['pPer'] == 1.7266138
+    assert len(calls) == 1
+    assert calls[0] == ('https://archive.nextastro.org/api/exoplanet_params', {'name': 'TOI-3671.01'})
+    assert nea.resolve_name() is True
+    assert len(calls) == 1  # Reuse the resolved record, including its canonical alias.
+
+
+def test_resolve_name_preserves_nasa_lookup_when_nextastro_has_no_record(monkeypatch):
+    nea = NASAExoplanetArchive('New Planet b')
+    response = DummyResponse({'error': 'not found'})
+    response.status_code = 404
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: response)
+    monkeypatch.setattr(nea, '_tap_query', lambda *args, **kwargs: pandas.DataFrame({'pl_name': ['New Planet b']}))
+    assert nea.resolve_name() is True
+
+
+def test_resolve_name_reports_nextastro_failure_and_preserves_nasa_lookup(monkeypatch, capsys):
+    nea = NASAExoplanetArchive('WASP-12 b')
+
+    def fail(*args, **kwargs):
+        raise requests.exceptions.ConnectionError('cache unavailable')
+
+    monkeypatch.setattr(requests, 'get', fail)
+    monkeypatch.setattr(nea, '_tap_query', lambda *args, **kwargs: pandas.DataFrame({'pl_name': ['WASP-12 b']}))
+    assert nea.resolve_name() is True
+    assert 'cache unavailable' in capsys.readouterr().out
+
+
+def test_planet_info_cache_fallback_preserves_candidate_classification(monkeypatch):
+    nea = NASAExoplanetArchive('TOI-3671.01')
+
+    def nasa_failure(*args, **kwargs):
+        raise requests.exceptions.ConnectionError('NASA unavailable')
+
+    monkeypatch.setattr(nea, '_new_scrape', nasa_failure)
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: DummyResponse({'params': {
+        'name': 'TIC 312345863.01', 'raDeg': 12.407583, 'decDeg': 56.00155,
+        'source': {'table': 'toi_targets'},
+    }}))
+    name, candidate, params = nea.planet_info()
+    assert name == 'TIC 312345863.01'
+    assert candidate is True
+    assert params['pName'] == name
+
+
+@pytest.mark.parametrize('name', [None, '', '  '])
+def test_resolve_name_without_name_does_not_query_entire_catalogue(monkeypatch, name):
+    nea = NASAExoplanetArchive(name)
+    monkeypatch.setattr(requests, 'get', lambda *args, **kwargs: pytest.fail('no name was supplied'))
+    monkeypatch.setattr(nea, '_tap_query', lambda *args, **kwargs: pytest.fail('no name was supplied'))
+    assert nea.resolve_name() is False
 
 
 @pytest.mark.parametrize(

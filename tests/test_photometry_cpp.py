@@ -54,12 +54,20 @@ def test_native_gaussian_fit_matches_scipy(method, widths, angle):
     y, x = np.mgrid[:31, :29]
     truth = [14.3, 15.2, 1300., *widths, angle, 72.]
     data = runtime.gaussian_psf(x, y, *truth) + np.random.default_rng(61).normal(0, 3, x.shape)
-    initial = [14., 15., data.max()-data.min(), 1., 1., 0., data.min()]
+    # A circular seed has no identifiable rotation. Platform roundoff can
+    # send SciPy and the native solver to different angle-bound minima from
+    # that start. Use a perturbed elliptical shape, as the modern production
+    # flux fit does with its measured centroid shape, to compare the solvers.
+    initial = [14., 15., data.max()-data.min(), .9*widths[0], 1.05*widths[1], angle+.1, data.min()]
     bounds = ([7., 8., 0., .5, .5, -np.pi/4, data.min()-1],
               [21., 22., 1e7, 20., 20., np.pi/4, data.max()+1])
     reference = least_squares(lambda p: (data-runtime.gaussian_psf(x, y, *p)).ravel(), initial,
                               bounds=bounds, jac=method, method='trf')
     actual = photometry_cpp.fit_gaussian(x, y, data, initial, bounds, method)
+    # Both should improve on the known feasible generating profile, rather
+    # than merely agreeing with each other at a poor local minimum.
+    generating_cost = .5*np.sum((data-runtime.gaussian_psf(x, y, *truth))**2)
+    assert max(actual.cost, reference.cost) < generating_cost
     # Near circular profiles can exchange widths/angle. Compare their actual
     # pixel models, integrated flux and residual cost instead of angle labels.
     np.testing.assert_allclose(runtime.gaussian_psf(x, y, *actual.x),

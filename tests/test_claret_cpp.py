@@ -31,7 +31,15 @@ def test_claret_contacts_and_grazing_transits(radius):
     t=np.arcsin(z/p['ars'])*p['per']/(2*np.pi)
     old=elca.transit(t,{**p,'_claret_backend':'python'})
     new=elca.transit(t,{**p,'_claret_backend':'cpp'})
-    np.testing.assert_allclose(new,old,rtol=0,atol=2.e-12,equal_nan=True)
+    np.testing.assert_allclose(new[:-1],old[:-1],rtol=0,atol=2.e-12,equal_nan=True)
+    # The last point is the double-root tangent z**2 - radius**2 == 1.
+    # Its sector endpoint contains sqrt(radius**2 - (z*sin(theta))**2).
+    # An O(eps) libm/NumPy difference inside that cancellation becomes
+    # O(sqrt(eps)) in the endpoint; Ubuntu differs by 8.2e-10 in flux.
+    # Allow that roundoff only at this tangent, keeping every other contact
+    # and the ordinary orbit/exposure comparisons at their strict tolerance.
+    np.testing.assert_allclose(new[-1:],old[-1:],rtol=0,
+                               atol=np.sqrt(np.finfo(float).eps),equal_nan=True)
 
 
 def test_claret_controls_shapes_and_invalid_exposure_preserve_reference():

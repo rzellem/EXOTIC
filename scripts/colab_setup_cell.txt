@@ -1,0 +1,122 @@
+#@title <font size=3><img src="https://exoplanets.nasa.gov/system/exotic/leftdownarrow_tall.png" height=18 hspace=8><b>Mount Google Drive and Load EXOTIC libraries</b></font>
+
+##############################################################
+%%capture step_capture --no-display
+# Comment the above statement out to see debugging information
+##############################################################
+
+##############################################################
+#
+# NOTE TO EXOTIC USER:
+#
+#   • To hide this code, double-click the title above ("Load telescope images"),
+#     or click the arrow to the left of the title.
+#
+#   • Editing this code will only affect your local instance.
+#     Reload to revert your changes.
+#
+##############################################################
+
+# Import display libraries to allow html, css, and javascript for styling and interaction
+from IPython.display import display, HTML, Javascript
+from google.colab import drive, files
+
+# Prepare user for loading of images
+display(HTML('<p class="bookend">START: Mounting Google Drive</p>'))
+display(HTML('<p style="color:red;background-color:#fee9e9;"><b>Attention: Be sure to "Permit this notebook to access your Google Drive files" if prompted.</b></p>'))
+#showProgress(1)
+
+# Mount the user's drive so we can access images
+drive.mount('/content/drive', force_remount=True)
+display(HTML('<p class="bookend">DONE: Mounting Google Drive</p>'))
+
+display(HTML('<p class="bookend">START: Importing necessary software libraries</p>'))
+display(HTML('<p class="hidden">Loading styles, please wait, this takes a few minutes...</p>'))
+
+# Install EXOTIC Colab interface code to provide styling and interaction features
+# The shared installer includes notebook prerequisites in its single pip call.
+# Download the shared, tested binary setup; no per-notebook ZIP upload.
+from urllib.request import urlretrieve
+from pathlib import Path
+import subprocess, sys
+installer_url = (
+    'https://raw.githubusercontent.com/rzellem/EXOTIC/'
+    'michael_fitzgeralds_wonderful_branch_of_magic/scripts/install_colab.py'
+)
+installer_path = Path('/content/exotic_install_colab.py')
+urlretrieve(installer_url, installer_path)
+subprocess.check_call([sys.executable, str(installer_path)])
+from importlib import metadata as package_metadata
+display(HTML(f"<p>Installed EXOTIC build: <code>{package_metadata.version('exotic')}</code></p>"))
+loaded_numpy = sys.modules.get('numpy')
+if loaded_numpy is not None and loaded_numpy.__version__ != package_metadata.version('numpy'):
+    display(HTML('<p class="attention">NumPy ' + loaded_numpy.__version__ + ' is still loaded; ' + package_metadata.version('numpy') + ' is now installed. Restart the session and rerun Step 1 to load the updated dependencies. Rerunning Step 1 retrieves the shared binary setup automatically.</p>'))
+
+# !pip install --upgrade --quiet bokeh==3.4.3
+
+from exoticcolab.display import setupDisplay, testImplementation, displayStep, makeContainer, downloadButton, appendToContainer, appendStepToContainer, expandableSection, expandableSectionCustom, hideWarning, showProgress, resize_colab_cell
+# Set up custom Colab styles and interactions
+#setupDisplay()
+# Improve how colab handles long code output fields
+get_ipython().events.register('pre_run_cell', resize_colab_cell)
+
+# Show progress
+display(HTML('<ul class="step_container_1a"></ul>'))
+appendStepToContainer('.step_container_1a','Styles loaded, importing libraries...')
+showProgress(.3)
+
+# Import graphing libraries
+appendStepToContainer('.step_container_1a','(1/5) Bokeh.io')
+
+import bokeh.io
+from bokeh.io import output_notebook
+
+# if bokeh.__version__ != "2.4.3":
+#   !pip install bokeh==2.4.3
+#   hideWarning()
+# else:
+#   showProgress(.3)
+
+# Import EXOTIC
+appendStepToContainer('.step_container_1a','(2/5) EXOTIC <span class="comment">(This will take up to a minute, please wait...)</span>')
+
+from exotic.api.colab import *
+from exotic.api.plotting import plot_image
+
+# Import other utilities
+appendStepToContainer('.step_container_1a','(3/5) NASAExoplanetArchive, Astropy, Utils')
+from exotic.exotic import NASAExoplanetArchive, get_wcs
+#from astropy.time import Time
+#from barycorrpy import utc_tdb
+#import numpy as np
+#from io import BytesIO
+#from astropy.io import fits
+#from scipy.ndimage import label
+#from bokeh.plotting import figure, output_file, show
+#from bokeh.palettes import Viridis256
+#from bokeh.models import ColorBar, LinearColorMapper, LogColorMapper, LogTicker
+#from bokeh.models import BoxZoomTool,WheelZoomTool,ResetTool,HoverTool,PanTool,FreehandDrawTool
+#from pprint import pprint
+from IPython.display import Image
+from ipywidgets import widgets, HBox
+#from skimage.transform import rescale, resize, downscale_local_mean
+#import copy
+import os
+import re
+import json
+#import subprocess
+import glob
+
+# Import matlab/stats (perhaps not necessary anymore)
+appendStepToContainer('.step_container_1a','(4/5) Matlab, SciPy')
+#import matplotlib.pyplot as plt
+#from scipy.stats import gaussian_kde
+showProgress(.3)
+
+# Import Google Utils
+appendStepToContainer('.step_container_1a','(5/5) Google Utils')
+
+
+appendStepToContainer('.step_container_1b','Drive successfully mounted')
+
+display(HTML('<p class="bookend" style="color:green"><b>DONE: Mounting Google Drive and loading libraries.  You may move on to the next step.</b></p>'))

@@ -1,0 +1,233 @@
+"""Resolve the real Colab wheels through pip without installing into this host."""
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from email.parser import BytesParser
+import json
+from pathlib import Path
+import runpy
+import subprocess
+from threading import Barrier, Lock, Thread
+from urllib.error import HTTPError
+from zipfile import ZipFile
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WHEELHOUSE = ROOT / 'wheelhouse' / 'colab'
+
+
+@pytest.fixture
+def wheel_server():
+    requests = []
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        # GitHub raw files are not served as HTML package indexes. The JSON
+        # manifest and wheel downloads must work with plain MIME types.
+        extensions_map = {'.json': 'text/plain', '.whl': 'application/octet-stream'}
+
+        def do_GET(self):
+            requests.append(self.path)
+            super().do_GET()
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(QuietHandler, directory=str(WHEELHOUSE)))
+    worker = Thread(target=server.serve_forever)
+    worker.start()
+    try:
+        yield dict(url=f'http://127.0.0.1:{server.server_port}', requests=requests)
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+
+
+def resolve_with_pip(monkeypatch, tmp_path, source, python_version='3.13'):
+    installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
+    report = tmp_path / 'pip-report.json'
+    output = []
+
+    def dry_run(command):
+        # Execute the actual install command, adding pip's foreign-runtime
+        # resolver options so Linux wheels can be tested on this Windows host.
+        # This foreign-runtime check isolates bundled distributions. The full
+        # dependency closure against Colab's base is exercised in a fresh VM.
+        command = [arg for arg in command if arg not in installer['NOTEBOOK_REQUIREMENTS']]
+        completed = subprocess.run([
+            *command, '--dry-run', '--ignore-installed', '--no-deps', '--no-index',
+            '--platform', 'manylinux_2_38_x86_64', '--platform', 'manylinux_2_28_x86_64',
+            '--platform', 'manylinux_2_24_x86_64', '--platform', 'manylinux_2_17_x86_64',
+            '--platform', 'manylinux_2_12_x86_64',
+            '--platform', 'manylinux2014_x86_64', '--implementation', 'cp',
+            '--python-version', python_version, '--abi', 'cp' + python_version.replace('.', ''),
+            '--report', str(report),
+        ], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        output.append(completed.stdout)
+        completed.check_returncode()
+
+    monkeypatch.setattr(installer['subprocess'], 'check_call', dry_run)
+    installer['install_prebuilt'](source)
+    return json.loads(report.read_text(encoding='utf-8')), ''.join(output)
+
+
+@pytest.mark.parametrize('remote', [False, True], ids=['local-directory', 'automatic-download'])
+def test_real_colab_wheels_resolve_without_source_builds(monkeypatch, tmp_path, wheel_server, remote):
+    source = wheel_server['url'] if remote else WHEELHOUSE
+    report, output = resolve_with_pip(monkeypatch, tmp_path, source)
+    installed = {canonicalize_name(item['metadata']['name']): item for item in report['install']}
+    expected = {canonicalize_name(Requirement(pin).name) for pin in
+                json.loads((WHEELHOUSE / 'index.json').read_text())['requirements']}
+    assert set(installed) == expected
+    assert len(installed) == 22
+    assert installed['ultranest']['metadata']['version'] == '4.6.3'
+    assert all(item['download_info']['url'].endswith('.whl') for item in installed.values())
+    assert 'Building wheel' not in output
+    if remote:
+        assert '/index.json' in wheel_server['requests']
+        assert all('/' + wheel.name in wheel_server['requests']
+                   for wheel in WHEELHOUSE.glob('*.whl'))
+
+
+def test_incompatible_python_does_not_start_a_source_build(monkeypatch, tmp_path, wheel_server):
+    # The bundled CPython 3.13 extensions cannot be loaded by CPython 3.14.
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        resolve_with_pip(monkeypatch, tmp_path, wheel_server['url'], python_version='3.14')
+    assert '-cp313-cp313-' in failure.value.output
+    assert 'not a supported wheel on this platform' in failure.value.output
+    assert 'Building wheel' not in failure.value.output
+
+
+def test_missing_download_is_reported_without_a_source_retry(monkeypatch, tmp_path, wheel_server):
+    with pytest.raises(HTTPError, match='404'):
+        resolve_with_pip(monkeypatch, tmp_path, wheel_server['url'] + '/not-published')
+    assert not (tmp_path / 'pip-report.json').exists()
+
+
+def test_new_build_index_does_not_advertise_previous_builds(tmp_path):
+    builder = runpy.run_path(str(ROOT / 'scripts' / 'build_colab_wheels.py'))
+    current = list(WHEELHOUSE.glob('*.whl'))
+    stale = tmp_path / 'exotic-99.0-py3-none-any.whl'
+    stale.touch()
+    builder['write_colab_manifest'](tmp_path, current)
+    index = (tmp_path / 'index.json').read_text(encoding='utf-8')
+    requirements = (tmp_path / 'requirements.txt').read_text(encoding='utf-8')
+    assert stale.name not in index
+    assert 'exotic==99.0' not in requirements
+    assert all(wheel.name in index for wheel in current)
+    assert 'ultranest==4.6.3' in requirements
+
+
+def test_bundled_exotic_accepts_colabs_numpy_version():
+    manifest = json.loads((WHEELHOUSE / 'index.json').read_text(encoding='utf-8'))
+    wheel = next(name for name in manifest['wheels'] if name.startswith('exotic-'))
+    with ZipFile(WHEELHOUSE / wheel) as archive:
+        metadata_path = next(name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))
+        metadata = BytesParser().parsebytes(archive.read(metadata_path))
+    numpy_requirement = next(Requirement(value) for value in metadata.get_all('Requires-Dist')
+                             if Requirement(value).name == 'numpy')
+    assert '2.4.6' in numpy_requirement.specifier
+    assert metadata['Version'] in '\n'.join(manifest['requirements'])
+
+
+def test_bundled_reference_needs_no_external_pylightcurve():
+    manifest = json.loads((WHEELHOUSE / 'index.json').read_text(encoding='utf-8'))
+    wheel = next(name for name in manifest['wheels'] if name.startswith('exotic-'))
+    with ZipFile(WHEELHOUSE / wheel) as archive:
+        assert 'exotic/api/transit_reference.py' in archive.namelist()
+        assert 'exotic/api/_reference_quadrature.py' in archive.namelist()
+        metadata = BytesParser().parsebytes(archive.read(next(
+            name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))))
+    requirement = next(Requirement(value) for value in metadata.get_all('Requires-Dist')
+                       if Requirement(value).name == 'pylightcurve')
+    assert requirement.marker is not None
+    assert not requirement.marker.evaluate({'extra': ''})
+    assert requirement.marker.evaluate({'extra': 'exotethys'})
+
+
+def test_installer_retains_compatible_colab_packages(monkeypatch):
+    installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
+    runtime = dict(numpy='2.4.6', requests='2.32.4', numba='0.64.0', bokeh='3.8.2',
+                   scipy='1.16.3', astropy='7.2.3', matplotlib='3.10.0',
+                   **{'scikit-image': '0.25.2'})
+    monkeypatch.setitem(installer['compatible_runtime_versions'].__globals__, 'version', runtime.__getitem__)
+    commands = []
+    constraints = []
+
+    def capture(command):
+        commands.append(command)
+        constraints.extend(Path(command[command.index('--constraint') + 1]).read_text().splitlines())
+
+    monkeypatch.setattr(installer['subprocess'], 'check_call', capture)
+    timings = installer['install_prebuilt'](WHEELHOUSE)
+    assert set(constraints) == {f'{name}=={value}' for name, value in runtime.items()}
+    assert timings['retained_runtime_packages'] == runtime
+    assert timings['total_seconds'] >= timings['pip_seconds'] >= 0
+    assert len(commands) == 1
+
+
+def test_installer_allows_needed_upgrades_and_missing_dependencies(monkeypatch):
+    installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
+
+    def installed(name):
+        if name == 'bokeh':
+            raise installer['PackageNotFoundError'](name)
+        return dict(numpy='2.4.6', requests='2.31.0', numba='0.63.0', scipy='1.15.2',
+                    astropy='6.1.7', matplotlib='3.9.4', **{'scikit-image': '0.24.0'})[name]
+
+    monkeypatch.setitem(installer['compatible_runtime_versions'].__globals__, 'version', installed)
+    manifest = json.loads((WHEELHOUSE / 'index.json').read_text())
+    wheel = WHEELHOUSE / next(name for name in manifest['wheels'] if name.startswith('exotic-'))
+    # "Where possible" must not pin versions that fail the wheel's own requirements.
+    assert installer['compatible_runtime_versions'](wheel) == {'numpy': '2.4.6'}
+
+
+def test_notebook_delegates_all_packages_to_single_installer(monkeypatch):
+    source = (ROOT / 'scripts' / 'colab_setup_cell.txt').read_text()
+    pip_lines = [line for line in source.splitlines() if line.startswith('!pip install')]
+    assert pip_lines == []
+    installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
+    commands = []
+    monkeypatch.setattr(installer['subprocess'], 'check_call', commands.append)
+    installer['install_prebuilt'](WHEELHOUSE)
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[:4] == [installer['sys'].executable, '-m', 'pip', 'install']
+    assert '--no-index' in command
+    assert '--no-compile' in command
+    assert '--no-deps' not in command
+    assert 'jedi' in command and 'importlib-metadata' in command
+    assert '--upgrade' not in command
+    assert '--only-binary=' + ','.join(Requirement(pin).name for pin in
+        json.loads((WHEELHOUSE / 'index.json').read_text())['requirements']) in command
+    assert all(str(WHEELHOUSE.resolve() / wheel.name) in command for wheel in WHEELHOUSE.glob('*.whl'))
+
+
+def test_wheels_download_concurrently_and_keep_manifest_order(monkeypatch, tmp_path):
+    installer = runpy.run_path(str(ROOT / 'scripts' / 'install_colab.py'))
+    rendezvous = Barrier(2, timeout=5)
+    lock = Lock()
+    active = 0
+    peak = 0
+
+    def retrieve(_url, destination):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        rendezvous.wait()
+        destination.write_bytes(b'wheel payload')
+        with lock:
+            active -= 1
+
+    monkeypatch.setitem(installer['download_wheels'].__globals__, 'urlretrieve', retrieve)
+    names = [f'package{i}.whl' for i in range(8)]
+    results = installer['download_wheels']('https://packages.example', tmp_path, names)
+    assert peak >= 2
+    assert [item['wheel'] for item in results] == names
+    assert all(item['bytes'] == len(b'wheel payload') for item in results)
+    assert all((tmp_path / name).exists() for name in names)

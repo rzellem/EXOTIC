@@ -6,7 +6,7 @@ from astropy import constants as const
 import matplotlib.pyplot as plt
 from exotic.api.rv_fitter import rv_fitter
 from exotic.api.joint_fitter import joint_fitter
-from pylightcurve.models.exoplanet_lc import eclipse_mid_time
+from exotic.api.transit_reference import eclipse_mid_time
 
 Mjup = const.M_jup.to(u.kg).value
 Msun = const.M_sun.to(u.kg).value
@@ -252,7 +252,7 @@ if __name__ == "__main__":
     plt.close()
 
     for key in myfit.errors:
-        print(f"{key} & {myfit.parameters[key]:.5f} $\pm$ {myfit.errors[key]:.5f}")
+        print(f"{key} & {myfit.parameters[key]:.5f} $\\pm$ {myfit.errors[key]:.5f}")
 
     for i, data in enumerate(myfit.rv_data):
         print(f"Inflated RV uncertainties for {data['name']} by {data['diff']:2f} m/s")

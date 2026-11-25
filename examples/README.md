@@ -61,10 +61,6 @@ The notebooks above are also compatible with TESS data! Just don't include an `a
 
 ![](joint_rv_transit/joint_posterior.png)
 
-## [Joint Fit of Transit Photometry, Radial Velocity, and Ephemeris data (transit/eclipse times)](joint_rv_transit/joint_fit.py)
-
-![](joint_rv_transit/joint_posterior.png)
-
 ## [for_exotic_py_candidate_inits_maker.py](tess/candidates/for_exotic_py_candidate_inits_maker.py)
 
 This script automates and enhances the process of generating initialization (inits) JSON files for candidate exoplanets specifically for use with exotic.py. It streamlines the preparation of inits files by interacting with the ExoFOP database and organizing the output data for easy integration with the EXOTIC pipeline.
@@ -78,12 +74,12 @@ Directory Management: Organizes the storage of output files by dynamically creat
 File Location:
 /EXOTIC/examples/tess/candidates/
 The generated output files will be located in:
-/EXOTIC/examples/tess/candidates/output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_file/{candidate_designation}_inits.json
+/EXOTIC/examples/tess/candidates/output_inits_files/for_exotic_py_candidate_inits_output_files/{tic_id}_files/{candidate_designation}_inits.json
 
 
 ## [for_toi_py_candidate_inits_maker.py](tess/candidates/for_toi_py_candidate_inits_maker.py)
 
-This script enhances the generation of initialization (inits) JSON files specifically for use with toi.py and toi_indiv_lc.py. It automates the process by interacting with ExoFOP, organizing the output data, and streamlining the preparation of inits files.
+This script enhances the generation of initialization (inits) JSON files specifically for use with toi.py and toi_individ_lc.py. It automates the process by interacting with ExoFOP, organizing the output data, and streamlining the preparation of inits files.
 
 Key Features:
 
@@ -93,7 +89,7 @@ Directory Management: Dynamically organizes output files for each TIC ID and can
 File Location:
 
 The generated output files will be located in:
-/EXOTIC/examples/tess/candidates/output_inits_files/for_toi_py_candidate_inits_output_files/{tic_id}_file/{candidate_designation}_inits.json
+/EXOTIC/examples/tess/candidates/output_inits_files/for_toi_py_candidate_inits_output_files/{tic_id}_files/{candidate_designation}_inits.json
 TESS Light Curve Analysis
 
 
@@ -116,8 +112,8 @@ python toi.py -i <input_inits_file_path> -o <output_directory_path>
 
 
 
-## [toi_indiv_lc.py](tess/candidates/toi_indiv_lc.py)
-This script is used to process and analyze TESS light curve data for candidate exoplanets. Unlike toi.py, which performs a global fit, toi_indiv_lc.py focuses on fitting individual light curves using the priors from an existing initialization file.
+## [toi_individ_lc.py](tess/candidates/toi_individ_lc.py)
+This script is used to process and analyze TESS light curve data for candidate exoplanets. Unlike toi.py, which performs a global fit, toi_individ_lc.py focuses on fitting individual light curves using the priors from an existing initialization file.
 
 Key Features:
 
@@ -130,10 +126,10 @@ To run the script:
 Navigate to the directory containing the script:
 cd /EXOTIC/examples/tess/candidates
 Run the script with the following command:
-python toi_indiv_lc.py -i <input_inits_file_path> -o <output_directory_path>
+python toi_individ_lc.py -i <input_inits_file_path> -o <output_directory_path>
 Example:
 
-python toi_indiv_lc.py -i input_inits.json -o output_results/
+python toi_individ_lc.py -i input_inits.json -o output_results/
 
 
 

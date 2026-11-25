@@ -39,22 +39,27 @@ from astropy import constants as const
 from astropy import units as u
 from copy import deepcopy
 from itertools import cycle
+import os
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
-from pylightcurve.models.exoplanet_lc import eclipse_mid_time, transit_flux_drop
 from scipy import stats
-try:
-    from ultranest import ReactiveNestedSampler
-except ImportError:
-    import dynesty
-    import dynesty.plotting
-    from dynesty.utils import resample_equal
-    from scipy.stats import gaussian_kde
+from ultranest import ReactiveNestedSampler
 
 try:
     from elca import glc_fitter, lc_fitter
 except ImportError:
     from .elca import glc_fitter, lc_fitter
+
+try:
+    from ultranest_utils import run_reactive_sampler
+except ImportError:
+    from .ultranest_utils import run_reactive_sampler
+
+try:
+    from .transit_reference import eclipse_mid_time, transit as _reference_transit
+except ImportError:
+    from transit_reference import eclipse_mid_time, transit as _reference_transit
 
 AU = const.au.to(u.m).value
 Mjup = const.M_jup.to(u.kg).value
@@ -111,15 +116,8 @@ def planet_orbit(period, sma_over_rs, eccentricity, inclination, periastron, mid
 
 def pytransit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity, inclination, periastron,
             mid_time, time_array, method='claret', precision=3):
-
-    position_vector = planet_orbit(period, sma_over_rs, eccentricity, inclination, periastron, mid_time, time_array)
-
-    projected_distance = np.where(
-        position_vector[0] < 0, 1.0 + 5.0 * rp_over_rs,
-        np.sqrt(position_vector[1] * position_vector[1] + position_vector[2] * position_vector[2]))
-
-    return transit_flux_drop(limb_darkening_coefficients, rp_over_rs, projected_distance,
-                             method=method, precision=precision)
+    return _reference_transit(limb_darkening_coefficients, rp_over_rs, period, sma_over_rs, eccentricity,
+                                 inclination, periastron, mid_time, time_array, method=method, precision=precision)
 
 def transit(times, values):
     model = pytransit([values['u0'], values['u1'], values['u2'], values['u3']], 
@@ -127,9 +125,6 @@ def transit(times, values):
                     values['ecc'], values['inc'], values['omega'],
                     values['tmid'], times, method='claret', precision=3)
     return model
-
-from pylightcurve.models.exoplanet_lc import transit as pytransit
-from pylightcurve.models.exoplanet_lc import eclipse_mid_time
 
 def eclipse(times, values):
     tme = eclipse_mid_time(values['per'], values['ars'], values['ecc'], values['inc'], values['omega'], values['tmid'])
@@ -421,10 +416,12 @@ class joint_fitter(glc_fitter):
             for k in lfreekeys[n]:
                 freekeys.append(f"local_{n}_{k}")
 
-        if self.verbose:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=2e5)
-        else:
-            self.results = ReactiveNestedSampler(freekeys, loglike, prior_transform).run(max_ncalls=2e5, show_status=self.verbose, viz_callback=self.verbose)
+        sampler = ReactiveNestedSampler(freekeys, loglike, prior_transform)
+        self.results = run_reactive_sampler(
+            sampler,
+            run_kwargs={"max_ncalls": int(2e5)},
+            verbose=self.verbose,
+        )
 
         try:
             self.parameters = deepcopy(self.lc_data[0]['priors'])

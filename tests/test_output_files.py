@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from exotic import output_files
 from exotic.output_files import (
     AREA_DEPTH_LABEL,
     OBSERVABLE_DEPTH_DELTA_LABEL,
@@ -1182,6 +1183,37 @@ def test_aid_output_floors_reported_magnitude_errors(tmp_path):
 
     assert metadata["apparent_magnitude_error"] == pytest.approx(0.001)
     assert "HAT-P-32,2450000.12345,12.3400,0.0010,V,NO,STD" in output_text
+
+
+@pytest.mark.parametrize("writer_method", ["aavso", "combined_aavso"])
+@pytest.mark.parametrize(
+    "version, expected_version",
+    [
+        ("4.3.2.dev221+ge8a5e9d30", "4.3.2.dev221+ge8a5e9d30"),
+        ("4.3.2+" + "a" * 66, "4.3.2+" + "a" * 66),
+        ("4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps.scipy116.colabstack",
+         "4.3.2.dev204+g94ec4bc6b.d20261121"),
+        ("4.3.2.dev204+g94ec4bc6b.numpy24", "4.3.2.dev204+g94ec4bc6b"),
+        ("4.3.2+" + "a" * 67, "4.3.2+" + "a" * 66),
+    ],
+    ids=["short-build", "at-limit", "reported-build", "short-wheel-annotation", "long-local-segment"],
+)
+def test_aid_output_respects_software_field_limit(
+    tmp_path, monkeypatch, writer_method, version, expected_version,
+):
+    monkeypatch.setattr(output_files, "__version__", version)
+    writer = AIDOutputFiles(
+        fit=None,
+        p_dict={"sName": "Target"},
+        i_dict={"save": str(tmp_path), "date": "2021-11-26", "aavso_num": "RTZ", "camera": "CCD"},
+        auid=None,
+        chart_id=None,
+        vsp_params=[],
+    )
+    lines = getattr(writer, writer_method)().read_text(encoding="utf-8").splitlines()
+    software_values = [line.removeprefix("#SOFTWARE=") for line in lines if line.startswith("#SOFTWARE=")]
+    assert software_values == [f"EXOTIC v{expected_version}"]
+    assert len(software_values[0]) <= 80
 
 
 @pytest.mark.parametrize("writer_method", ["aavso", "combined_aavso"])

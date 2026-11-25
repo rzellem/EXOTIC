@@ -1,11 +1,15 @@
 # Prebuilt Colab software
 
-These are the EXOTIC, UltraNest and notebook-display wheels validated in the
-Colab CPU runtime on 22 November 2026. The complete set supports CPython 3.13,
-Linux x86_64 and glibc 2.38 or newer. EXOTIC's ctypes library uses native ABI 6
-and has no Python C ABI dependency; UltraNest's extension uses CPython 3.13.
-The package versions and wheel filenames are recorded in `requirements.txt`
-and `index.json`. The original wheel license files are preserved.
+The wheelhouse pins a build of EXOTIC and the dependency set validated in the
+Colab CPU runtime on 22 November 2026. The validation results below describe
+that November 22 setup. The current EXOTIC source revision is in the wheel's
+version, recorded with the dependency versions and filenames in
+`requirements.txt` and `index.json`.
+
+The complete set supports CPython 3.13, Linux x86_64 and glibc 2.38 or newer.
+EXOTIC's ctypes library uses native ABI 6 and has no Python C ABI dependency.
+UltraNest's extension uses CPython 3.13. The original wheel license files are
+preserved.
 
 The current manifest includes 22 wheels: the three EXOTIC/UltraNest/display
 packages, pure Python imreg-dft 2.0.0, and trimmed upstream Astroquery 0.4.11,

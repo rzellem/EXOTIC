@@ -7,7 +7,7 @@ bottleneck==1.6.1
 colour-demosaicing==0.2.7
 colour-science==0.4.7
 corner==2.3.0
-exotic==4.3.2.dev204+g94ec4bc6b.d20261121.numpy24.localmath.colabdeps.scipy116.colabstack
+exotic==4.3.2.dev221+ge8a5e9d30.d20261125
 exoticcolab==0.1.dev71+gef0aa1741
 imreg-dft==2.0.0
 jedi==0.20.1

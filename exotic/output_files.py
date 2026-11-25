@@ -1,5 +1,6 @@
 from json import dump, dumps
 import logging
+import re
 import shutil
 from numpy import mean, std
 from pathlib import Path
@@ -130,6 +131,7 @@ AAVSO_FINDER_STRETCH_NAMES = (
     'SqrtStretch',
     'LogStretch',
 )
+AID_SOFTWARE_MAX_LENGTH = 80
 
 
 def copy_aavso_supporting_artifacts(save, target_name, observation_date):
@@ -3744,11 +3746,16 @@ class AIDOutputFiles:
             indexed=use_row_names,
         )
         default_variable_name = self.auid or self.p_dict.get('sName') or self.p_dict.get('pName')
+        # Keep the setuptools-scm revision and date without wheel annotations.
+        source_version = re.match(r"[^+]+\+g[0-9a-f]+(?:\.d[0-9]{8})?(?=\.|$)", __version__)
+        version_label = source_version.group() if source_version else __version__
+        # WebObs caps the SOFTWARE value at 80 characters.
+        software = f"EXOTIC v{version_label}"[:AID_SOFTWARE_MAX_LENGTH]
 
         with params_file.open('w', encoding="utf-8") as f:
             f.write("#TYPE=EXTENDED\n"  # fixed
                     f"#OBSCODE={self.i_dict['aavso_num']}\n"  # UI
-                    f"#SOFTWARE=EXOTIC v{__version__}\n"  # fixed
+                    f"#SOFTWARE={software}\n"
                     "#DELIM=,\n"  # fixed
                     "#DATE=JD\n"  # AAVSO AID requires geocentric Julian Date
                     f"#OBSDATE={format_aavso_header_value(self.i_dict.get('date'))}\n"

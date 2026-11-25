@@ -47,6 +47,7 @@ installer_path = Path('/content/exotic_install_colab.py')
 urlretrieve(installer_url, installer_path)
 subprocess.check_call([sys.executable, str(installer_path)])
 from importlib import metadata as package_metadata
+display(HTML(f"<p>Installed EXOTIC build: <code>{package_metadata.version('exotic')}</code></p>"))
 loaded_numpy = sys.modules.get('numpy')
 if loaded_numpy is not None and loaded_numpy.__version__ != package_metadata.version('numpy'):
     display(HTML('<p class="attention">NumPy ' + loaded_numpy.__version__ + ' is still loaded; ' + package_metadata.version('numpy') + ' is now installed. Restart the session and rerun Step 1 to load the updated dependencies. Rerunning Step 1 retrieves the shared binary setup automatically.</p>'))

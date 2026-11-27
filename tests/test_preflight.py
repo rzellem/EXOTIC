@@ -19,6 +19,7 @@ from exotic.api.preflight import (
     PreflightReport,
     check_comparison_stars,
     check_target_pixel,
+    check_transit_geometry,
     check_transit_window,
     compare_archive_parameters,
     predicted_mid_transit,
@@ -72,6 +73,31 @@ def test_missing_inits_value_fails():
 # MicroObservatory WASP-11 b night of 2026-09-05: 07:42-12:21 UT, Tmid 09:59:56 UT.
 NIGHT_START, NIGHT_END = 2461288.8211, 2461289.0146
 DURATION_DAYS = 2.6 / 24.0
+
+
+# --- transit geometry -------------------------------------------------------
+
+def test_transiting_geometry_passes():
+    report = check_transit_geometry(dict(WASP11), PreflightReport())
+    assert report.ok and statuses(report)['given geometry transits'] == PASS
+
+
+def test_non_transiting_geometry_fails():
+    # WASP-53 b, 2026-09-15: a/Rs 11.78 and inc 83.40 put b at 1.35, above 1 + Rp/Rs.
+    report = check_transit_geometry(dict(WASP11, rprs=0.146, aRs=11.78, inc=83.40), PreflightReport())
+    assert report.failures == ['given geometry transits']
+    assert 'b = a/Rs cos(i) = 1.35' in report.checks[0][2]
+
+
+def test_grazing_geometry_is_flagged_not_failed():
+    mine = dict(WASP11, aRs=10.0, inc=85.0)  # b = 0.87 with Rp/Rs 0.14: crosses the limb
+    report = check_transit_geometry(mine, PreflightReport())
+    assert report.ok and statuses(report)['given geometry transits'] == LOOK
+
+
+def test_missing_geometry_is_skipped():
+    report = check_transit_geometry(dict(WASP11, inc=None), PreflightReport())
+    assert report.ok and statuses(report)['given geometry transits'] == SKIP
 
 
 def test_predicted_epoch_is_the_one_nearest_the_window():

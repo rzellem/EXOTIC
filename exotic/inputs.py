@@ -1130,7 +1130,8 @@ def check_imaging_files(directory, img_type, exclude_calibration_masters=False):
                 directory = user_input(f"Enter the directory path where {img_type} files are located "
                                        f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
         except (NotADirectoryError, OSError):
-            log_info("\nError: No such directory exists when searching for FITS files. Please try again.", error=True)
+            log_info(f"\nError: Cannot use {str(directory)!r} as the {img_type} FITS directory. Please try again.",
+                     error=True)
             directory = user_input(f"Enter the directory path where {img_type} files are located "
                                    f"(Example using the sample data: sample-data/HatP32Dec202017): ", type_=str)
 
@@ -1155,8 +1156,8 @@ def save_directory(directory):
                     raise NotADirectoryError
             return directory
         except (NotADirectoryError, OSError):
-            log_info("Error: The directory entered does not exist. Please try again. Make sure to follow this "
-                     "\nformatting (using whichever directory you choose): /sample-data/results", error=True)
+            log_info(f"Error: Cannot use {str(directory)!r} as the results directory. Please try again. "
+                     "\nExample: /sample-data/results", error=True)
             directory = None
 
 

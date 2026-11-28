@@ -15828,9 +15828,9 @@ def image_timestamp_solution(hdr, p_dict, info_dict):
         date = next((row for row in rows if row['source'] == 'DATE-OBS/DATE-END'), None)
         mjd = next((row for row in rows if row['source'] == 'MJD-OBS/DATE-END'), None)
         if date is None:
-            date = next((row for row in rows if row['source'].startswith('DATE-OBS+EXPTIME')), None)
+            date = next((row for row in rows if row['source'].startswith(('DATE-OBS+EXPTIME', 'DATE-OBS-EXPTIME'))), None)
         if mjd is None:
-            mjd = next((row for row in rows if row['source'].startswith('MJD-OBS+EXPTIME')), None)
+            mjd = next((row for row in rows if row['source'].startswith(('MJD-OBS+EXPTIME', 'MJD-OBS-EXPTIME'))), None)
         if date and mjd:
             if date['frame'] == 'BJD' and mjd['frame'] == 'BJD':
                 converted = [date['_instant'].tdb.jd, mjd['_instant'].tdb.jd]

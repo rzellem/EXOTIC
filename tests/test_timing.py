@@ -10,6 +10,8 @@ from exotic.timing import (select_exposure_timestamp, public_timestamp_selection
 
 iers.conf.auto_download = False
 
+DATE_OBS_TIMESTAMP = '2026-01-03T01:42:44.309'
+
 
 def test_precise_start_end_outweigh_rounded_mjd():
     hdr = fits.Header({'DATE-OBS': '2021-06-11T20:25:45.449-0700',
@@ -52,6 +54,81 @@ def test_end_only_timestamp_remains_usable():
     assert row['_instant'].utc.isot=='2021-06-12T03:00:00.123'
 
 
+@pytest.mark.parametrize('key,value,comment,expected_role,expected_time', [
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Time end of exposure', 'end_exposure_mid', '01:42:39.309'),
+    ('DATE-UTC', DATE_OBS_TIMESTAMP, 'Time END OF exposure', 'end_exposure_mid', '01:42:39.309'),
+    ('UT-OBS', DATE_OBS_TIMESTAMP, 'Time end of exposure', 'end_exposure_mid', '01:42:39.309'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Begin exposure (end of prior exposure)', 'start_exposure_mid', '01:42:49.309'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'end of night', 'start_exposure_mid', '01:42:49.309'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Weekend of observation', 'start_exposure_mid', '01:42:49.309'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Time at end of exposure after restart', 'end_exposure_mid', '01:42:39.309'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Start or end of exposure', 'start_exposure_mid', '01:42:49.309'),
+    ('DATE-OBS', '2026-01-03T03:00:00.000', 'Time at END OF THE EXPOSURE', 'end_exposure_mid', '02:59:55.000'),
+    ('JD', 2461043.625, 'End of integration', 'end_exposure_mid', '02:59:55.000'),
+    ('JULIAN', 2461043.625, 'Exposure end', 'end_exposure_mid', '02:59:55.000'),
+    ('MJD-OBS', 61043.125, 'Time end of exposure', 'end_exposure_mid', '02:59:55.000'),
+    ('MJD', 61043.125, 'End-of-exposure', 'end_exposure_mid', '02:59:55.000'),
+])
+def test_date_comment_identifies_exposure_moment(key, value, comment, expected_role, expected_time):
+    hdr = fits.Header([(key, value, comment), ('EXPTIME', 10)])
+    row = select_exposure_timestamp(hdr, 10)['selected']
+    assert row['_instant'].utc.isot == f'2026-01-03T{expected_time}', comment
+    assert row['role'] == expected_role
+
+
+@pytest.mark.parametrize('key,value,comment,role', [
+    ('DATE-BEG', DATE_OBS_TIMESTAMP, 'Time end of exposure', 'start_exposure_mid'),
+    ('DATE-END', DATE_OBS_TIMESTAMP, 'start of something', 'end_exposure_mid'),
+    ('DATE-AVG', DATE_OBS_TIMESTAMP, 'Time end of exposure', 'mid'),
+    ('DATE-MID', DATE_OBS_TIMESTAMP, 'Time end of exposure', 'mid'),
+    ('END-OBS', DATE_OBS_TIMESTAMP, 'start of something', 'end_exposure_mid'),
+    ('JD-MID', 2459377.5, 'Time end of exposure', 'mid'),
+    ('JD-START', 2459377.5, 'Time end of exposure', 'start_exposure_mid'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'UTC start date of observation', 'start_exposure_mid'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Image created at beginning of exposure', 'start_exposure_mid'),
+    ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Time end of exposure', 'end_exposure_mid'),
+])
+def test_fixed_or_explicit_timestamp_role_has_no_start_assumption(key, value, comment, role):
+    hdr = fits.Header([(key, value, comment), ('EXPTIME', 10)])
+    result = select_exposure_timestamp(hdr, 10)
+    assert result['selected']['role'] == role
+    assert result['issues'] == []
+
+
+def test_date_obs_end_comment_does_not_pair_with_rounded_mjd_obs():
+    hdr = fits.Header([('MJD-OBS', 61043.0713461),
+                       ('DATE-OBS', DATE_OBS_TIMESTAMP, 'Time end of exposure'),
+                       ('EXPTIME', 10)])
+    result = select_exposure_timestamp(hdr, 10)
+    row = result['selected']
+    assert row['_instant'].utc.isot == '2026-01-03T01:42:39.309'
+    assert row['role'] == 'end_exposure_mid'
+    assert all(candidate['role'] != 'start_end_mid' for candidate in result['candidates'])
+
+
+@pytest.mark.parametrize('key,comment,reason', [
+    ('DATE-OBS', 'Image created time', 'created'),
+    ('DATE-OBS', 'File creation time', 'creat'),
+    ('DATE-OBS', 'Image created when exposure begins', 'created'),
+    ('DATE-OBS', 'YYYY-MM-DDThh:mm:ss observation, UT', 'recognized exposure moment'),
+    ('DATE-UTC', 'Image CREATED time', 'created'),
+    ('UT-OBS', None, 'recognized exposure moment'),
+])
+def test_generic_date_records_start_assumption(key, comment, reason):
+    hdr = fits.Header([(key, DATE_OBS_TIMESTAMP, comment), ('EXPTIME', 10)])
+    result = select_exposure_timestamp(hdr, 10)
+    row = result['selected']
+    assert row['role'] == 'start_exposure_mid'
+    assert row['_instant'].utc.isot == '2026-01-03T01:42:49.309'
+    assert row['value'] == DATE_OBS_TIMESTAMP
+    issue, = result['issues']
+    assert issue['source'] == key
+    assert issue['status'] == 'assumed'
+    assert reason in issue['reason'], issue['reason']
+    assert issue['assumption'] == 'Existing start-of-exposure convention retained.'
+    assert json.loads(json.dumps(public_timestamp_selection(result)))['issues'] == result['issues']
+
+
 def test_timepixr_midpoint_uses_no_half_exposure_offset():
     hdr = fits.Header({'DATE-OBS': '2021-06-12T03:00:00.123456', 'TIMEPIXR': .5, 'EXPTIME': 30.0})
     result = select_exposure_timestamp(hdr, 30)['selected']
@@ -83,6 +160,28 @@ def test_barycentric_start_comment_gets_exposure_midpoint_offset():
     row=select_exposure_timestamp(hdr,60)['selected']
     assert row['frame']=='BJD'
     assert (row['_instant'].tdb.jd-hdr['BJD_TDB'])*86400==pytest.approx(30,abs=.0001)
+
+
+@pytest.mark.parametrize('comment,role,offset_seconds', [
+    ('BJD_TDB at end of observation', 'end_exposure_mid', -30),
+    ('Barycentric time at exposure starting', 'start_exposure_mid', 30),
+])
+def test_barycentric_comment_preserves_base_exposure_role(comment, role, offset_seconds):
+    hdr = fits.Header([('BJD_TDB', 2459377.7, comment), ('EXPTIME', 60)])
+    result = select_exposure_timestamp(hdr, 60)
+    row = result['selected']
+    assert row['role'] == role
+    assert (row['_instant'].tdb.jd-hdr['BJD_TDB'])*86400 == pytest.approx(offset_seconds, abs=.0001)
+    assert result['issues'] == []
+
+
+def test_barycentric_start_and_end_comments_still_pair():
+    start = 2459377.6000011574
+    hdr = fits.Header([('BJD_TDB', start, 'Barycentric time at exposure start'),
+                       ('BJD-TDB', start+60/86400, 'BJD_TDB at end of observation'), ('EXPTIME', 50)])
+    row = select_exposure_timestamp(hdr, 50)['selected']
+    assert row['role'] == 'start_end_mid'
+    assert (row['_instant'].tdb.jd-start)*86400 == pytest.approx(30, abs=.001)
 
 
 def test_verified_raw_timestamp_preferred_to_ambiguous_bjd():
@@ -261,3 +360,20 @@ def test_reported_timestamp_summary_names_report_without_local_folder(tmp_path):
 
     assert timing['image_timestamps'] == {'report_path': 'TimestampSelection.json', 'frame_count': 6}
     assert info['timestamp_selection_summary']['report_path'] == str(report)
+
+
+def test_equal_exposure_endpoints_do_not_pair():
+    hdr = fits.Header({'MJD-OBS': 61043.125, 'DATE-END': '2026-01-03T03:00:00.000', 'EXPTIME': 10})
+    rows = select_exposure_timestamp(hdr, 10)['candidates']
+    assert {row['role'] for row in rows} == {'start_exposure_mid', 'end_exposure_mid'}
+
+
+@pytest.mark.parametrize('comment,source,midpoint', [
+    (None, 'UT-OBS+EXPTIME*(0.5-TIMEPIXR)', '2026-01-03T01:42:49.309'),
+    ('Time end of exposure', 'UT-OBS-EXPTIME/2', '2026-01-03T01:42:39.309'),
+])
+def test_ut_obs_uses_calendar_date_without_a_second_candidate(comment, source, midpoint):
+    hdr = fits.Header([('DATE-OBS', '2026-01-03'), ('UT-OBS', '01:42:44.309', comment), ('EXPTIME', 10)])
+    row, = select_exposure_timestamp(hdr, 10)['candidates']
+    assert row['source'] == source
+    assert row['_instant'].utc.isot == midpoint

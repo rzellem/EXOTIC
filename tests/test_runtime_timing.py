@@ -1,6 +1,7 @@
 from datetime import datetime
 
 import pytest
+from astropy.io import fits
 
 from exotic import exotic as exotic_module
 
@@ -27,3 +28,11 @@ def test_reduction_stage_timer_logs_step_and_total_elapsed_seconds(monkeypatch):
         "STEP TIMING | first stage | elapsed_s=2.50 | total_s=2.50",
         "STEP TIMING | second stage | elapsed_s=6.50 | total_s=9.00",
     ]
+
+
+def test_end_commented_date_obs_keeps_mjd_obs_comparison():
+    hdr = fits.Header([('TIMEREF', 'SOLARSYSTEM'),
+                       ('DATE-OBS', '2026-01-03T01:42:44.309', 'Time end of exposure'),
+                       ('MJD-OBS', 61043.0713461), ('EXPTIME', 10)])
+    _, _, diagnostic = exotic_module.image_timestamp_solution(hdr, {}, {})
+    assert diagnostic['mjd_date_comparison']['date_obs_source'] == 'DATE-OBS-EXPTIME/2'

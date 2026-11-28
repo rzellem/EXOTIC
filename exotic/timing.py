@@ -209,6 +209,24 @@ def _date_candidate(header, key, scale):
     return instant, precision
 
 
+def _timestamp_comment_role(header, key, role, *, barycentric):
+    try:
+        comment = str(header.comments[key]).lower()
+    except (AttributeError, KeyError):
+        comment = ''
+    if barycentric:
+        if 'start' in comment or 'begin' in comment:
+            return 'start', None
+        return ('end' if 'end of' in comment else role), None
+    if re.search(r'\b(?:start|begin|beginning)\b', comment):
+        return 'start', None
+    if re.search(r'\b(?:end of (?:the )?exposure|end of integration|exposure end|end-of-exposure)\b', comment):
+        return 'end', None
+    if re.search(r'\b(?:created|creation)\b', comment):
+        return role, 'The comment says when the image was created.'
+    return role, 'The comment does not specify a recognized exposure moment.'
+
+
 def select_exposure_timestamp(header, exposure_seconds):
     """Rank all usable midpoint representations by stored precision.
 
@@ -219,6 +237,7 @@ def select_exposure_timestamp(header, exposure_seconds):
     declared_scale = str(header.get('TIMESYS', 'UTC')).strip().lower()
     raw_scale = declared_scale if declared_scale in Time.SCALES else 'utc'
     candidates, starts, ends, issues = [], [], [], []
+    generic_comment_keys = ('DATE-OBS', 'DATE-UTC', 'UT-OBS', 'MJD-OBS', 'MJD', 'JD', 'JULIAN')
     try:
         pixel = float(header.get('TIMEPIXR', 0.0))
         if not np.isfinite(pixel):
@@ -236,17 +255,18 @@ def select_exposure_timestamp(header, exposure_seconds):
         if key not in header:
             return
         try:
-            if frame == 'BJD' and 'MID' not in key:
-                try:
-                    comment = str(header.comments[key]).lower()
-                except (AttributeError, KeyError):
-                    comment = ''
-                if 'start' in comment or 'begin' in comment:
-                    role = 'start'
-                elif 'end of' in comment:
-                    role = 'end'
+            generic_date = key in ('DATE-OBS', 'DATE-UTC', 'UT-OBS')
+            barycentric_comment = frame == 'BJD' and 'MID' not in key
+            assumption_reason = None
+            if key in generic_comment_keys or barycentric_comment:
+                role, assumption_reason = _timestamp_comment_role(
+                    header, key, role, barycentric=barycentric_comment)
             if date:
                 instant, precision = _date_candidate(header, key, scale)
+                if (key == 'DATE-OBS' and 'UT-OBS' in header and 'TIME-OBS' not in header
+                        and re.fullmatch(r'\d{1,4}[-/]\d{1,2}[-/]\d{1,4}', str(header[key]).strip())
+                        and re.match(r'\d{1,2}:\d{2}', str(header['UT-OBS']).strip())):
+                    return
             else:
                 value, step = _stored_number(header, key)
                 if frame == 'MJD':
@@ -260,6 +280,9 @@ def select_exposure_timestamp(header, exposure_seconds):
                    'value': str(header[key]), '_instant': instant}
             if role == 'start':
                 starts.append(row)
+                if generic_date and assumption_reason:
+                    issues.append({'source': key, 'status': 'assumed', 'reason': assumption_reason,
+                                   'assumption': 'Existing start-of-exposure convention retained.'})
             elif role == 'end':
                 ends.append(row)
             else:
@@ -287,7 +310,8 @@ def select_exposure_timestamp(header, exposure_seconds):
         add(key, 'JD', raw_scale, 'end', date=True)
     for start in starts:
         for end in ends:
-            if end['_instant'] < start['_instant'] or pixel != 0 or end['frame'] != start['frame']:
+            if (end['source'] in generic_comment_keys or end['_instant'] <= start['_instant']
+                    or pixel != 0 or end['frame'] != start['frame']):
                 continue
             row = dict(start)
             row.update(source=f"{start['source']}/{end['source']}", role='start_end_mid',
